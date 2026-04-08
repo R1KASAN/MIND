@@ -1,0 +1,155 @@
+import type { AiSynthesisResponse } from '@/lib/ai/schema';
+import type { Action, AppSession, TaskContext } from '@/lib/store/idb';
+import { hasResumableTask } from '@/lib/orchestrator/task-machine';
+
+export type StudioIntentId =
+  | 'review_status'
+  | 'next_move'
+  | 'make_smaller'
+  | 'unstick';
+
+export interface StudioIntent {
+  id: StudioIntentId;
+  label: string;
+  description: string;
+  active: boolean;
+  blockedReason?: string;
+}
+
+export interface StudioSnapshot {
+  title: string;
+  summary: string;
+  blockers: string[];
+  actionTitle?: string;
+  fileCount: number;
+  contextLabel: string;
+  lastUpdatedLabel: string;
+}
+
+function truncateText(value: string, maxLength: number) {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function fallbackTaskTitle(task: TaskContext) {
+  const sourceText = task.sourceText.trim();
+  if (!sourceText) return 'งานนี้';
+  return truncateText(sourceText.replace(/\s+/g, ' '), 72);
+}
+
+export function formatRelativeTimestamp(timestamp?: number, now = Date.now()) {
+  if (!timestamp) return 'ยังไม่มีการอัปเดตล่าสุด';
+
+  const deltaMs = Math.max(0, now - timestamp);
+  const deltaMin = Math.floor(deltaMs / 60000);
+
+  if (deltaMin < 1) return 'อัปเดตเมื่อสักครู่';
+  if (deltaMin < 60) return `อัปเดต ${deltaMin} นาทีที่แล้ว`;
+
+  const deltaHour = Math.floor(deltaMin / 60);
+  if (deltaHour < 24) return `อัปเดต ${deltaHour} ชั่วโมงที่แล้ว`;
+
+  const deltaDay = Math.floor(deltaHour / 24);
+  return `อัปเดต ${deltaDay} วันที่แล้ว`;
+}
+
+export function hasFreshReentryBrief(task?: TaskContext, sessionLastActive?: number) {
+  if (!task?.reentryBrief) return false;
+  if (!sessionLastActive) return true;
+  return task.reentryBrief.createdAt >= sessionLastActive;
+}
+
+export function buildStudioSnapshot(
+  task?: TaskContext,
+  action?: Action | null,
+  payload?: AiSynthesisResponse | null,
+): StudioSnapshot | null {
+  if (!task) return null;
+
+  const title =
+    task.taskFrame?.objective ||
+    task.currentPlan?.actionTitle ||
+    action?.title ||
+    payload?.recommended_action.title ||
+    fallbackTaskTitle(task);
+
+  const summary =
+    task.reentryBrief?.summary ||
+    task.lastSynthesis?.situation_summary ||
+    action?.situationSummary ||
+    truncateText(task.sourceText.replace(/\s+/g, ' '), 180);
+
+  const fileCount = task.sourceFiles.length;
+  const actionTitle =
+    task.currentPlan?.actionTitle ||
+    action?.title ||
+    payload?.recommended_action.title;
+
+  const lastUpdatedAt = Math.max(
+    task.reentryBrief?.createdAt ?? 0,
+    task.lastAttemptAt ?? 0,
+    task.createdAt,
+  );
+
+  return {
+    title,
+    summary,
+    blockers: task.blockerSignals.slice(0, 3),
+    actionTitle,
+    fileCount,
+    contextLabel: fileCount > 0 ? `${fileCount} ไฟล์ + ข้อความเดิม` : 'ข้อความเดิมของงานนี้',
+    lastUpdatedLabel: formatRelativeTimestamp(lastUpdatedAt),
+  };
+}
+
+export function getStudioIntents(
+  session: AppSession,
+  action?: Action | null,
+  payload?: AiSynthesisResponse | null,
+): StudioIntent[] {
+  const task = session.task;
+  const hasActionContext = Boolean(task && action && payload);
+  const canReviewStatus = Boolean(task);
+  const canResumeFlow = Boolean(task);
+
+  return [
+    {
+      id: 'review_status',
+      label: 'กลับมาดูสถานะ',
+      description: canReviewStatus
+        ? hasResumableTask(task)
+          ? 'ดูว่างานนี้ค้างตรงไหนและควรกลับไปเริ่มจากอะไร'
+          : 'ดู snapshot ล่าสุดของงานนี้ก่อนจะขยับต่อ'
+        : 'พิมพ์หรือวางบริบทของงานนี้ก่อน แล้ว MIND จะช่วยสรุปสถานะให้',
+      active: canReviewStatus,
+      blockedReason: canReviewStatus ? undefined : 'ยังไม่มีบริบทของงานนี้ให้สรุป',
+    },
+    {
+      id: 'next_move',
+      label: 'หา next move',
+      description: canResumeFlow
+        ? 'ใช้ข้อความเดิมของงานนี้เพื่อหาก้าวถัดไปที่เริ่มได้เลย'
+        : 'พิมพ์สภาพงานก่อน แล้วค่อยให้ MIND เลือกก้าวถัดไป',
+      active: canResumeFlow,
+      blockedReason: canResumeFlow ? undefined : 'พิมพ์หรือวางบริบทของงานนี้ก่อน',
+    },
+    {
+      id: 'make_smaller',
+      label: 'ย่อยงานให้เล็ก',
+      description: hasActionContext
+        ? 'กลับไปแตกก้าวนี้ให้เล็กลง โดยยังไม่ทิ้งเป้าหมายเดิม'
+        : 'ต้องมีก้าวปัจจุบันก่อน ถึงจะย่อยให้เล็กลงต่อได้',
+      active: hasActionContext,
+      blockedReason: hasActionContext ? undefined : 'ต้องมีก้าวปัจจุบันก่อนถึงจะย่อยต่อได้',
+    },
+    {
+      id: 'unstick',
+      label: 'ช่วยตอนติด',
+      description: hasActionContext
+        ? 'ให้ MIND ช่วยวินิจฉัยว่าติดตรงไหนจากบริบทเดิมของงานนี้'
+        : 'ต้องมี action ปัจจุบันก่อน ถึงจะช่วยวินิจฉัยอาการติดได้',
+      active: hasActionContext,
+      blockedReason: hasActionContext ? undefined : 'ต้องมีก้าวหรือ action ปัจจุบันก่อน',
+    },
+  ];
+}

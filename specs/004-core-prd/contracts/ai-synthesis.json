@@ -1,0 +1,43 @@
+{
+  "name": "ai_synthesis_response",
+  "description": "The standardized JSON object returned by the Edge AI API based on a user's unstructured brain dump.",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "requires_clarification": {
+        "type": "boolean",
+        "description": "True if the urgency is impossible to guess and a 1-tap nudge is required."
+      },
+      "clarification_nudge": {
+        "type": "string",
+        "description": "Short prompt asking the user for urgency (e.g. 'Is the presentation due today or next week?')"
+      },
+      "recommended_action": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "description": "The single atomic imperative step." },
+          "rationale": { "type": "string", "description": "Brief 1-sentence explanation of why this was chosen." },
+          "micro_steps": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Exactly 3 tiny sub-steps that constitute the recommended action to populate the Start Scaffold."
+          }
+        },
+        "required": ["title", "rationale", "micro_steps"]
+      },
+      "alternative_actions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "title": { "type": "string" },
+            "rationale": { "type": "string" }
+          }
+        },
+        "description": "Up to 2 fallback options loaded secretly into the client, revealed only if the user triggers the Mini Decision Board."
+      }
+    },
+    "required": ["requires_clarification", "recommended_action", "alternative_actions"],
+    "_note_for_implementers": "This schema must remain flat and simple to ensure Llama-3/DeepSeek 8-13B models can reliably output it zero-shot without structural failure."
+  }
+}

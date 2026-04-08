@@ -1,0 +1,363 @@
+import type { AiSynthesisResponse } from '@/lib/ai/schema';
+import type {
+  AiActionNegotiationMode,
+  AiActionResponse,
+  AiIntakeResponse,
+  AiReentryResponse,
+  AiScaffoldResponse,
+} from '@/lib/ai/operations';
+import { summarizeRoomFile, truncateRoomText } from '@/lib/room';
+import type {
+  Action,
+  AppSession,
+  TaskContext,
+  UIRoute,
+  WorkflowType,
+  ReentryResumeTarget,
+} from '@/lib/store/idb';
+import { createTaskContext } from '@/lib/store/idb';
+
+let sessionWorkflowHistory: WorkflowType[] = [];
+
+export function buildPayloadFromAction(action: Action): AiSynthesisResponse {
+  return {
+    workflow_type: action.workflowType,
+    requires_clarification: false,
+    situation_summary: action.situationSummary,
+    reply_draft: action.replyDraft,
+    recommended_action: {
+      title: action.title,
+      rationale: action.rationale,
+      micro_steps: action.microSteps,
+    },
+    alternative_actions: [],
+    detected_blockers: action.detectedBlockers ?? [],
+  };
+}
+
+export function buildBootstrapMicroSteps(action: {
+  title: string;
+  successSignal?: string;
+}) {
+  const signal = action.successSignal?.trim() || 'เห็นความคืบหน้าหนึ่งจุดของงานนี้';
+  return [
+    `เปิดบริบทหรือไฟล์ที่เกี่ยวกับ "${action.title}"`,
+    `ทำก้าวหลักนี้ทันที: ${action.title}`,
+    `เช็กผลว่าตอนนี้ ${signal}`,
+  ];
+}
+
+export function buildPayloadFromAiActionResponse(
+  workflowType: WorkflowType,
+  response: AiActionResponse,
+  blockers: string[],
+): AiSynthesisResponse {
+  return {
+    workflow_type: workflowType,
+    requires_clarification: false,
+    clarification_nudge: undefined,
+    situation_summary: response.situationSummary,
+    reply_draft: workflowType === 'client_response' ? response.replyDraft ?? undefined : undefined,
+    recommended_action: {
+      title: response.chosenAction.title,
+      rationale: response.chosenAction.rationale,
+      micro_steps: buildBootstrapMicroSteps(response.chosenAction),
+    },
+    alternative_actions: response.alternatives.slice(0, 2).map((alternative) => ({
+      title: alternative.title,
+      rationale: alternative.rationale,
+    })),
+    detected_blockers: blockers,
+  };
+}
+
+export function resolveWorkflowType(data: AiSynthesisResponse): WorkflowType {
+  if (data.workflow_type === 'client_response' || data.workflow_type === 'client_resume') {
+    return data.workflow_type;
+  }
+  return data.reply_draft ? 'client_response' : 'client_resume';
+}
+
+export function addressesBlocker(title: string, blockers: string[]) {
+  const normalizedTitle = title.toLowerCase();
+  return blockers.some((blocker) => {
+    const normalizedBlocker = blocker.toLowerCase();
+    if (!normalizedBlocker.trim()) return false;
+    if (normalizedTitle.includes(normalizedBlocker)) return true;
+    return normalizedBlocker
+      .split(/\s+/)
+      .filter((token) => token.length >= 3)
+      .some((token) => normalizedTitle.includes(token));
+  });
+}
+
+function appendWorkflowHint(dump: string) {
+  if (sessionWorkflowHistory.length < 3) return dump;
+  const lastThree = sessionWorkflowHistory.slice(-3);
+  if (!lastThree.every((item) => item === lastThree[0])) return dump;
+  return `${dump}\n\n(บริบท: ผู้ใช้มักทำงานประเภท ${lastThree[0]} ใน session นี้)`;
+}
+
+export function rememberWorkflow(workflowType: WorkflowType) {
+  sessionWorkflowHistory = [...sessionWorkflowHistory, workflowType].slice(-5);
+}
+
+export function getSessionTask(base: AppSession): TaskContext {
+  if (base.task) return base.task;
+  const sourceText = base.activeDumpContext?.text;
+  if (!sourceText) {
+    throw new Error('ไม่พบ task context');
+  }
+  return createTaskContext(sourceText, base.lastWorkflowType, base.lastActive);
+}
+
+export function buildSynthesisInput(task: TaskContext): string {
+  const sections: string[] = [truncateRoomText(task.sourceText)];
+  const structuredContext: string[] = [];
+
+  if (task.workflowType) {
+    structuredContext.push(`workflow_type: ${task.workflowType}`);
+  }
+  if (task.currentStepIndex > 0) {
+    structuredContext.push(`current_step_index: ${task.currentStepIndex}`);
+  }
+  if (task.lastFailureReason) {
+    structuredContext.push(`last_failure_reason: ${task.lastFailureReason}`);
+  }
+  if (task.blockerSignals.length > 0) {
+    structuredContext.push(`blocker_signals:\n- ${task.blockerSignals.join('\n- ')}`);
+  }
+
+  if (task.sourceFiles.length > 0) {
+    structuredContext.push(`room_files:\n- ${task.sourceFiles.map((file) => summarizeRoomFile(file)).join('\n- ')}`);
+  }
+
+  const clarificationAnswers = task.pendingInputs
+    .filter((input) => input.kind === 'clarification')
+    .map((input) => input.answer.trim())
+    .filter((answer) => Boolean(answer));
+  if (clarificationAnswers.length > 0) {
+    structuredContext.push(`clarification_answers:\n- ${clarificationAnswers.join('\n- ')}`);
+  }
+
+  const manualNotes = task.pendingInputs
+    .filter((input) => input.kind === 'manual_rescue')
+    .map((input) => input.answer.trim())
+    .filter((answer) => Boolean(answer));
+  if (manualNotes.length > 0) {
+    structuredContext.push(`manual_notes:\n- ${manualNotes.join('\n- ')}`);
+  }
+
+  if (task.lastSynthesis?.situation_summary) {
+    structuredContext.push(`previous_summary: ${task.lastSynthesis.situation_summary}`);
+  }
+
+  if (structuredContext.length > 0) {
+    sections.push(`\n\nบริบทงาน:\n${structuredContext.join('\n')}`);
+  }
+
+  return appendWorkflowHint(sections.join(''));
+}
+
+export function deriveRoomBlockers(task: TaskContext): string[] {
+  const blockers = new Set(task.blockerSignals);
+  if (task.sourceFiles.some((file) => file.status !== 'ready')) {
+    blockers.add('missing_file_or_context');
+  }
+  return [...blockers];
+}
+
+export function deriveBounceBackRoute(task: TaskContext | undefined, action: Action | null): UIRoute {
+  if (!task) return action ? 'ONE_ACTION' : 'DUMP_ENTRY';
+  if (task.lifecycleState === 'in_scaffold') return 'SCAFFOLD';
+  if (task.currentStepIndex > 0) return 'SCAFFOLD';
+  if (task.lifecycleState === 'clarification_needed') return 'CLARIFICATION';
+  if (task.lifecycleState === 'synthesizing') return 'SYNTHESIZING';
+  if (task.lifecycleState === 'has_one_action') return action ? 'ONE_ACTION' : 'DUMP_ENTRY';
+  if (task.lifecycleState === 'stalled') return action ? 'SCAFFOLD' : 'DUMP_ENTRY';
+  if (task.lifecycleState === 'failed') return 'MANUAL_FALLBACK';
+  return 'DUMP_ENTRY';
+}
+
+export function routeFromResumeTarget(target: ReentryResumeTarget): UIRoute {
+  if (target === 'ONE_ACTION' || target === 'SCAFFOLD' || target === 'DUMP_ENTRY') {
+    return target;
+  }
+  return 'DUMP_ENTRY';
+}
+
+export function toSmallerMicroStep(step: string): string {
+  const normalized = step
+    .replace(/^(?:ขยับอีกนิด:\s*)+/u, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!normalized) {
+    return 'ขยับอีกนิด: ทำแค่ส่วนแรกที่แตะได้ก่อน';
+  }
+
+  return `ขยับอีกนิด: ${normalized}`;
+}
+
+function buildActionStateFromPayload(
+  workflowType: WorkflowType,
+  payload: AiSynthesisResponse,
+  existingAction?: Action | null,
+): Action {
+  if (existingAction) {
+    return {
+      ...existingAction,
+      title: payload.recommended_action.title,
+      rationale: payload.recommended_action.rationale,
+      microSteps: payload.recommended_action.micro_steps,
+      workflowType,
+      situationSummary: payload.situation_summary,
+      replyDraft: payload.reply_draft ?? undefined,
+      detectedBlockers: payload.detected_blockers ?? [],
+    };
+  }
+
+  return {
+    id: Date.now().toString(),
+    createdAt: Date.now(),
+    title: payload.recommended_action.title,
+    rationale: payload.recommended_action.rationale,
+    microSteps: payload.recommended_action.micro_steps,
+    isPinned: false,
+    state: 'PENDING',
+    workflowType,
+    situationSummary: payload.situation_summary,
+    replyDraft: payload.reply_draft ?? undefined,
+    detectedBlockers: payload.detected_blockers ?? [],
+  };
+}
+
+export function buildActionSuccessArtifacts(input: {
+  task: TaskContext;
+  intake: AiIntakeResponse;
+  actionResponse: AiActionResponse;
+  existingAction?: Action | null;
+  persistedNegotiationMode?: Extract<AiActionNegotiationMode, 'reply_first' | 'resume_first'>;
+}) {
+  const { task, intake, actionResponse, existingAction, persistedNegotiationMode } = input;
+  const workflowType = intake.workflowType;
+  const payload = buildPayloadFromAiActionResponse(workflowType, actionResponse, intake.blockers);
+  const actionState = buildActionStateFromPayload(workflowType, payload, existingAction);
+
+  let constraints = task.constraints
+    ? { ...task.constraints }
+    : undefined;
+  if (persistedNegotiationMode === 'reply_first') {
+    (constraints ??= {}).preferReplyFirst = true;
+  } else if (persistedNegotiationMode === 'resume_first') {
+    (constraints ??= {}).preferReplyFirst = false;
+  }
+
+  const nextTask: TaskContext = {
+    ...task,
+    workflowType,
+    blockerSignals: intake.blockers,
+    taskFrame: intake.taskFrame,
+    lifecycleState: 'has_one_action',
+    assistantMode: 'action_negotiation',
+    lastAiOperation: 'action',
+    currentActionId: actionState.id,
+    currentStepIndex: 0,
+    lastSynthesis: payload,
+    lastFailureReason: undefined,
+    actionExplanation: actionResponse.whyThisNow,
+    currentPlan: {
+      actionTitle: actionResponse.chosenAction.title,
+      successSignal: actionResponse.chosenAction.successSignal,
+      steps: payload.recommended_action.micro_steps.map((step, index) => ({
+        id: `step-${index + 1}`,
+        text: step,
+      })),
+    },
+    constraints,
+    oneActionTracking: {
+      hasViewedAlternative: false,
+      hasAdjusted: false,
+    },
+  };
+
+  return {
+    workflowType,
+    payload,
+    actionState,
+    whyThisNow: actionResponse.whyThisNow,
+    nextTask,
+    blockerCount: actionState.detectedBlockers?.length ?? 0,
+    addressesDetectedBlocker: actionState.detectedBlockers
+      ? addressesBlocker(actionState.title, actionState.detectedBlockers)
+      : false,
+  };
+}
+
+export function buildScaffoldSuccessArtifacts(input: {
+  task: TaskContext;
+  action: Action;
+  payload: AiSynthesisResponse;
+  scaffold: AiScaffoldResponse;
+}) {
+  const { task, action, payload, scaffold } = input;
+  const nextMicroSteps = scaffold.steps.slice(0, 3).map((step) => step.text);
+  const nextPayload: AiSynthesisResponse = {
+    ...payload,
+    recommended_action: {
+      ...payload.recommended_action,
+      title: scaffold.planTitle,
+      micro_steps: [
+        nextMicroSteps[0] ?? payload.recommended_action.micro_steps[0],
+        nextMicroSteps[1] ?? payload.recommended_action.micro_steps[1],
+        nextMicroSteps[2] ?? payload.recommended_action.micro_steps[2],
+      ],
+    },
+  };
+
+  const nextActionState: Action = {
+    ...action,
+    title: nextPayload.recommended_action.title,
+    microSteps: nextPayload.recommended_action.micro_steps,
+  };
+
+  const nextTask: TaskContext = {
+    ...task,
+    lifecycleState: 'in_scaffold',
+    assistantMode: 'scaffold_refinement',
+    lastAiOperation: 'scaffold',
+    currentStepIndex: Math.min(
+      scaffold.revisedCurrentStepIndex,
+      nextPayload.recommended_action.micro_steps.length - 1,
+    ),
+    currentPlan: {
+      actionTitle: nextActionState.title,
+      successSignal: task.currentPlan?.successSignal,
+      steps: scaffold.steps,
+    },
+    lastSynthesis: nextPayload,
+  };
+
+  return { nextPayload, nextActionState, nextTask };
+}
+
+export function buildReentryTaskArtifacts(task: TaskContext, reentry: AiReentryResponse) {
+  const nextTask: TaskContext = {
+    ...task,
+    assistantMode: 'reentry_brief',
+    lastAiOperation: 'reentry',
+    reentryBrief: {
+      summary: reentry.reentrySummary,
+      topActions: reentry.topActions,
+      ignoredNoise: reentry.ignoredNoise,
+      createdAt: Date.now(),
+    },
+  };
+
+  return { nextTask };
+}
+
+export function hasResumableTask(task?: TaskContext) {
+  if (!task) return false;
+  return task.lifecycleState !== 'dumped' && task.lifecycleState !== 'done';
+}

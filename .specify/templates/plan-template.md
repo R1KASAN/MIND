@@ -27,11 +27,17 @@
 **Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]  
 **Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
 
-## Constitution Check
+## Constitution Check v3.0.0
 
-*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
+*GATE: All checks must pass before Phase 2 implementation.*
 
-[Gates determined based on constitution file]
+| Gate | Status | Evidence/Rationale |
+|------|--------|-------------------|
+| **No Planner behavior?** | [ ] | (FAIL if adding calendars, scheduling, or backlogs) |
+| **Physical next action?** | [ ] | (FAIL if action is abstract or >5 min) |
+| **Local-first compliance?** | [ ] | (FAIL if state depends on network/cloud) |
+| **Shame-free UX?** | [ ] | (FAIL if adding streaks, timers, or badges) |
+| **Recovery focused?** | [ ] | (PASS if improving rescue/stall handling) |
 
 ## Project Structure
 

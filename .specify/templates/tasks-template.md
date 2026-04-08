@@ -56,9 +56,13 @@ description: "Task list template for feature implementation"
 
 ## Phase 2: Foundational (Blocking Prerequisites)
 
-**Purpose**: Core infrastructure that MUST be complete before ANY user story can be implemented
+**Purpose**: Core infrastructure and philosophy enforcement
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
+
+- [ ] T000 [P] Final Constitution v3.0.0 compliance review
+    - Ensure no browsable backlog or "task list management" logic.
+    - Confirm recovery flows (rescue/bounce-back) are prioritized in design.
 
 Examples of foundational tasks (adjust based on your project):
 

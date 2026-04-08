@@ -77,10 +77,12 @@
 
 ## Requirements *(mandatory)*
 
-<!--
-  ACTION REQUIRED: The content in this section represents placeholders.
-  Fill them out with the right functional requirements.
--->
+> [!NOTE]
+> All features MUST align with the **MIND Constitution v3.0.0**: 
+> 1. No planner/backlog behavior. 
+> 2. Physical actions under 5 mins. 
+> 3. One-action-by-default UX. 
+> 4. Performance: AI synthesis should target <12s for a trusted first step experience.
 
 ### Functional Requirements
 

@@ -19,3 +19,16 @@ When doing frontend design tasks, avoid generic, overbuilt layouts. Use these ha
 - **Responsiveness:** Ensure the page loads properly on both desktop and mobile.
 - **For recent pages:** If the modern design system already exists, follow the repo's React component usage, file structure, accessibility checklist, start/stricter modes, and useDeferrable when appropriate; if used by the broader codebase and used/usable by default unless already used; follow the repo's React compile targets.
 - **Exception:** If working within an existing website or design system, preserve the established patterns, structure, and visual language.
+
+## Active Technologies
+- TypeScript / Node 20+ + Next.js (App Router), Vanilla CSS, OpenAI API/SDK (or similar) (001-core-action-loop)
+- IndexedDB (Client-side MVP via `idb-keyval`) (001-core-action-loop)
+- TypeScript / Node 20+ + Next.js 14+ (App Router), React, Vanilla CSS (no Tailwind), simple IndexedDB (`idb-keyval`) for MVP persistence, OpenAI API (via Edge/Server actions). (004-core-prd)
+- Client-side `idb-keyval` for the 50-user Beta. (004-core-prd)
+- TypeScript 5, React 19, Next.js 16 (App Router) + `idb-keyval` 6.2.2 (local storage), `zod` 4.3.6 (AI schema validation) (005-mind-full-prd)
+- IndexedDB via `idb-keyval` — two keys: `mind_session`, `mind_actions` (005-mind-full-prd)
+- TypeScript 5.x, Next.js 15 (App Router), React 19 + idb-keyval (IDB), zod (schema validation), Ollama (local AI runtime) (006-mind-vnext-client-resume)
+- IndexedDB via idb-keyval — keys `mind_session` and `mind_actions` (no new keys in vNext) (006-mind-vnext-client-resume)
+
+## Recent Changes
+- 001-core-action-loop: Added TypeScript / Node 20+ + Next.js (App Router), Vanilla CSS, OpenAI API/SDK (or similar)

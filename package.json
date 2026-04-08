@@ -1,0 +1,45 @@
+{
+  "name": "mind",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "test": "node --import tsx --test src/lib/ai/*.test.ts src/lib/orchestrator/*.test.ts src/lib/store/*.test.ts",
+    "gate:phase5": "tsx scripts/run-phase-5-gate.ts",
+    "smoke:task-flow": "tsx scripts/run-smoke-task-flow.ts",
+    "smoke:task-flow:repeat": "tsx scripts/run-smoke-task-flow-repeat.ts",
+    "smoke:task-flow:repeat:repair-heavy": "MIND_RESCUE_BASELINE_LABEL=rescue-repair-heavy-170 MIND_RESCUE_BASELINE_NUM_PREDICT=170 MIND_RESCUE_BASELINE_REPAIR_NUM_PREDICT=240 MIND_RESCUE_BASELINE_TIMEOUT_MS=22000 MIND_RESCUE_BASELINE_REPAIR_TIMEOUT_MS=16000 MIND_RESCUE_BASELINE_OVERALL_BUDGET_MS=44000 tsx scripts/run-smoke-task-flow-repeat.ts",
+    "smoke:task-flow:repeat:repair-heavy-longer-repair": "MIND_RESCUE_BASELINE_LABEL=repair-heavy-longer-repair MIND_RESCUE_BASELINE_NUM_PREDICT=170 MIND_RESCUE_BASELINE_REPAIR_NUM_PREDICT=240 MIND_RESCUE_BASELINE_TIMEOUT_MS=22000 MIND_RESCUE_BASELINE_REPAIR_TIMEOUT_MS=18000 MIND_RESCUE_BASELINE_OVERALL_BUDGET_MS=47000 tsx scripts/run-smoke-task-flow-repeat.ts",
+    "smoke:task-flow:repeat:balanced-higher-overall-budget": "MIND_RESCUE_BASELINE_LABEL=balanced-higher-overall-budget MIND_RESCUE_BASELINE_NUM_PREDICT=160 MIND_RESCUE_BASELINE_REPAIR_NUM_PREDICT=220 MIND_RESCUE_BASELINE_TIMEOUT_MS=20000 MIND_RESCUE_BASELINE_REPAIR_TIMEOUT_MS=15000 MIND_RESCUE_BASELINE_OVERALL_BUDGET_MS=43000 tsx scripts/run-smoke-task-flow-repeat.ts",
+    "smoke:task-flow:browser": "tsx scripts/browser-smoke-task-flow.ts",
+    "smoke:studio": "tsx scripts/browser-smoke-studio.ts",
+    "smoke:studio-mobile": "tsx scripts/browser-smoke-studio-mobile.ts",
+    "smoke:reentry-mobile": "tsx scripts/browser-smoke-reentry-mobile.ts",
+    "benchmark:action": "tsx scripts/benchmark-action-route.ts",
+    "benchmark:rescue": "tsx scripts/benchmark-rescue-route.ts"
+  },
+  "dependencies": {
+    "@tesseract.js-data/eng": "^1.0.0",
+    "@tesseract.js-data/tha": "^1.0.0",
+    "idb-keyval": "^6.2.2",
+    "next": "16.2.2",
+    "pdf-parse": "^2.4.5",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "tesseract.js": "^7.0.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.51.1",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.2",
+    "tsx": "^4.20.6",
+    "typescript": "^5"
+  }
+}
