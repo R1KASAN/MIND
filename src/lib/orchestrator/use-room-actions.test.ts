@@ -65,6 +65,16 @@ test('getAdjacentRoom wraps forward and backward', () => {
   assert.equal(getAdjacentRoom(rooms, 'a', 'previous')?.id, 'c');
 });
 
+test('getAdjacentRoom skips trashed rooms', () => {
+  const trashedRoom = {
+    ...createRoom('b'),
+    trashedAt: Date.now(),
+  };
+  const rooms = [createRoom('a'), trashedRoom, createRoom('c')];
+  assert.equal(getAdjacentRoom(rooms, 'a', 'next')?.id, 'c');
+  assert.equal(getAdjacentRoom(rooms, 'c', 'previous')?.id, 'a');
+});
+
 test('canContinueFromRoomCard allows save-point rooms with suggested reentry action', () => {
   const session = createSession({
     task: {

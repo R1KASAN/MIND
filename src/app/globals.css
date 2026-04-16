@@ -526,12 +526,21 @@ textarea:focus, input:focus {
   border-radius: calc(var(--radius) + 6px);
   border: 1px solid rgba(255, 255, 255, 0.07);
   background: rgba(255, 255, 255, 0.02);
+  cursor: pointer;
 }
 
 .room-sidebar-item.is-active {
   border-color: rgba(94, 106, 210, 0.32);
   background: linear-gradient(180deg, rgba(94, 106, 210, 0.12), rgba(255, 255, 255, 0.025));
   box-shadow: 0 16px 36px rgba(21, 25, 68, 0.14);
+}
+
+.room-sidebar-item.is-editing {
+  cursor: default;
+}
+
+.room-sidebar-item:hover {
+  border-color: rgba(255, 255, 255, 0.12);
 }
 
 .room-sidebar-item-top {
@@ -677,6 +686,87 @@ textarea:focus, input:focus {
   color: rgba(255, 255, 255, 0.82);
 }
 
+.room-sidebar-item-controls {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.room-sidebar-menu-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.room-sidebar-menu-trigger,
+.room-sidebar-inline-button {
+  min-height: 2.15rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+.room-sidebar-menu-trigger {
+  min-width: 2.15rem;
+  padding-inline: 0;
+}
+
+.room-sidebar-menu {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  z-index: 4;
+  min-width: 10rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.3rem;
+  border-radius: 14px;
+  background: rgba(18, 19, 23, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.28);
+}
+
+.room-sidebar-menu-item {
+  width: 100%;
+  min-height: 2.2rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  font-size: 0.84rem;
+}
+
+.room-sidebar-menu-item.is-danger {
+  color: #ffb9c3;
+}
+
+.room-sidebar-rename-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.room-sidebar-rename-input {
+  width: 100%;
+  min-height: 2.65rem;
+  padding: 0.75rem 0.85rem;
+  font-size: 0.92rem;
+}
+
+.room-sidebar-rename-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.room-sidebar-inline-button.primary {
+  color: #eef1ff;
+}
+
 .room-sidebar-collapsed-markers {
   display: flex;
   justify-content: center;
@@ -741,6 +831,52 @@ textarea:focus, input:focus {
   min-width: 0;
   padding-inline: 0;
   border-radius: 18px;
+}
+
+.room-sidebar-trash {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 0.95rem;
+  border-radius: calc(var(--radius) + 8px);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.room-sidebar-trash-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.room-sidebar-trash-count {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.room-sidebar-trash-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.room-sidebar-trash-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.75rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.room-sidebar-trash-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  min-width: 0;
 }
 
 .room-canvas-header {

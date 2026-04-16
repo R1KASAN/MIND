@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from 'react';
 import type { RoomRecord } from '@/lib/store/idb';
 
 interface Props {
@@ -7,6 +8,9 @@ interface Props {
   activeRoomId: string | null;
   onSelectRoom: (roomId: string) => void | Promise<void>;
   onCreateRoom: () => void | Promise<void>;
+  onRenameRoom: (roomId: string, nextTitle: string) => void | Promise<void>;
+  onTrashRoom: (roomId: string) => void | Promise<void>;
+  onRestoreRoom: (roomId: string) => void | Promise<void>;
   collapsed?: boolean;
 }
 
@@ -53,8 +57,39 @@ export function RoomSidebar({
   activeRoomId,
   onSelectRoom,
   onCreateRoom,
+  onRenameRoom,
+  onTrashRoom,
+  onRestoreRoom,
   collapsed = false,
 }: Props) {
+  const [openMenuRoomId, setOpenMenuRoomId] = useState<string | null>(null);
+  const [editingRoomId, setEditingRoomId] = useState<string | null>(null);
+  const [draftTitle, setDraftTitle] = useState('');
+
+  const activeRooms = rooms.filter((room) => typeof room.trashedAt !== 'number');
+  const trashedRooms = rooms.filter((room) => typeof room.trashedAt === 'number');
+  const activeMenuRoomId = collapsed || !rooms.some((room) => room.id === openMenuRoomId) ? null : openMenuRoomId;
+  const activeEditingRoomId = collapsed || !rooms.some((room) => room.id === editingRoomId) ? null : editingRoomId;
+
+  const startRename = (room: RoomRecord) => {
+    setOpenMenuRoomId(null);
+    setEditingRoomId(room.id);
+    setDraftTitle(room.title);
+  };
+
+  const cancelRename = () => {
+    setEditingRoomId(null);
+    setDraftTitle('');
+  };
+
+  const submitRename = async (roomId: string) => {
+    const nextTitle = draftTitle.trim();
+    if (!nextTitle) return;
+    await onRenameRoom(roomId, nextTitle);
+    setEditingRoomId(null);
+    setDraftTitle('');
+  };
+
   return (
     <aside className={`room-sidebar ${collapsed ? 'is-collapsed' : ''}`}>
       <div className={`room-sidebar-header ${collapsed ? 'is-collapsed' : ''}`}>
@@ -78,17 +113,31 @@ export function RoomSidebar({
       </div>
 
       <div className="room-sidebar-list">
-        {rooms.map((room, index) => {
+        {activeRooms.map((room, index) => {
           const active = room.id === activeRoomId;
           const freshness = freshnessCopy(room);
           const summary = room.lastKnownGoodBrief?.trim() || room.contextSummary.trim();
+          const isEditing = activeEditingRoomId === room.id;
+          const isMenuOpen = activeMenuRoomId === room.id;
 
           return (
-            <button
+            <div
               key={room.id}
-              type="button"
-              onClick={() => void onSelectRoom(room.id)}
-              className={`room-sidebar-item ${active ? 'is-active' : ''}`}
+              role="button"
+              tabIndex={isEditing ? -1 : 0}
+              onClick={() => {
+                if (isEditing) return;
+                setOpenMenuRoomId(null);
+                void onSelectRoom(room.id);
+              }}
+              onKeyDown={(event) => {
+                if (isEditing) return;
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                setOpenMenuRoomId(null);
+                void onSelectRoom(room.id);
+              }}
+              className={`room-sidebar-item ${active ? 'is-active' : ''} ${isEditing ? 'is-editing' : ''}`}
               aria-pressed={active}
               aria-label={`${room.title} ${roomStatusLine(room)}`}
             >
@@ -119,27 +168,119 @@ export function RoomSidebar({
                 </>
               ) : (
                 <>
-                  <div className="room-sidebar-meta room-sidebar-meta-compact">
-                    <span className={`room-sidebar-chip room-sidebar-chip-${freshness.tone}`}>{freshness.label}</span>
-                    {room.unread && <span className="room-sidebar-chip room-sidebar-chip-hot">ยังมีของค้าง</span>}
-                    {room.stale && <span className="room-sidebar-dot room-sidebar-dot-warn">ค้าง</span>}
-                    {active && <span className="room-sidebar-dot room-sidebar-dot-active">กำลังทำ</span>}
+                  <div className="room-sidebar-item-controls">
+                    <div className="room-sidebar-meta room-sidebar-meta-compact">
+                      <span className={`room-sidebar-chip room-sidebar-chip-${freshness.tone}`}>{freshness.label}</span>
+                      {room.unread && <span className="room-sidebar-chip room-sidebar-chip-hot">ยังมีของค้าง</span>}
+                      {room.stale && <span className="room-sidebar-dot room-sidebar-dot-warn">ค้าง</span>}
+                      {active && <span className="room-sidebar-dot room-sidebar-dot-active">กำลังทำ</span>}
+                    </div>
+                    <div className="room-sidebar-menu-wrap">
+                      <button
+                        type="button"
+                        className="room-sidebar-menu-trigger"
+                        aria-label={`จัดการห้อง ${room.title}`}
+                        aria-expanded={isMenuOpen}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setOpenMenuRoomId((current) => (current === room.id ? null : room.id));
+                        }}
+                      >
+                        ⋯
+                      </button>
+                      {isMenuOpen && !isEditing && (
+                        <div className="room-sidebar-menu" role="menu" onClick={(event) => event.stopPropagation()}>
+                          <button
+                            type="button"
+                            className="room-sidebar-menu-item"
+                            onClick={() => startRename(room)}
+                          >
+                            เปลี่ยนชื่อ
+                          </button>
+                          <button
+                            type="button"
+                            className="room-sidebar-menu-item is-danger"
+                            onClick={async () => {
+                              setOpenMenuRoomId(null);
+                              await onTrashRoom(room.id);
+                            }}
+                          >
+                            ย้ายไปถังขยะ
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
-                  {summary && <p className="room-sidebar-summary">{summary}</p>}
+                  {isEditing ? (
+                    <form
+                      className="room-sidebar-rename-form"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void submitRename(room.id);
+                      }}
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <input
+                        value={draftTitle}
+                        onChange={(event) => setDraftTitle(event.target.value)}
+                        className="room-sidebar-rename-input"
+                        aria-label={`ชื่อใหม่ของห้อง ${room.title}`}
+                        autoFocus
+                      />
+                      <div className="room-sidebar-rename-actions">
+                        <button type="submit" className="room-sidebar-inline-button primary">
+                          บันทึก
+                        </button>
+                        <button type="button" className="room-sidebar-inline-button" onClick={cancelRename}>
+                          ยกเลิก
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    <>
+                      {summary && <p className="room-sidebar-summary">{summary}</p>}
 
-                  <div className="room-sidebar-footnote">
-                    <span>{scenarioLabel(room)}</span>
-                    {room.lastKnownGoodNextMoves[0] && (
-                      <span className="room-sidebar-footnote-next">เริ่ม: {room.lastKnownGoodNextMoves[0]}</span>
-                    )}
-                  </div>
+                      <div className="room-sidebar-footnote">
+                        <span>{scenarioLabel(room)}</span>
+                        {room.lastKnownGoodNextMoves[0] && (
+                          <span className="room-sidebar-footnote-next">เริ่ม: {room.lastKnownGoodNextMoves[0]}</span>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </>
               )}
-            </button>
+            </div>
           );
         })}
       </div>
+
+      {!collapsed && trashedRooms.length > 0 && (
+        <section className="room-sidebar-trash">
+          <div className="room-sidebar-trash-header">
+            <p className="studio-eyebrow">Trash</p>
+            <span className="room-sidebar-trash-count">{trashedRooms.length}</span>
+          </div>
+          <div className="room-sidebar-trash-list">
+            {trashedRooms.map((room) => (
+              <div key={room.id} className="room-sidebar-trash-item">
+                <div className="room-sidebar-trash-copy">
+                  <strong style={{ fontSize: '0.9rem', lineHeight: 1.35 }}>{room.title}</strong>
+                  <span className="room-sidebar-status-line">ย้ายออกจากรายการหลักแล้ว</span>
+                </div>
+                <button
+                  type="button"
+                  className="room-sidebar-inline-button"
+                  onClick={() => void onRestoreRoom(room.id)}
+                >
+                  กู้คืน
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </aside>
   );
 }

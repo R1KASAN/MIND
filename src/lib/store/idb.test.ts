@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  applyRenameRoomToWorkspace,
+  applyRestoreRoomToWorkspace,
+  applyTrashRoomToWorkspace,
   buildRoomRecordFromSession,
   createDefaultSession,
   hydrateRoomSessionFromRecord,
@@ -312,6 +315,87 @@ test('buildRoomRecordFromSession preserves prior lastKnownGood room data for fai
   assert.equal(preservedRoom.lastKnownGoodBrief, 'เริ่มจากตอบลูกค้าก่อน แล้วค่อยกลับไปเก็บ scope');
   assert.deepEqual(preservedRoom.lastKnownGoodNextMoves, ['ร่าง reply update ให้ลูกค้า']);
   assert.equal(preservedRoom.aiFreshness, 'fallback');
+});
+
+test('applyRenameRoomToWorkspace updates room title and active session title together', () => {
+  const roomSession = normalizeSession(createDefaultSession({
+    roomId: 'room-a',
+    roomTitle: 'ACME - Website revamp',
+    roomScenarioType: 'client_project_restart',
+  }));
+  const otherSession = normalizeSession(createDefaultSession({
+    roomId: 'room-b',
+    roomTitle: 'Northstar - Demo reply',
+    roomScenarioType: 'sales_inquiry_demo_request',
+  }));
+  const workspace = {
+    activeRoomId: 'room-a',
+    rooms: [
+      buildRoomRecordFromSession(roomSession, 'room-a'),
+      buildRoomRecordFromSession(otherSession, 'room-a'),
+    ],
+    lastUpdatedAt: 1,
+  };
+
+  const result = applyRenameRoomToWorkspace(workspace, 'room-a', 'ACME - Follow up draft', roomSession);
+
+  assert.equal(result.workspace.rooms[0]?.title, 'ACME - Follow up draft');
+  assert.equal(result.workspace.rooms[0]?.session.roomTitle, 'ACME - Follow up draft');
+  assert.equal(result.session?.roomTitle, 'ACME - Follow up draft');
+});
+
+test('applyTrashRoomToWorkspace moves active room to trash and falls forward to next visible room', () => {
+  const roomASession = normalizeSession(createDefaultSession({
+    roomId: 'room-a',
+    roomTitle: 'ACME - Website revamp',
+    roomScenarioType: 'client_project_restart',
+  }));
+  const roomBSession = normalizeSession(createDefaultSession({
+    roomId: 'room-b',
+    roomTitle: 'Northstar - Demo reply',
+    roomScenarioType: 'sales_inquiry_demo_request',
+  }));
+  const workspace = {
+    activeRoomId: 'room-a',
+    rooms: [
+      buildRoomRecordFromSession(roomASession, 'room-a'),
+      buildRoomRecordFromSession(roomBSession, 'room-a'),
+    ],
+    lastUpdatedAt: 1,
+  };
+
+  const result = applyTrashRoomToWorkspace(workspace, 'room-a', roomASession);
+
+  assert.equal(typeof result.workspace.rooms[0]?.trashedAt, 'number');
+  assert.equal(result.workspace.activeRoomId, 'room-b');
+  assert.equal(result.session?.roomId, 'room-b');
+});
+
+test('applyRestoreRoomToWorkspace restores trashed room without changing list order', () => {
+  const roomASession = normalizeSession(createDefaultSession({
+    roomId: 'room-a',
+    roomTitle: 'ACME - Website revamp',
+    roomScenarioType: 'client_project_restart',
+  }));
+  const roomBSession = normalizeSession(createDefaultSession({
+    roomId: 'room-b',
+    roomTitle: 'Northstar - Demo reply',
+    roomScenarioType: 'sales_inquiry_demo_request',
+  }));
+  const trashedWorkspace = applyTrashRoomToWorkspace({
+    activeRoomId: 'room-a',
+    rooms: [
+      buildRoomRecordFromSession(roomASession, 'room-a'),
+      buildRoomRecordFromSession(roomBSession, 'room-a'),
+    ],
+    lastUpdatedAt: 1,
+  }, 'room-a', roomASession).workspace;
+
+  const restored = applyRestoreRoomToWorkspace(trashedWorkspace, 'room-a');
+
+  assert.equal(restored.workspace.rooms[0]?.id, 'room-a');
+  assert.equal(restored.workspace.rooms[1]?.id, 'room-b');
+  assert.equal(restored.workspace.rooms[0]?.trashedAt, undefined);
 });
 
 test('buildRoomRecordFromSession preserves prior lastKnownGood room data for dumped session', () => {

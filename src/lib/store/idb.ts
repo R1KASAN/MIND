@@ -244,6 +244,7 @@ export interface RoomRecord {
   id: string;
   title: string;
   clientName: string;
+  trashedAt?: number;
   scenarioType: RoomScenarioType;
   lastState: UIRoute;
   lastReentryBrief?: ReentryBrief;
@@ -604,6 +605,60 @@ function truncateRoomLabel(value: string, maxLength = 72) {
   return `${value.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
+function isRoomTrashed(room?: Partial<RoomRecord> | null) {
+  return typeof room?.trashedAt === 'number' && Number.isFinite(room.trashedAt);
+}
+
+function listVisibleRooms(rooms: RoomRecord[]) {
+  return rooms.filter((room) => !isRoomTrashed(room));
+}
+
+function resolveActiveRoomId(rooms: RoomRecord[], preferredRoomId: string | null) {
+  const visibleRooms = listVisibleRooms(rooms);
+  if (visibleRooms.some((room) => room.id === preferredRoomId)) return preferredRoomId;
+  return visibleRooms[0]?.id ?? null;
+}
+
+function buildRenamedRoomRecord(room: RoomRecord, nextTitle: string, activeRoomId: string | null) {
+  const normalizedTitle = truncateRoomLabel(nextTitle.replace(/\s+/g, ' ').trim(), 72);
+  const nextSession = normalizeSession({
+    ...room.session,
+    roomTitle: normalizedTitle,
+  });
+
+  return buildRoomRecordFromSession(nextSession, activeRoomId, {
+    ...room,
+    title: normalizedTitle,
+  });
+}
+
+function buildFallbackRoom(index: number) {
+  const session = buildRoomSessionSeed({
+    roomTitle: buildBlankRoomTitle(index),
+  });
+
+  return buildRoomRecordFromSession(session, session.roomId ?? null, {
+    title: session.roomTitle ?? DEFAULT_ROOM_TITLE,
+    clientName: session.roomTitle ?? DEFAULT_ROOM_TITLE,
+    scenarioType: session.roomScenarioType ?? 'general_client_room',
+  });
+}
+
+function chooseNextVisibleRoom(rooms: RoomRecord[], removedRoomId: string) {
+  const removedIndex = rooms.findIndex((room) => room.id === removedRoomId);
+  if (removedIndex < 0) return null;
+
+  for (let index = removedIndex + 1; index < rooms.length; index += 1) {
+    if (!isRoomTrashed(rooms[index])) return rooms[index] ?? null;
+  }
+
+  for (let index = removedIndex - 1; index >= 0; index -= 1) {
+    if (!isRoomTrashed(rooms[index])) return rooms[index] ?? null;
+  }
+
+  return null;
+}
+
 function deriveRoomTitleFromSession(session: AppSession, fallbackTitle = DEFAULT_ROOM_TITLE) {
   const candidates = [
     !looksGenericRoomTitle(session.roomTitle) ? session.roomTitle : undefined,
@@ -679,10 +734,10 @@ function roomHasCachedSavePoint(room?: Partial<RoomRecord> | null) {
   );
 }
 
-function deriveRoomFlags(session: AppSession, activeRoomId: string | null) {
+function deriveRoomFlags(session: AppSession, activeRoomId: string | null, existing?: Partial<RoomRecord>) {
   const lastUpdatedAt = deriveRoomLastUpdatedAt(session);
   const stale = Date.now() - lastUpdatedAt > 1000 * 60 * 60 * 24 * 3;
-  const unread = session.roomId !== activeRoomId && roomHasContinuity(session);
+  const unread = isRoomTrashed(existing) ? false : session.roomId !== activeRoomId && roomHasContinuity(session);
   return { stale, unread, lastUpdatedAt };
 }
 
@@ -754,13 +809,14 @@ export function buildRoomRecordFromSession(
   existing?: Partial<RoomRecord>,
 ): RoomRecord {
   const title = deriveRoomTitleFromSession(session, existing?.title ?? DEFAULT_ROOM_TITLE);
-  const { stale, unread, lastUpdatedAt } = deriveRoomFlags(session, activeRoomId);
+  const { stale, unread, lastUpdatedAt } = deriveRoomFlags(session, activeRoomId, existing);
   const lastKnownGood = buildLastKnownGoodFromSession(session, existing);
 
   return {
     id: session.roomId ?? existing?.id ?? `room-${session.lastActive}`,
     title,
     clientName: existing?.clientName ?? title,
+    trashedAt: typeof existing?.trashedAt === 'number' ? existing.trashedAt : undefined,
     scenarioType: session.roomScenarioType ?? existing?.scenarioType ?? 'general_client_room',
     lastState: session.uiRoute,
     lastReentryBrief: session.task?.reentryBrief ?? existing?.lastReentryBrief,
@@ -1199,6 +1255,7 @@ function normalizeRoomRecord(value: unknown, activeRoomId: string | null): RoomR
     id: normalizeOptionalString(record.id) ?? nextSession.roomId ?? `room-${nextSession.lastActive}`,
     title: normalizeOptionalString(record.title) ?? nextSession.roomTitle ?? DEFAULT_ROOM_TITLE,
     clientName: normalizeOptionalString(record.clientName) ?? nextSession.roomTitle ?? DEFAULT_ROOM_TITLE,
+    trashedAt: typeof record.trashedAt === 'number' ? record.trashedAt : undefined,
     scenarioType: isRoomScenarioType(record.scenarioType) ? record.scenarioType : nextSession.roomScenarioType,
     lastKnownGoodBrief: normalizeOptionalString(record.lastKnownGoodBrief),
     lastKnownGoodNextMoves: Array.isArray(record.lastKnownGoodNextMoves)
@@ -1223,9 +1280,7 @@ function normalizeRoomWorkspace(value: unknown): RoomWorkspace | undefined {
 
   if (rooms.length === 0) return undefined;
 
-  const normalizedActiveRoomId = rooms.some((room) => room.id === activeRoomId)
-    ? activeRoomId
-    : rooms[0]?.id ?? null;
+  const normalizedActiveRoomId = resolveActiveRoomId(rooms, activeRoomId);
 
   return {
     activeRoomId: normalizedActiveRoomId,
@@ -1304,7 +1359,7 @@ export async function getRoomWorkspace(): Promise<RoomWorkspace> {
 
 export async function getRooms(): Promise<RoomRecord[]> {
   const workspace = await getRoomWorkspace();
-  return workspace.rooms;
+  return listVisibleRooms(workspace.rooms);
 }
 
 export async function createRoom(input?: {
@@ -1338,11 +1393,158 @@ export async function createRoom(input?: {
   return room;
 }
 
+export function applyRenameRoomToWorkspace(
+  workspace: RoomWorkspace,
+  roomId: string,
+  nextTitle: string,
+  currentSession?: AppSession | null,
+) {
+  const normalizedTitle = normalizeOptionalString(nextTitle);
+  if (!normalizedTitle) {
+    return {
+      workspace,
+      session: null,
+    };
+  }
+
+  let renamedCurrent = false;
+  const nextRooms = workspace.rooms.map((room) => {
+    if (room.id !== roomId) return room;
+    renamedCurrent = workspace.activeRoomId === roomId;
+    return buildRenamedRoomRecord(room, normalizedTitle, workspace.activeRoomId);
+  });
+
+  const nextWorkspace: RoomWorkspace = {
+    ...workspace,
+    rooms: nextRooms,
+    lastUpdatedAt: Date.now(),
+  };
+
+  if (!renamedCurrent) {
+    return {
+      workspace: nextWorkspace,
+      session: null,
+    };
+  }
+
+  const activeRoom = nextRooms.find((room) => room.id === roomId);
+  const nextSession = normalizeSession({
+    ...(activeRoom?.session ?? currentSession ?? createDefaultSession()),
+    roomId,
+    roomTitle: activeRoom?.title ?? normalizedTitle,
+  });
+
+  return {
+    workspace: nextWorkspace,
+    session: nextSession,
+  };
+}
+
+export function applyTrashRoomToWorkspace(
+  workspace: RoomWorkspace,
+  roomId: string,
+  currentSession?: AppSession | null,
+) {
+  const now = Date.now();
+  const nextRooms = workspace.rooms.map((room) => {
+    if (room.id !== roomId || isRoomTrashed(room)) return room;
+    return {
+      ...room,
+      unread: false,
+      trashedAt: now,
+    };
+  });
+
+  let visibleRooms = listVisibleRooms(nextRooms);
+  if (visibleRooms.length === 0) {
+    const fallbackRoom = buildFallbackRoom(1);
+    nextRooms.push(fallbackRoom);
+    visibleRooms = [fallbackRoom];
+  }
+
+  const nextActiveRoom = workspace.activeRoomId === roomId
+    ? chooseNextVisibleRoom(nextRooms, roomId) ?? visibleRooms[0] ?? null
+    : visibleRooms.find((room) => room.id === workspace.activeRoomId) ?? visibleRooms[0] ?? null;
+
+  const nextActiveRoomId = nextActiveRoom?.id ?? null;
+  const normalizedRooms = nextRooms.map((room) => buildRoomRecordFromSession(room.session, nextActiveRoomId, room));
+  const nextWorkspace: RoomWorkspace = {
+    activeRoomId: nextActiveRoomId,
+    rooms: normalizedRooms,
+    lastUpdatedAt: now,
+  };
+
+  if (workspace.activeRoomId !== roomId) {
+    return {
+      workspace: nextWorkspace,
+      session: null,
+    };
+  }
+
+  const activeRoomRecord = normalizedRooms.find((room) => room.id === nextActiveRoomId) ?? nextActiveRoom ?? null;
+  const nextSession = activeRoomRecord
+    ? hydrateRoomSessionFromRecord(activeRoomRecord.session, activeRoomRecord)
+    : normalizeSession(currentSession ?? createDefaultSession());
+
+  return {
+    workspace: nextWorkspace,
+    session: nextSession,
+  };
+}
+
+export function applyRestoreRoomToWorkspace(workspace: RoomWorkspace, roomId: string) {
+  const nextRooms = workspace.rooms.map((room) => {
+    if (room.id !== roomId || !isRoomTrashed(room)) return room;
+    return {
+      ...room,
+      trashedAt: undefined,
+    };
+  });
+
+  const nextActiveRoomId = resolveActiveRoomId(nextRooms, workspace.activeRoomId);
+  return {
+    workspace: {
+      activeRoomId: nextActiveRoomId,
+      rooms: nextRooms.map((room) => buildRoomRecordFromSession(room.session, nextActiveRoomId, room)),
+      lastUpdatedAt: Date.now(),
+    },
+    session: null,
+  };
+}
+
+export async function renameRoom(roomId: string, nextTitle: string) {
+  const [workspace, currentSession] = await Promise.all([getRoomWorkspace(), getSession()]);
+  const result = applyRenameRoomToWorkspace(workspace, roomId, nextTitle, currentSession);
+  await persistRoomWorkspace(result.workspace);
+  if (result.session) {
+    await set(SESSION_KEY, result.session);
+  }
+  return result;
+}
+
+export async function trashRoom(roomId: string) {
+  const [workspace, currentSession] = await Promise.all([getRoomWorkspace(), getSession()]);
+  const result = applyTrashRoomToWorkspace(workspace, roomId, currentSession);
+  await persistRoomWorkspace(result.workspace);
+  if (result.session) {
+    await set(SESSION_KEY, result.session);
+  }
+  return result;
+}
+
+export async function restoreRoom(roomId: string) {
+  const workspace = await getRoomWorkspace();
+  const result = applyRestoreRoomToWorkspace(workspace, roomId);
+  await persistRoomWorkspace(result.workspace);
+  return result;
+}
+
 export async function activateRoom(roomId: string): Promise<AppSession> {
   const workspace = await getRoomWorkspace();
-  const targetRoom = workspace.rooms.find((room) => room.id === roomId);
+  const visibleRooms = listVisibleRooms(workspace.rooms);
+  const targetRoom = visibleRooms.find((room) => room.id === roomId);
   if (!targetRoom) {
-    const fallbackSession = workspace.rooms[0]?.session ?? buildRoomSessionSeed();
+    const fallbackSession = visibleRooms[0]?.session ?? buildRoomSessionSeed();
     await set(SESSION_KEY, fallbackSession);
     return fallbackSession;
   }

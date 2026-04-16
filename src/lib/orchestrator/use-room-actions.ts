@@ -6,6 +6,9 @@ import {
   activateRoom,
   createRoom,
   normalizeSession,
+  renameRoom,
+  restoreRoom,
+  trashRoom,
   type Action,
   type AppSession,
   type RoomRecord,
@@ -22,12 +25,13 @@ interface TaskController {
 }
 
 export function getAdjacentRoom(rooms: RoomRecord[], activeRoomId: string | null, direction: 'next' | 'previous') {
-  if (rooms.length === 0) return null;
-  const currentIndex = rooms.findIndex((room) => room.id === activeRoomId);
+  const visibleRooms = rooms.filter((room) => typeof room.trashedAt !== 'number');
+  if (visibleRooms.length === 0) return null;
+  const currentIndex = visibleRooms.findIndex((room) => room.id === activeRoomId);
   const safeIndex = currentIndex >= 0 ? currentIndex : 0;
   const delta = direction === 'next' ? 1 : -1;
-  const nextIndex = (safeIndex + delta + rooms.length) % rooms.length;
-  return rooms[nextIndex] ?? null;
+  const nextIndex = (safeIndex + delta + visibleRooms.length) % visibleRooms.length;
+  return visibleRooms[nextIndex] ?? null;
 }
 
 export function canContinueFromRoomCard(
@@ -110,6 +114,7 @@ export function useRoomActions({
   }, [activeRoomId, hydrateSessionState, refreshRooms, resetRoomInteractionState, rooms]);
 
   const activeRoom = rooms.find((room) => room.id === activeRoomId) ?? null;
+  const visibleRoom = activeRoom && typeof activeRoom.trashedAt !== 'number' ? activeRoom : null;
 
   const handleCreateRoom = async () => {
     const created = await createRoom({
@@ -125,9 +130,34 @@ export function useRoomActions({
 
   const handleSelectRoom = async (roomId: string) => {
     if (roomId === activeRoomId) return;
+    const selectedRoom = rooms.find((room) => room.id === roomId);
+    if (!selectedRoom || typeof selectedRoom.trashedAt === 'number') return;
     const nextSession = await activateRoom(roomId);
     resetRoomInteractionState();
     await hydrateSessionState(normalizeSession(nextSession));
+    await refreshRooms();
+  };
+
+  const handleRenameRoom = async (roomId: string, nextTitle: string) => {
+    const result = await renameRoom(roomId, nextTitle);
+    resetRoomInteractionState();
+    if (result.session) {
+      await hydrateSessionState(normalizeSession(result.session));
+    }
+    await refreshRooms();
+  };
+
+  const handleTrashRoom = async (roomId: string) => {
+    const result = await trashRoom(roomId);
+    resetRoomInteractionState();
+    if (result.session) {
+      await hydrateSessionState(normalizeSession(result.session));
+    }
+    await refreshRooms();
+  };
+
+  const handleRestoreRoom = async (roomId: string) => {
+    await restoreRoom(roomId);
     await refreshRooms();
   };
 
@@ -172,11 +202,14 @@ export function useRoomActions({
   };
 
   return {
-    activeRoom,
+    activeRoom: visibleRoom,
     roomCardCanContinue: session ? canContinueFromRoomCard(session, currentPayload, currentActionState) : false,
     roomCardCanMakeSmaller: session ? canMakeSmallerFromRoomCard(session, currentPayload, currentActionState) : false,
     handleCreateRoom,
     handleSelectRoom,
+    handleRenameRoom,
+    handleTrashRoom,
+    handleRestoreRoom,
     handleContinueFromRoomCard,
     handleMakeSmallerFromRoomCard,
   };

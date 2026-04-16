@@ -602,6 +602,9 @@ export default function StateMachinePage() {
     roomCardCanMakeSmaller,
     handleCreateRoom,
     handleSelectRoom,
+    handleRenameRoom,
+    handleTrashRoom,
+    handleRestoreRoom,
     handleContinueFromRoomCard,
     handleMakeSmallerFromRoomCard,
   } = useRoomActions({
@@ -1133,6 +1136,9 @@ export default function StateMachinePage() {
               activeRoomId={activeRoomId}
               onSelectRoom={handleSelectRoomFromShell}
               onCreateRoom={handleCreateRoom}
+              onRenameRoom={handleRenameRoom}
+              onTrashRoom={handleTrashRoom}
+              onRestoreRoom={handleRestoreRoom}
               collapsed={!isCompactViewport && isRoomSidebarCollapsed}
             />
           </div>

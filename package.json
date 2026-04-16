@@ -27,6 +27,7 @@
     "smoke:task-flow:repeat:balanced-higher-overall-budget": "MIND_RESCUE_BASELINE_LABEL=balanced-higher-overall-budget MIND_RESCUE_BASELINE_NUM_PREDICT=160 MIND_RESCUE_BASELINE_REPAIR_NUM_PREDICT=220 MIND_RESCUE_BASELINE_TIMEOUT_MS=20000 MIND_RESCUE_BASELINE_REPAIR_TIMEOUT_MS=15000 MIND_RESCUE_BASELINE_OVERALL_BUDGET_MS=43000 tsx scripts/run-smoke-task-flow-repeat.ts",
     "smoke:task-flow:browser": "tsx scripts/run-smoke-task-flow.ts",
     "smoke:demo-browser": "tsx scripts/run-smoke-demo-browser.ts",
+    "smoke:rooms": "tsx scripts/browser-verify-room-management.ts",
     "smoke:studio": "tsx scripts/browser-smoke-studio.ts",
     "smoke:studio-mobile": "tsx scripts/browser-smoke-studio-mobile.ts",
     "smoke:reentry-mobile": "tsx scripts/run-smoke-reentry-mobile.ts",
