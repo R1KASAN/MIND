@@ -37,29 +37,33 @@ async function run() {
     }
 
     const roomCanvasHeader = page.locator('.room-canvas-header');
-    const reentrySummaryBlock = page.locator('.room-canvas-header .room-reentry-block').nth(1);
-    const reentryNextMoveList = page.locator('.room-canvas-header .room-reentry-list li');
+    const reentrySummaryBlock = page.locator('.room-canvas-header .room-reentry-block').filter({
+      has: page.locator('.room-reentry-label', { hasText: 'ค้างตรงนี้' }),
+    });
+    const reentryNextMoveBlock = page.locator('.room-canvas-header .room-reentry-block').filter({
+      has: page.locator('.room-reentry-label', { hasText: 'เริ่มตรงนี้' }),
+    });
     const primaryRoomHeading = page.getByRole('heading', { name: 'ACME - Website revamp' });
     const healthBadge = page.locator('.app-health-badge');
     const healthHeadline = page.locator('.app-health-headline');
     const continueButton = page.getByRole('button', { name: 'ต่อจากจุดนี้' });
-    const makeSmallerButton = page.getByRole('button', { name: 'ย่อยให้เล็กลง' });
+    const makeSmallerButton = page.getByRole('button', { name: 'ทำให้เริ่มง่ายขึ้น' });
 
     await roomCanvasHeader.waitFor({ state: 'visible' });
     await primaryRoomHeading.waitFor({ state: 'visible' });
     const cardVisibleMs = Date.now() - cardLoadStartedAt;
     const cachedSummaryBeforeRefresh = (await reentrySummaryBlock.innerText()).replace(/\s+/g, ' ').trim();
-    const cachedNextMovesBeforeRefresh = await reentryNextMoveList.allInnerTexts();
-    if (cachedNextMovesBeforeRefresh.length < 1) {
+    const cachedNextMoveBlockText = (await reentryNextMoveBlock.innerText()).replace(/\s+/g, ' ').trim();
+    const cachedNextMoveBeforeRefresh = cachedNextMoveBlockText.replace(/^เริ่มตรงนี้\s*/, '').trim();
+    if (cachedNextMoveBeforeRefresh.length < 1) {
       throw new Error('Reentry card did not show next moves before refresh wait');
     }
 
     await page.waitForTimeout(3000);
 
-    await page.getByText('งานนี้คืออะไร').waitFor({ state: 'visible' });
-    await page.getByText('ล่าสุดอยู่ตรงไหน').waitFor({ state: 'visible' });
-    await page.getByText('Next move ที่เริ่มได้เลย').waitFor({ state: 'visible' });
-    await page.getByText('ตอนนี้ AI ใช้อะไรอยู่').waitFor({ state: 'visible' });
+    await page.getByText('ค้างตรงนี้').waitFor({ state: 'visible' });
+    await page.getByText('เริ่มตรงนี้').waitFor({ state: 'visible' });
+    await page.getByText('AI ใช้ข้อมูลอะไร').waitFor({ state: 'visible' });
     await continueButton.waitFor({ state: 'visible' });
     await makeSmallerButton.waitFor({ state: 'visible' });
 
@@ -74,7 +78,7 @@ async function run() {
     }
 
     const initialSummary = (
-      await page.locator('.room-canvas-header .room-reentry-block').nth(1).innerText()
+      await reentrySummaryBlock.innerText()
     ).replace(/\s+/g, ' ').trim();
 
     const urgentRoomButton = page.locator('.room-sidebar-item').filter({
@@ -85,9 +89,11 @@ async function run() {
     });
     const urgentRoomHeading = page.getByRole('heading', { name: 'Northstar - Demo reply' });
     await urgentRoomHeading.waitFor({ state: 'visible' });
-    await page.getByText('Urgent reply').waitFor({ state: 'visible' });
-    const urgentNextMoves = await page.locator('.room-canvas-header .room-reentry-list li').allInnerTexts();
-    if (urgentNextMoves.length < 1) {
+    await urgentRoomButton.getByText('Urgent reply').first().waitFor({ state: 'visible' });
+    const urgentNextMoveText = (
+      await reentryNextMoveBlock.innerText()
+    ).replace(/\s+/g, ' ').trim().replace(/^เริ่มตรงนี้\s*/, '').trim();
+    if (urgentNextMoveText.length < 1) {
       throw new Error('Urgent room did not show any next moves in the reentry card');
     }
     const urgentContinueButton = page.getByRole('button', { name: 'ต่อจากจุดนี้' });
@@ -95,7 +101,7 @@ async function run() {
       throw new Error('Urgent room continue CTA is disabled');
     }
     const urgentSummary = (
-      await page.locator('.room-canvas-header .room-reentry-block').nth(1).innerText()
+      await reentrySummaryBlock.innerText()
     ).replace(/\s+/g, ' ').trim();
 
     const restartRoomButton = page.locator('.room-sidebar-item').filter({
@@ -106,7 +112,7 @@ async function run() {
     });
     await primaryRoomHeading.waitFor({ state: 'visible' });
     const restoredRestartSummary = (
-      await page.locator('.room-canvas-header .room-reentry-block').nth(1).innerText()
+      await reentrySummaryBlock.innerText()
     ).replace(/\s+/g, ' ').trim();
     if (initialSummary !== restoredRestartSummary) {
       throw new Error('Restart room summary changed after switching away and back');
@@ -117,7 +123,7 @@ async function run() {
     await urgentRoomHeading.waitFor({ state: 'visible' });
 
     const restoredUrgentSummary = (
-      await page.locator('.room-canvas-header .room-reentry-block').nth(1).innerText()
+      await reentrySummaryBlock.innerText()
     ).replace(/\s+/g, ' ').trim();
 
     if (urgentSummary !== restoredUrgentSummary) {
@@ -138,13 +144,13 @@ async function run() {
       ok: true,
       baseUrl: BASE_URL,
       cardVisibleMs,
-      cachedCardVisibleBeforeRefresh: cachedSummaryBeforeRefresh.length > 0 && cachedNextMovesBeforeRefresh.length > 0,
-      cachedNextMoveCountBeforeRefresh: cachedNextMovesBeforeRefresh.length,
+      cachedCardVisibleBeforeRefresh: cachedSummaryBeforeRefresh.length > 0 && cachedNextMoveBeforeRefresh.length > 0,
+      cachedNextMoveCountBeforeRefresh: cachedNextMoveBeforeRefresh.length > 0 ? 1 : 0,
       healthBadge: healthBadgeText,
       healthHeadline: healthHeadlineText,
       freshCount,
       restoredSummaryMatches: initialSummary === restoredRestartSummary,
-      urgentNextMoveCount: urgentNextMoves.length,
+      urgentNextMoveCount: urgentNextMoveText.length > 0 ? 1 : 0,
       urgentContinueEnabled: await urgentContinueButton.isEnabled(),
       urgentSummaryPreserved: urgentSummary === restoredUrgentSummary,
       cachedSummaryPreview: cachedSummaryBeforeRefresh,
