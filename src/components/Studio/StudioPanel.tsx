@@ -4,13 +4,39 @@ import { useEffect, useRef, useState } from 'react';
 import type { StudioIntent, StudioIntentId, StudioSnapshot } from '@/lib/orchestrator/studio';
 import { ContextSnapshot } from './ContextSnapshot';
 
+type StudioMode = 'dump' | 'action' | 'scaffold' | 'rescue' | 'reentry';
+
 interface Props {
   snapshot: StudioSnapshot | null;
   intents: StudioIntent[];
   loadingIntentId?: StudioIntentId | null;
   onIntent: (intent: StudioIntent) => void | Promise<void>;
   onEditContext?: () => void;
+  mode?: StudioMode;
 }
+
+const PANEL_COPY: Record<StudioMode, { title: string; detail: string }> = {
+  dump: {
+    title: 'ใช้บริบทของงานนี้ต่อได้เลย โดยไม่ต้องพิมพ์ใหม่',
+    detail: 'ดู snapshot ล่าสุด หา next move และกลับเข้าบริบทเดิมได้จาก rail นี้',
+  },
+  action: {
+    title: 'ตัวช่วยของก้าวนี้',
+    detail: 'ใช้บริบทเดิมดูว่าทำไมก้าวนี้มาก่อน หรือขอให้ MIND ช่วยปรับทางต่อ',
+  },
+  scaffold: {
+    title: 'ตัวช่วยย่อยงาน',
+    detail: 'กลับมาดูบริบทเดิม ย่อยให้เล็กลง และเช็กว่าติดตรงไหนโดยไม่หลุดเป้าหมาย',
+  },
+  rescue: {
+    title: 'ตัวช่วยตอนติด',
+    detail: 'rail นี้ไว้ดู context ที่ MIND ใช้วินิจฉัยและลองทางออกแบบไม่ต้องเริ่มใหม่',
+  },
+  reentry: {
+    title: 'ตัวช่วยกลับเข้าห้องเดิม',
+    detail: 'สรุปบริบท, สิ่งที่ยังค้าง, และทางเริ่มที่สั้นที่สุดควรอยู่ตรงนี้',
+  },
+};
 
 export function StudioPanel({
   snapshot,
@@ -18,6 +44,7 @@ export function StudioPanel({
   loadingIntentId = null,
   onIntent,
   onEditContext,
+  mode = 'dump',
 }: Props) {
   const [showAllMobileIntents, setShowAllMobileIntents] = useState(false);
   const [showAllDesktopIntents, setShowAllDesktopIntents] = useState(false);
@@ -26,6 +53,7 @@ export function StudioPanel({
   const primaryIntents = intents.slice(0, 2);
   const extraIntents = intents.slice(2);
   const snapshotRef = useRef<HTMLDivElement | null>(null);
+  const copy = PANEL_COPY[mode];
 
   useEffect(() => {
     if (!snapshotEmphasized) return;
@@ -71,19 +99,13 @@ export function StudioPanel({
 
   return (
     <aside className="studio-panel">
-      <div className="studio-card" style={{ gap: '0.8rem' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-          <p className="studio-eyebrow">Studio</p>
-          <h2 style={{ fontSize: '1.1rem', lineHeight: 1.3 }}>
-            {snapshot
-              ? 'ใช้บริบทของงานนี้ต่อได้เลย โดยไม่ต้องพิมพ์ใหม่'
-              : 'เริ่มจากข้อความก่อน แล้วค่อยใช้ Studio ต่อ'}
-          </h2>
+      <div className="studio-card studio-card-intro" style={{ gap: '0.65rem' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.18rem' }}>
+          <p className="studio-eyebrow">Studio / ตัวช่วย</p>
+          <h2 style={{ fontSize: '1rem', lineHeight: 1.35 }}>{copy.title}</h2>
         </div>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', lineHeight: 1.6 }}>
-          {snapshot
-            ? 'ถ้ากลับมาแล้วอยากดูสถานะ หาทางเริ่ม หรือขอให้ MIND พากลับเข้าบริบทเดิม กดจากตรงนี้ได้เลย'
-            : 'พิมพ์หรือวางสภาพงานก่อน เมื่อ MIND มีบริบทของงานนี้แล้ว Studio จะช่วยดูสถานะ หาทางเริ่ม และพากลับเข้าบริบทเดิมให้'}
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', lineHeight: 1.55 }}>
+          {copy.detail}
         </p>
       </div>
 
@@ -101,21 +123,13 @@ export function StudioPanel({
         <div className="studio-mobile-chip-row">
           {primaryIntents.map((intent) => renderIntentButton(intent))}
         </div>
-        {blockedMessage && (
-          <p className="studio-inline-note">{blockedMessage}</p>
-        )}
+        {blockedMessage && <p className="studio-inline-note">{blockedMessage}</p>}
         {extraIntents.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
             <button
               type="button"
               onClick={() => setShowAllMobileIntents((value) => !value)}
-              style={{
-                background: 'transparent',
-                border: '1px solid rgba(255,255,255,0.08)',
-                color: 'var(--text-secondary)',
-                padding: '0.65rem 0.85rem',
-                fontSize: '0.84rem',
-              }}
+              className="studio-more-button"
             >
               {showAllMobileIntents ? 'ซ่อนตัวช่วยเพิ่ม' : 'ดูตัวช่วยเพิ่ม'}
             </button>
@@ -129,27 +143,6 @@ export function StudioPanel({
       </div>
 
       <div className="studio-desktop-stack">
-        <div className="studio-intent-list">
-          {(showAllDesktopIntents ? intents : primaryIntents).map((intent) => renderIntentButton(intent))}
-        </div>
-        {extraIntents.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setShowAllDesktopIntents((value) => !value)}
-            style={{
-              background: 'transparent',
-              border: '1px solid rgba(255,255,255,0.08)',
-              color: 'var(--text-secondary)',
-              padding: '0.65rem 0.85rem',
-              fontSize: '0.84rem',
-            }}
-          >
-            {showAllDesktopIntents ? 'ซ่อนตัวช่วยเพิ่ม' : 'ดูตัวช่วยเพิ่ม'}
-          </button>
-        )}
-        {blockedMessage && (
-          <p className="studio-inline-note">{blockedMessage}</p>
-        )}
         {snapshot ? (
           <div ref={snapshotRef}>
             <ContextSnapshot
@@ -167,6 +160,25 @@ export function StudioPanel({
             </p>
           </section>
         )}
+
+        <div className="studio-card" style={{ gap: '0.75rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center' }}>
+            <p className="studio-eyebrow">ทำอะไรต่อได้บ้าง</p>
+            {extraIntents.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowAllDesktopIntents((value) => !value)}
+                className="studio-more-button"
+              >
+                {showAllDesktopIntents ? 'ซ่อนเพิ่ม' : 'ดูเพิ่ม'}
+              </button>
+            )}
+          </div>
+          <div className="studio-intent-list">
+            {(showAllDesktopIntents ? intents : primaryIntents).map((intent) => renderIntentButton(intent))}
+          </div>
+          {blockedMessage && <p className="studio-inline-note">{blockedMessage}</p>}
+        </div>
       </div>
     </aside>
   );

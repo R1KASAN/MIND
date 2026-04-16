@@ -12,12 +12,12 @@ interface Props {
 
 function scenarioCopy(room: RoomRecord) {
   if (room.scenarioType === 'sales_inquiry_demo_request') {
-    return 'ห้องนี้เน้นตอบลูกค้าให้เร็ว โดยไม่หลุด context ของดีล';
+    return 'โฟกัสตอบลูกค้าให้ทัน โดยไม่หลุดบริบทของดีล';
   }
   if (room.scenarioType === 'client_project_restart') {
-    return 'ห้องนี้เน้นกลับเข้างานเดิมให้เร็ว แล้วหา next move ที่เริ่มได้จริง';
+    return 'โฟกัสกลับเข้างานเดิมให้เร็ว แล้วหา next move ที่เริ่มได้จริง';
   }
-  return 'ห้องนี้เก็บ context ของ client / project นี้ไว้ให้กลับมาต่อได้ง่าย';
+  return 'ห้องนี้เก็บบริบทของงานนี้ไว้ให้กลับมาต่อได้ง่าย';
 }
 
 function getFreshnessState(room: RoomRecord) {
@@ -32,7 +32,7 @@ function getFreshnessState(room: RoomRecord) {
   if (room.aiFreshness === 'stale') {
     return {
       tone: 'stale',
-      title: 'ข้อมูลนี้ยังไม่ refresh',
+      title: 'ยังไม่ refresh',
       detail: 'เปิดห้องแล้วเริ่มต่อได้เลย แม้ AI ยังไม่ได้สรุปรอบใหม่',
     };
   }
@@ -68,87 +68,84 @@ export function RoomCanvasHeader({
     : scenarioCopy(room);
   const updatedAt = formatUpdatedAt(room.lastKnownGoodAt ?? room.lastUpdatedAt);
   const hasSavePoint = brief.length > 0 || nextMoves.length > 0;
+  const primaryNextMove = nextMoves[0];
 
   return (
     <section className="room-canvas-header">
       <div className="room-canvas-header-top">
         <div className="room-canvas-title-stack">
-          <p className="studio-eyebrow">Save point</p>
+          <p className="studio-eyebrow">จุดล่าสุด</p>
           <h2 className="room-canvas-title">{room.title}</h2>
+          <p className="room-canvas-subtitle">{roomIdentity}</p>
         </div>
-        <div className="room-canvas-meta">
-          <span className="studio-chip">{room.lastState}</span>
-          <span className={`studio-chip room-freshness-chip room-freshness-chip-${freshness.tone}`}>
-            {freshness.title}
-          </span>
-          <span className="studio-chip">{updatedAt}</span>
+        <div className="room-reentry-actions">
+          <button
+            type="button"
+            className="room-reentry-action room-reentry-action-primary"
+            onClick={() => void onContinue()}
+            disabled={continueDisabled}
+          >
+            ต่อจากจุดนี้
+          </button>
+          <button
+            type="button"
+            className="room-reentry-action room-reentry-action-secondary"
+            onClick={() => void onMakeSmaller()}
+            disabled={makeSmallerDisabled}
+          >
+            ทำให้เริ่มง่ายขึ้น
+          </button>
         </div>
       </div>
 
       <div className="room-canvas-meta">
-        <span className="studio-chip">{scenarioCopy(room)}</span>
-        {room.stale && <span className="studio-chip studio-chip-danger">ควรกลับมาทำต่อก่อน context จะเย็น</span>}
+        <span className="studio-chip">{room.lastState}</span>
+        <span className={`studio-chip room-freshness-chip room-freshness-chip-${freshness.tone}`}>
+          {freshness.title}
+        </span>
+        <span className="studio-chip">{updatedAt}</span>
+        {room.stale && <span className="studio-chip studio-chip-danger">ค้างมาหลายวัน</span>}
       </div>
 
       {!hasSavePoint ? (
         <div className="room-reentry-empty">
           <p className="room-reentry-empty-title">ห้องนี้ยังไม่มี save point</p>
           <p className="room-reentry-empty-copy">
-            วาง chaos ของงานนี้ แล้วให้ MIND สร้าง save point แรกเพื่อเก็บสถานะล่าสุดและ next move ของห้องนี้
+            วาง chaos ของงานนี้ก่อน แล้วให้ MIND สร้างจุดล่าสุดกับ next move แรกให้ห้องนี้
           </p>
         </div>
       ) : (
-        <div className="room-reentry-grid">
+        <div className="room-reentry-grid room-reentry-grid-slim">
           <article className="room-reentry-block">
-            <p className="room-reentry-label">งานนี้คืออะไร</p>
-            <p className="room-reentry-copy">{roomIdentity}</p>
-          </article>
-
-          <article className="room-reentry-block">
-            <p className="room-reentry-label">ล่าสุดอยู่ตรงไหน</p>
+            <p className="room-reentry-label">ค้างตรงนี้</p>
             <p className="room-reentry-copy">{brief}</p>
           </article>
 
           <article className="room-reentry-block">
-            <p className="room-reentry-label">Next move ที่เริ่มได้เลย</p>
-            {nextMoves.length > 0 ? (
-              <ol className="room-reentry-list">
-                {nextMoves.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ol>
+            <p className="room-reentry-label">เริ่มตรงนี้</p>
+            {primaryNextMove ? (
+              <p className="room-reentry-copy">{primaryNextMove}</p>
             ) : (
               <p className="room-reentry-copy room-reentry-copy-muted">
-                ห้องนี้มี save point แล้ว แต่ยังไม่มี next move ที่ชัดพอ ให้กดต่อจากจุดนี้เพื่อกลับเข้า flow เดิมก่อน
+                ยังไม่มี next move ที่ชัดพอ กดต่อจากจุดนี้เพื่อให้ MIND พากลับเข้า flow เดิมก่อน
               </p>
             )}
-          </article>
-
-          <article className="room-reentry-block">
-            <p className="room-reentry-label">ตอนนี้ AI ใช้อะไรอยู่</p>
-            <p className="room-reentry-copy">{freshness.detail}</p>
           </article>
         </div>
       )}
 
-      <div className="room-reentry-actions">
-        <button
-          type="button"
-          className="room-reentry-action room-reentry-action-primary"
-          onClick={() => void onContinue()}
-          disabled={continueDisabled}
-        >
-          ต่อจากจุดนี้
-        </button>
-        <button
-          type="button"
-          className="room-reentry-action room-reentry-action-secondary"
-          onClick={() => void onMakeSmaller()}
-          disabled={makeSmallerDisabled}
-        >
-          ย่อยให้เล็กลง
-        </button>
-      </div>
+      {nextMoves.length > 1 && (
+        <div className="room-next-moves">
+          {nextMoves.slice(1).map((item) => (
+            <span key={item} className="room-next-move-chip">{item}</span>
+          ))}
+        </div>
+      )}
+
+      <p className="room-canvas-ai-note">
+        <span className="room-canvas-ai-note-label">AI ใช้ข้อมูลอะไร</span>
+        <span>{freshness.detail}</span>
+      </p>
     </section>
   );
 }

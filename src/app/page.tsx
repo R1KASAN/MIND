@@ -144,6 +144,97 @@ function localDateString(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
+function getRouteShellMeta(
+  route: UIRoute,
+  roomTitle?: string | null,
+  actionTitle?: string | null,
+) {
+  switch (route) {
+    case 'DUMP_ENTRY':
+      return {
+        kicker: 'Room workspace',
+        title: roomTitle || 'เริ่มจากงานนี้',
+        detail: 'วาง chaos ของงานนี้ลงก่อน แล้วค่อยให้ MIND หา next move',
+      };
+    case 'SYNTHESIZING':
+      return {
+        kicker: 'กำลังสรุป',
+        title: roomTitle || 'MIND กำลังจัดบริบท',
+        detail: 'รอให้ MIND สรุปและจัดก้าวถัดไปของห้องนี้ก่อน',
+      };
+    case 'ONE_ACTION':
+      return {
+        kicker: 'Next move',
+        title: actionTitle || roomTitle || 'ก้าวถัดไปของห้องนี้',
+        detail: 'โฟกัสที่ก้าวเดียวที่ควรเริ่มตอนนี้',
+      };
+    case 'SCAFFOLD':
+      return {
+        kicker: 'Scaffold',
+        title: actionTitle || roomTitle || 'ย่อยงานนี้ให้เริ่มได้',
+        detail: 'แตกก้าวนี้ให้อยู่ในขนาดที่ลงมือได้จริง',
+      };
+    case 'RESCUE':
+      return {
+        kicker: 'Rescue',
+        title: actionTitle || roomTitle || 'ช่วยตอนติด',
+        detail: 'ดูว่าติดตรงไหนแล้วหา way out จากบริบทเดิม',
+      };
+    case 'BOUNCE_BACK':
+      return {
+        kicker: 'Reentry',
+        title: roomTitle || 'กลับเข้าห้องเดิม',
+        detail: 'ตัด noise ออก แล้วพากลับไปยังจุดที่ควรเริ่ม',
+      };
+    case 'MORNING_RITUAL':
+      return {
+        kicker: 'Morning ritual',
+        title: roomTitle || 'เริ่มวันจากห้องนี้',
+        detail: 'ดู reentry brief ก่อนเลือกห้องหรือก้าวที่คุ้มสุด',
+      };
+    case 'CLARIFICATION':
+      return {
+        kicker: 'Clarify',
+        title: roomTitle || 'ขอข้อมูลเพิ่ม',
+        detail: 'ตอบคำถามสั้น ๆ เพื่อให้ MIND พา flow ไปต่อได้',
+      };
+    case 'MANUAL_FALLBACK':
+      return {
+        kicker: 'Manual fallback',
+        title: roomTitle || 'AI ยังไม่พร้อม',
+        detail: 'ใช้ทางลัดนี้ไปก่อน แล้วค่อยกลับเข้า AI loop เมื่อพร้อม',
+      };
+    case 'DECISION_BOARD':
+      return {
+        kicker: 'ทางเลือก',
+        title: actionTitle || roomTitle || 'เลือกทางที่ใช่',
+        detail: 'เทียบตัวเลือกก่อนกลับไป focus ที่ก้าวหลัก',
+      };
+    default:
+      return {
+        kicker: 'Workspace',
+        title: roomTitle || 'งานนี้',
+        detail: 'ทำงานต่อจากบริบทของห้องนี้',
+      };
+  }
+}
+
+function getStudioMode(route: UIRoute): 'dump' | 'action' | 'scaffold' | 'rescue' | 'reentry' {
+  switch (route) {
+    case 'ONE_ACTION':
+      return 'action';
+    case 'SCAFFOLD':
+      return 'scaffold';
+    case 'RESCUE':
+      return 'rescue';
+    case 'BOUNCE_BACK':
+    case 'MORNING_RITUAL':
+      return 'reentry';
+    default:
+      return 'dump';
+  }
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function StateMachinePage() {
@@ -192,7 +283,12 @@ export default function StateMachinePage() {
   const [showResetBanner, setShowResetBanner] = useState(false);
   const [presentationMode, setPresentationMode] = useState(false);
   const [demoScenarioId, setDemoScenarioId] = useState<'client_project_restart' | 'sales_inquiry_demo_request'>('client_project_restart');
-  const [showSecondaryTools, setShowSecondaryTools] = useState(false);
+  const [showUtilityMenu, setShowUtilityMenu] = useState(false);
+  const [isCompactViewport, setIsCompactViewport] = useState(false);
+  const [showMobileRooms, setShowMobileRooms] = useState(false);
+  const [showMobileStudio, setShowMobileStudio] = useState(false);
+  const [isRoomSidebarCollapsed, setIsRoomSidebarCollapsed] = useState(false);
+  const [isStudioCollapsed, setIsStudioCollapsed] = useState(false);
   const taskOpenedRef = useRef<string | null>(null);
   const reentryUnderstoodRef = useRef<string | null>(null);
   const previousUiRouteRef = useRef<UIRoute | null>(null);
@@ -229,6 +325,24 @@ export default function StateMachinePage() {
     };
 
     return startAiHealthPolling(refreshAiStatus);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const mediaQuery = window.matchMedia('(max-width: 900px)');
+    const syncViewportState = (matches: boolean) => {
+      setIsCompactViewport(matches);
+      if (!matches) {
+        setShowMobileRooms(false);
+        setShowMobileStudio(false);
+      }
+    };
+
+    syncViewportState(mediaQuery.matches);
+    const handleChange = (event: MediaQueryListEvent) => syncViewportState(event.matches);
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
   }, []);
 
   const refreshRooms = useCallback(async () => {
@@ -334,10 +448,12 @@ export default function StateMachinePage() {
   }, [session?.task?.actionExplanation]);
 
   useEffect(() => {
-    if (session?.uiRoute !== 'DUMP_ENTRY') {
-      setShowSecondaryTools(false);
+    setShowUtilityMenu(false);
+    if (isCompactViewport) {
+      setShowMobileRooms(false);
+      setShowMobileStudio(false);
     }
-  }, [session?.uiRoute]);
+  }, [isCompactViewport, session?.uiRoute]);
 
   const persistSessionWithRooms = useCallback(async (nextSession: AppSession) => {
     await saveSession(nextSession);
@@ -534,6 +650,45 @@ export default function StateMachinePage() {
   const routePrefersCanvasFirst = ['DUMP_ENTRY', 'BOUNCE_BACK', 'MORNING_RITUAL', 'ONE_ACTION'].includes(session.uiRoute);
   const routeMaxWidth = session.uiRoute === 'DUMP_ENTRY' ? '64rem' : '50rem';
   const routeUsesReducedChrome = ['BOUNCE_BACK', 'MORNING_RITUAL', 'ONE_ACTION'].includes(session.uiRoute);
+  const routeMeta = getRouteShellMeta(
+    session.uiRoute,
+    activeRoom?.title ?? session.roomTitle,
+    currentActionState?.title ?? currentPayload?.recommended_action.title ?? null,
+  );
+  const studioMode = getStudioMode(session.uiRoute);
+  const utilitySections = [
+    {
+      title: 'ดูบริบท',
+      items: [
+        { key: 'archive', label: 'Archive', onClick: () => setShowArchive(true) },
+        { key: 'overview', label: 'Overview', onClick: () => setShowOverview(true) },
+        { key: 'trust', label: 'Why this / ความไว้ใจ', onClick: () => setShowTrust(true) },
+      ],
+    },
+    {
+      title: 'คู่มือและทางลัด',
+      items: [
+        { key: 'walkthrough', label: routeUsesReducedChrome ? 'วิธีใช้' : 'ดูเดโม 30 วินาที', onClick: () => setShowWalkthrough(true) },
+        ...(session.uiRoute === 'DUMP_ENTRY'
+          ? [
+              { key: 'pmf', label: 'PMF guide', onClick: () => router.push('/pmf-guide') },
+              { key: 'business', label: 'Business gates', onClick: () => router.push('/business') },
+            ]
+          : []),
+      ],
+    },
+    {
+      title: 'ภายใน',
+      items: [
+        ...(allowAiDebug
+          ? [{ key: 'ai-ops', label: showAiOpsDebug ? 'ซ่อน AI Ops' : 'AI Ops', onClick: () => setShowAiOpsDebug((value) => !value) }]
+          : []),
+        ...(allowObservationCapture
+          ? [{ key: 'observation', label: showObservationCapture ? 'ซ่อน Observation' : 'Observation', onClick: () => setShowObservationCapture((value) => !value) }]
+          : []),
+      ],
+    },
+  ].filter((section) => section.items.length > 0);
 
   const handleEditCurrentContext = async () => {
     await controller.openDumpWithCurrentContext();
@@ -674,78 +829,35 @@ export default function StateMachinePage() {
 
       case 'DUMP_ENTRY':
         return (
-          <>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <BrainDumpInput
-                onNext={controller.handleDump}
-                initialText={session.activeDumpContext?.text}
-                presentationMode={presentationMode}
-                defaultScenarioId={demoScenarioId}
-              />
-              {showResetBanner && (
-                <div
-                  style={{
-                    padding: '0.75rem 0.95rem',
-                    borderRadius: 'calc(var(--radius) + 2px)',
-                    background: 'rgba(255,255,255,0.03)',
-                    border: '1px solid rgba(255,255,255,0.06)',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    gap: '0.75rem',
-                  }}
-                >
-                  <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                    รายการก่อนหน้านี้ยังอยู่ในคลังเก็บ เปิดดูเมื่อจำเป็นได้
-                  </p>
-                  <button
-                    onClick={async () => {
-                      setShowResetBanner(false);
-                      const updated = { ...session, hasSeenResetNotice: true };
-                      sessionRef.current = updated;
-                      setSession(updated);
-                      await persistSessionWithRooms(updated);
-                    }}
-                    style={{ background: 'transparent', fontSize: '0.8rem', padding: '0.2rem 0.4rem', color: 'var(--text-secondary)' }}
-                  >
-                    ซ่อน
-                  </button>
-                </div>
-              )}
-              <details
-                style={{
-                  width: '100%',
-                  padding: '0.95rem 1rem',
-                  borderRadius: 'calc(var(--radius) + 4px)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  background: 'rgba(255,255,255,0.03)',
-                }}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <BrainDumpInput
+              onNext={controller.handleDump}
+              initialText={session.activeDumpContext?.text}
+              presentationMode={presentationMode}
+              defaultScenarioId={demoScenarioId}
+            />
+            {showResetBanner && (
+              <div
+                className="mind-inline-note"
               >
-                <summary
-                  style={{
-                    cursor: 'pointer',
-                    color: 'var(--text-secondary)',
-                    fontSize: '0.92rem',
-                    fontWeight: 600,
+                <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                  รายการก่อนหน้านี้ยังอยู่ในคลังเก็บ เปิดดูเมื่อจำเป็นได้
+                </p>
+                <button
+                  onClick={async () => {
+                    setShowResetBanner(false);
+                    const updated = { ...session, hasSeenResetNotice: true };
+                    sessionRef.current = updated;
+                    setSession(updated);
+                    await persistSessionWithRooms(updated);
                   }}
+                  style={{ background: 'transparent', fontSize: '0.8rem', padding: '0.2rem 0.4rem', color: 'var(--text-secondary)' }}
                 >
-                  ดูบริบทและตัวช่วยเพิ่มเติม
-                </summary>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', marginTop: '0.9rem' }}>
-                  <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.9rem', lineHeight: 1.6 }}>
-                    เปิดส่วนนี้เมื่อต้องการดูสถานะล่าสุด หา next move จากบริบทเดิม หรือใช้ตัวช่วยรองเพิ่มเติม
-                  </p>
-                  <StudioPanel
-                    snapshot={studioSnapshot}
-                    intents={studioIntents}
-                    loadingIntentId={activeStudioIntent}
-                    onIntent={handleStudioIntent}
-                    onEditContext={studioSnapshot ? handleEditCurrentContext : undefined}
-                  />
-                </div>
-              </details>
-            </div>
-          </>
+                  ซ่อน
+                </button>
+              </div>
+            )}
+          </div>
         );
 
       case 'SYNTHESIZING':
@@ -839,6 +951,17 @@ export default function StateMachinePage() {
   const showPinButton = ['ONE_ACTION', 'SCAFFOLD'].includes(session.uiRoute) && !!currentActionState;
   const isPinned = currentActionState?.isPinned ?? false;
   const pinDisabled = !isPinned && pinnedCountLocal >= 3;
+  const utilityButtonLabel = showUtilityMenu ? 'ซ่อนเครื่องมือ' : 'เครื่องมือ';
+
+  const handleSelectRoomFromShell = async (roomId: string) => {
+    await handleSelectRoom(roomId);
+    setShowMobileRooms(false);
+  };
+
+  const handleUtilityAction = (action: () => void) => {
+    setShowUtilityMenu(false);
+    action();
+  };
 
   return (
     <>
@@ -893,184 +1016,127 @@ export default function StateMachinePage() {
         />
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '1rem 0' }}>
-        {/* Header */}
-        <div style={{
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          paddingBottom: routeUsesReducedChrome ? '0.7rem' : '1rem',
-          borderBottom: routeUsesReducedChrome ? '1px solid rgba(255,255,255,0.06)' : '1px solid var(--bg-secondary)'
-        }}>
-          <div className={`app-health-rail app-health-rail-${healthRail.tone}`}>
-            <span className="app-health-dot" aria-hidden="true" />
-            <div className="app-health-copy">
-              <div className="app-health-row">
-                <span className="app-health-badge">{healthRail.badge}</span>
-                <span className="app-health-headline">{healthRail.headline}</span>
+      <div className="mind-shell-layout">
+        <header className={`mind-shell-topbar ${routeUsesReducedChrome ? 'is-reduced' : ''}`}>
+          <div className="mind-shell-topbar-left">
+            <button
+              type="button"
+              className="shell-toggle-button"
+              onClick={() => {
+                if (isCompactViewport) {
+                  setShowMobileRooms((value) => !value);
+                  setShowMobileStudio(false);
+                  return;
+                }
+                setIsRoomSidebarCollapsed((value) => !value);
+              }}
+              aria-label={isCompactViewport ? 'เปิดรายการห้องงาน' : isRoomSidebarCollapsed ? 'ขยายแถบห้องงาน' : 'ย่อแถบห้องงาน'}
+            >
+              {isCompactViewport ? 'ห้อง' : isRoomSidebarCollapsed ? '→' : '←'}
+            </button>
+            <div className={`app-health-rail app-health-rail-${healthRail.tone} app-health-rail-compact`}>
+              <span className="app-health-dot" aria-hidden="true" />
+              <div className="app-health-copy">
+                <div className="app-health-row">
+                  <span className="app-health-badge">{healthRail.badge}</span>
+                  <span className="app-health-headline">{healthRail.headline}</span>
+                </div>
+                {!routeUsesReducedChrome && <p className="app-health-detail">{healthRail.detail}</p>}
               </div>
-              {!routeUsesReducedChrome && <p className="app-health-detail">{healthRail.detail}</p>}
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            {session.uiRoute === 'DUMP_ENTRY' ? (
-              <>
-                <button
-                  onClick={() => setShowSecondaryTools((value) => !value)}
-                  style={{
-                    background: 'transparent',
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    color: 'var(--text-secondary)',
-                    padding: '0.55rem 0.9rem',
-                    fontSize: '0.85rem',
-                  }}
-                >
-                  {showSecondaryTools ? 'ซ่อนเมนูรอง' : 'เมนูรอง'}
-                </button>
-                {showSecondaryTools && (
-                  <>
-                    <button
-                      onClick={() => setShowWalkthrough(true)}
-                      style={{ background: 'transparent' }}
-                    >
-                      ดูเดโม 30 วินาที
-                    </button>
-                    <button
-                      onClick={() => router.push('/pmf-guide')}
-                      style={{ background: 'transparent' }}
-                    >
-                      PMF guide
-                    </button>
-                    <button
-                      onClick={() => router.push('/business')}
-                      style={{ background: 'transparent' }}
-                    >
-                      Business gates
-                    </button>
-                    <button onClick={() => setShowArchive(true)} style={{ background: 'transparent' }}>คลังเก็บ</button>
-                    <button onClick={() => setShowOverview(true)} style={{ background: 'transparent' }}>ภาพรวม</button>
-                    <button onClick={() => setShowTrust(true)} style={{ background: 'transparent' }}>ความไว้ใจ</button>
-                    {allowAiDebug && (
-                      <button onClick={() => setShowAiOpsDebug((value) => !value)} style={{ background: 'transparent' }}>
-                        AI Ops
-                      </button>
-                    )}
-                  </>
-                )}
-              </>
-            ) : routeUsesReducedChrome ? (
-              <>
-                <button
-                  onClick={() => setShowSecondaryTools((value) => !value)}
-                  style={{
-                    background: 'transparent',
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    color: 'var(--text-secondary)',
-                    padding: '0.55rem 0.9rem',
-                    fontSize: '0.85rem',
-                  }}
-                >
-                  {showSecondaryTools ? 'ซ่อนเมนูรอง' : 'เมนูรอง'}
-                </button>
-                {showSecondaryTools && (
-                  <>
-                    <button
-                      onClick={() => setShowWalkthrough(true)}
-                      style={{ background: 'transparent' }}
-                    >
-                      วิธีใช้
-                    </button>
-                    {showPinButton && (
-                      <button
-                        onClick={togglePin}
-                        disabled={pinDisabled}
-                        title={pinDisabled ? 'ปักหมุดได้สูงสุด 3 รายการ' : isPinned ? 'เอาหมุดออก' : 'ปักหมุดก้าวนี้'}
-                        style={{
-                          background: 'transparent',
-                          opacity: pinDisabled ? 0.4 : 1,
-                          cursor: pinDisabled ? 'not-allowed' : 'pointer',
-                        }}
-                      >
-                        {isPinned ? '📌 เอาหมุดออก' : '📍 ปักหมุด'}
-                      </button>
-                    )}
-                    <button onClick={() => setShowArchive(true)} style={{ background: 'transparent' }}>คลังเก็บ</button>
-                    <button onClick={() => setShowOverview(true)} style={{ background: 'transparent' }}>ภาพรวม</button>
-                    <button onClick={() => setShowTrust(true)} style={{ background: 'transparent' }}>ความไว้ใจ</button>
-                    {allowAiDebug && (
-                      <button onClick={() => setShowAiOpsDebug((value) => !value)} style={{ background: 'transparent' }}>
-                        AI Ops
-                      </button>
-                    )}
-                  </>
-                )}
-              </>
-            ) : (
-              <>
-                {allowAiDebug && (
-                  <button
-                    onClick={() => setShowAiOpsDebug((value) => !value)}
-                    style={{
-                      background: 'transparent',
-                      border: '1px solid rgba(255,255,255,0.08)',
-                      color: 'var(--text-secondary)',
-                      padding: '0.55rem 0.9rem',
-                      fontSize: '0.85rem',
-                    }}
-                  >
-                    AI Ops
-                  </button>
-                )}
-                <button
-                  onClick={() => setShowWalkthrough(true)}
-                  style={{
-                    background: 'transparent',
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    color: 'var(--text-secondary)',
-                    padding: '0.55rem 0.9rem',
-                    fontSize: '0.85rem',
-                  }}
-                >
-                  วิธีใช้
-                </button>
-                {showPinButton && (
-                  <button
-                    onClick={togglePin}
-                    disabled={pinDisabled}
-                    title={pinDisabled ? 'ปักหมุดได้สูงสุด 3 รายการ' : isPinned ? 'เอาหมุดออก' : 'ปักหมุดก้าวนี้'}
-                    style={{
-                      background: 'transparent',
-                      opacity: pinDisabled ? 0.4 : 1,
-                      cursor: pinDisabled ? 'not-allowed' : 'pointer',
-                    }}
-                  >
-                    {isPinned ? '📌 เอาหมุดออก' : '📍 ปักหมุด'}
-                  </button>
-                )}
-                <button onClick={() => setShowArchive(true)} style={{ background: 'transparent' }}>🔍</button>
-                <button onClick={() => setShowOverview(true)} style={{ background: 'transparent' }}>☰</button>
-                <button onClick={() => setShowTrust(true)} style={{ background: 'transparent' }}>🔒</button>
-              </>
-            )}
+          <div className="mind-shell-route">
+            <p className="mind-shell-route-kicker">{routeMeta.kicker}</p>
+            <p className="mind-shell-route-title">{routeMeta.title}</p>
+            <p className="mind-shell-route-detail">{routeMeta.detail}</p>
           </div>
-        </div>
 
-        {/* T017 cap cue — shown below header when limit is reached */}
-        {pinDisabled && showPinButton && (
-          <p style={{
-            fontSize: '0.75rem', color: 'var(--text-secondary)',
-            textAlign: 'right', margin: '0.25rem 0 0'
-          }}>
-            ปักหมุดได้สูงสุด 3 รายการ
-          </p>
+          <div className="mind-shell-topbar-right">
+            {showPinButton && (
+              <button
+                type="button"
+                className="shell-secondary-button"
+                onClick={togglePin}
+                disabled={pinDisabled}
+                title={pinDisabled ? 'ปักหมุดได้สูงสุด 3 รายการ' : isPinned ? 'เอาหมุดออก' : 'ปักหมุดก้าวนี้'}
+              >
+                {isPinned ? 'เอาหมุดออก' : 'ปักหมุด'}
+              </button>
+            )}
+            {isCompactViewport && (
+              <button
+                type="button"
+                className="shell-secondary-button"
+                onClick={() => {
+                  setShowMobileStudio((value) => !value);
+                  setShowMobileRooms(false);
+                }}
+              >
+                {showMobileStudio ? 'ซ่อนตัวช่วย' : 'ตัวช่วย'}
+              </button>
+            )}
+            <button
+              type="button"
+              className="shell-secondary-button"
+              onClick={() => setShowUtilityMenu((value) => !value)}
+            >
+              {utilityButtonLabel}
+            </button>
+          </div>
+        </header>
+
+        {showUtilityMenu && (
+          <div className="mind-utility-menu" role="dialog" aria-label="เครื่องมือเพิ่มเติม">
+            {utilitySections.map((section) => (
+              <section key={section.title} className="mind-utility-section">
+                <p className="mind-utility-section-title">{section.title}</p>
+                <div className="mind-utility-section-items">
+                  {section.items.map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      className="mind-utility-item"
+                      onClick={() => handleUtilityAction(item.onClick)}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
         )}
 
-        <div className="mind-room-shell">
-          <RoomSidebar
-            rooms={rooms}
-            activeRoomId={activeRoomId}
-            onSelectRoom={handleSelectRoom}
-            onCreateRoom={handleCreateRoom}
+        {pinDisabled && showPinButton && (
+          <p className="mind-shell-pin-note">ปักหมุดได้สูงสุด 3 รายการ</p>
+        )}
+
+        {(showMobileRooms || showMobileStudio) && (
+          <button
+            type="button"
+            className="mind-shell-backdrop"
+            aria-label="ปิดแผงข้าง"
+            onClick={() => {
+              setShowMobileRooms(false);
+              setShowMobileStudio(false);
+            }}
           />
+        )}
+
+        <div
+          className={`mind-room-shell ${isRoomSidebarCollapsed ? 'rooms-collapsed' : ''} ${isStudioCollapsed ? 'studio-collapsed' : ''}`}
+        >
+          <div className={`mind-room-sidebar-wrap ${showMobileRooms ? 'is-open' : ''}`}>
+            <RoomSidebar
+              rooms={rooms}
+              activeRoomId={activeRoomId}
+              onSelectRoom={handleSelectRoomFromShell}
+              onCreateRoom={handleCreateRoom}
+              collapsed={!isCompactViewport && isRoomSidebarCollapsed}
+              onToggleCollapse={isCompactViewport ? undefined : () => setIsRoomSidebarCollapsed((value) => !value)}
+            />
+          </div>
 
           <div className="mind-room-main">
             {routePrefersCanvasFirst ? (
@@ -1118,6 +1184,39 @@ export default function StateMachinePage() {
               </>
             )}
           </div>
+
+          <aside className={`mind-room-studio-wrap ${showMobileStudio ? 'is-open' : ''} ${isStudioCollapsed ? 'is-collapsed' : ''}`}>
+            <div className="mind-room-studio-header">
+              <div>
+                <p className="studio-eyebrow">Studio</p>
+                <h2 className="mind-room-studio-title">ตัวช่วยของห้องนี้</h2>
+              </div>
+              <button
+                type="button"
+                className="shell-toggle-button shell-toggle-button-subtle"
+                onClick={() => {
+                  if (isCompactViewport) {
+                    setShowMobileStudio(false);
+                    return;
+                  }
+                  setIsStudioCollapsed((value) => !value);
+                }}
+                aria-label={isCompactViewport ? 'ปิดตัวช่วย' : isStudioCollapsed ? 'ขยายตัวช่วย' : 'ย่อตัวช่วย'}
+              >
+                {isCompactViewport ? 'ปิด' : isStudioCollapsed ? '←' : '→'}
+              </button>
+            </div>
+            {!isStudioCollapsed && (
+              <StudioPanel
+                snapshot={studioSnapshot}
+                intents={studioIntents}
+                loadingIntentId={activeStudioIntent}
+                onIntent={handleStudioIntent}
+                onEditContext={studioSnapshot ? handleEditCurrentContext : undefined}
+                mode={studioMode}
+              />
+            )}
+          </aside>
         </div>
       </div>
       {activeValuePulseContext && !presentationMode && !showArchive && !showOverview && !showTrust && !showWalkthrough && !showAiOpsDebug && !showObservationCapture && (

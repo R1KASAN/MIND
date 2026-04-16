@@ -230,13 +230,13 @@ export function BrainDumpInput({
       <div className="dump-stage-main">
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', letterSpacing: '0.18em', textTransform: 'uppercase' }}>
-            {presentationMode ? '30-second story' : 'MIND'}
+            {presentationMode ? '30-second story' : 'เริ่มงานนี้'}
           </p>
           <h1 style={{ fontSize: '2rem', fontWeight: 650, lineHeight: 1.08 }}>
-            วางสภาพงานก่อน แล้วค่อยไปต่อ
+            พิมพ์สภาพงานมาก่อน แล้วค่อยแนบไฟล์ถ้ามี
           </h1>
           <p style={{ color: 'var(--text-secondary)', maxWidth: '36rem' }}>
-            พิมพ์สิ่งที่ค้างอยู่ตรง ๆ ได้เลย ไม่มีไฟล์ก็เริ่มได้
+            พิมพ์สิ่งที่ค้างอยู่ตรง ๆ ได้เลย ไม่มีไฟล์ก็เริ่มได้ แล้วค่อยให้ MIND หา next move
           </p>
         </div>
 
