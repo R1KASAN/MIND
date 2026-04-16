@@ -139,6 +139,7 @@ export async function seedStudioSession(page: Page) {
     const tx = db.transaction('keyval', 'readwrite');
     const store = tx.objectStore('keyval');
     store.put(seedSession, 'mind_session');
+    store.delete('mind_room_workspace_v1');
     store.put([], 'mind_actions');
 
     await new Promise<void>((resolve, reject) => {

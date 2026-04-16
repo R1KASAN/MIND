@@ -62,6 +62,11 @@ async function run() {
     await page.goto(`${BASE_URL}/?walkthrough=off&ritual=off`, { waitUntil: 'domcontentloaded' });
     await page.getByRole('heading', { name: DUMP_HERO_HEADING }).waitFor({ state: 'visible', timeout: 30000 });
     await page.getByLabel(DUMP_TEXTBOX_LABEL).waitFor({ state: 'visible', timeout: 30000 });
+    const studioToggle = page.getByRole('button', { name: 'ตัวช่วย', exact: true });
+    await studioToggle.waitFor({ state: 'visible', timeout: 30000 });
+    await studioToggle.click();
+    const studioDrawer = page.locator('.mind-room-studio-wrap.is-open');
+    await studioDrawer.waitFor({ state: 'visible', timeout: 30000 });
     const mobileStudio = page.locator('.studio-mobile-intents');
     await mobileStudio.waitFor({ state: 'visible', timeout: 30000 });
     await page.locator('.studio-desktop-stack').waitFor({ state: 'hidden', timeout: 30000 });

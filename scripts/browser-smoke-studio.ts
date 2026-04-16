@@ -75,6 +75,9 @@ async function run() {
     await desktopStudio.locator('.studio-card-emphasis').waitFor({ state: 'visible', timeout: 30000 });
 
     console.log('[SMOKE] checking blocked advanced intent copy');
+    const showMoreButton = desktopStudio.getByRole('button', { name: 'ดูเพิ่ม' });
+    await showMoreButton.waitFor({ state: 'visible', timeout: 30000 });
+    await showMoreButton.click();
     const blockedIntent = desktopStudio.getByRole('button', { name: STUDIO_BLOCKED_INTENT });
     console.log('[SMOKE] waiting for blocked intent button');
     await blockedIntent.waitFor({ state: 'visible', timeout: 30000 });
