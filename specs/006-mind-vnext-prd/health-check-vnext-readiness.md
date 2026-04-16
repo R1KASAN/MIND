@@ -2,6 +2,8 @@
 
 Updated: 2026-04-08
 
+> Operational source of truth: [README.md](/Users/ark1/Public/MIND/README.md), [docs/demo-runbook.md](/Users/ark1/Public/MIND/docs/demo-runbook.md), and `npm run gate:phase5`
+
 ## Summary
 
 สมมติจากข้อมูลที่มีใน repo, smoke, benchmark, และสภาพ flow ปัจจุบันของ MIND:
@@ -16,6 +18,8 @@ Updated: 2026-04-08
 - MIND พร้อมสำหรับ **demo / closed beta ขนาดเล็ก 5–10 คน**
 - MIND ยังไม่พร้อมสำหรับ launch กว้าง
 - blocker ใหญ่สุดยังอยู่ที่ `rescue` และความสมดุลของ eval / benchmark ราย operation
+- operational default ตอนนี้คือใช้ `npm run gate:phase5` ก่อนทุก demo / release และใช้ canonical local path (`npm run ollama:serve:cpu-safe` + `npm run dev` / `npm run start`) ตลอด
+- `gate:phase5` ผ่าน = `ship for controlled demo`, ไม่ใช่ broad launch และไม่ใช่ rescue promotion
 
 Related docs:
 
@@ -37,7 +41,7 @@ Related docs:
 - Intake / Dump — text-first และ files-optional ชัด, ingest/extract ใช้งานได้, first-run smoke มีแล้ว — **82%**
 - ONE_ACTION (รวม negotiation + DecisionBoard) — เส้นทางหลักชัด, CTA ดีขึ้น, decision path และ telemetry มีแล้ว — **84%**
 - Scaffold (รวมย่อยให้เล็กลง + rescue integration) — ใช้งานได้จริงและมี honest failure แต่ยังผูกกับความนิ่งของ AI สูง — **72%**
-- Rescue (รวม safe failure + retry) — มี safe fallback และ retry แล้ว แต่ `qwen2.5:3b` ยังมี `503` / format drift โผล่จริง — **60%**
+- Rescue (รวม safe failure + retry) — มี safe fallback และ retry แล้ว แต่ primary/repair path ยังมี `503` / format drift โผล่จริง — **60%**
 - Bounce_back / Morning_ritual (reentry) — สื่อการกลับมาทำต่อได้ดี และมี smoke ครอบคลุม — **74%**
 - Local-first / data boundary — state หลักอยู่ local, OCR/PDF extraction local, Ollama local; ยังมี dependency ภายนอกเล็กน้อย เช่น fonts — **86%**
 - Telemetry & benchmark (action & rescue) — `action` มี benchmark และ event signals ดีขึ้นแล้ว แต่ `rescue` ยังไม่มี benchmark/gate ที่เท่ากัน — **66%**
@@ -66,6 +70,8 @@ Related docs:
 - Local-first boundary ยังควรเก็บงาน: ถ้าจะยืนคำว่า local-first แบบเข้มจริง ควร audit dependency ภายนอกให้ครบ
 - Demo readiness ดีกว่า launch readiness: ตอนนี้เหมาะกับ small cohort มากกว่า public launch
 - สำหรับ Phase 4 ตอนนี้ปิดได้แบบ `close with caveat`: ใช้ `rescue-balanced-repair-160` เป็น interim live loop baseline ต่อไป แต่ยังเป็น `keep=false`; incident `422` ที่ `diagnosis.primaryReason` ถูกปิดแล้ว และ timeout-budget tuning round 3 ก็ยังไม่มี preset ใหม่ตัวไหนชนะ baseline นี้แบบครบ hard criteria
+- สำหรับ Phase 5 ตอนนี้สิ่งที่ควรล็อกคือ discipline มากกว่าการขยาย scope: ใช้ `gate:phase5` เป็น mandatory ritual และเปิด follow-on แคบ ๆ ที่ `RH-06 Rescue retry/timeout quality pass` เท่านั้น
+- ผล RH-06 รอบล่าสุด: default rescue route ถูก align กับ `rescue-balanced-repair-160` แล้ว, repeated live loop ล่าสุดผ่าน `5/5` ทั้ง baseline เดิมและ `balanced-higher-overall-budget`, benchmark clean run กลับมาได้ `routeValidationFailureRate=0`, `clientOkRate=1`, `route503Rate=0`, `retryRecoveryRate=1`, แต่ `retrySuccessRate` ยังเท่าเดิมที่ `0.2` จึงคง baseline เดิมและคง `keep=false`
 
 ## Recommended Next Sprints
 

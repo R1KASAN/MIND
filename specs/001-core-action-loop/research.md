@@ -1,5 +1,7 @@
 # Phase 0: Research & Architecture Decisions
 
+> [ARCHIVAL] This research document describes a historical pre-Gemma phase of MIND and is not the current runtime source of truth. Use [README.md](/Users/ark1/Public/MIND/README.md), [docs/demo-runbook.md](/Users/ark1/Public/MIND/docs/demo-runbook.md), and `npm run gate:phase5` for the active local workflow.
+
 ## Stack Selection
 - **Decision:** Next.js (App Router), TypeScript, Vanilla CSS.
 - **Rationale:** Next.js provides simple API routes to securely handle AI requests while serving a fast frontend. Vanilla CSS complies with the strict design guidelines against default Tailwind designs. By using the App router, we can leverage Server Actions or simple API routes to protect our AI API keys without setting up a separate backend server.

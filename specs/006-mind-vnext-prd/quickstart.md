@@ -3,24 +3,26 @@
 **Target reader**: Developer implementing `specs/006-mind-vnext-prd/plan.md`
 **Product narrative**: "Reply + Resume สำหรับงานลูกค้าที่ค้าง"
 
+> Current runtime source of truth: [README.md](/Users/ark1/Public/MIND/README.md), [docs/demo-runbook.md](/Users/ark1/Public/MIND/docs/demo-runbook.md), and `npm run gate:phase5`
+
 ---
 
 ## Prerequisites
 
 - Node.js 20+, `npm` available
-- Ollama installed locally: `ollama serve` running on `localhost:11434`
-- At least one supported model pulled: `ollama pull qwen2.5:3b`
-- Dev server running: `npm run dev` in `/Users/ark1/Public/MIND`
+- Ollama installed locally
+- Canonical local model pulled: `npm run ollama:pull:gemma`
+- CPU-safe local AI host started with `npm run ollama:serve:cpu-safe`
+- App started with `npm run dev` in `/Users/ark1/Public/MIND`
 
 ## Getting Started
 
 ```bash
-# Verify Ollama is running and model is available
-ollama ps                        # see loaded models
-ollama list                      # see installed models
-curl http://localhost:11434/api/tags  # raw check
+# Start local AI and verify the canonical runtime
+npm run ollama:serve:cpu-safe
+npm run runtime:ollama:check:gemma
 
-# Start dev server (if not already running)
+# Start the app on the canonical local-AI path
 npm run dev
 # App opens at http://localhost:3000
 ```

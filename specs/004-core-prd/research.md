@@ -1,5 +1,7 @@
 # Research & Decisions: MIND Core PRD
 
+> [ARCHIVAL] This research document describes a historical pre-Gemma phase of MIND and is not the current runtime source of truth. Use [README.md](/Users/ark1/Public/MIND/README.md), [docs/demo-runbook.md](/Users/ark1/Public/MIND/docs/demo-runbook.md), and `npm run gate:phase5` for the active local workflow.
+
 **Date**: 2026-04-05
 
 ## Decision 1: Client-Side State (MVP)

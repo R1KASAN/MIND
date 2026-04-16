@@ -1,5 +1,7 @@
 # Feature Specification: MIND Core Product Requirements (PRD)
 
+> [ARCHIVAL] This spec describes a historical pre-Gemma phase of MIND and is not the current runtime source of truth. Use [README.md](/Users/ark1/Public/MIND/README.md), [docs/demo-runbook.md](/Users/ark1/Public/MIND/docs/demo-runbook.md), and `npm run gate:phase5` for the active local workflow.
+
 **Feature Branch**: `004-core-prd`
 **Created**: 2026-04-05
 **Revised**: 2026-04-05

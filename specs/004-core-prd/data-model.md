@@ -1,5 +1,7 @@
 # Data Model: MIND Core PRD
 
+> [ARCHIVAL] This data model describes a historical pre-Gemma phase of MIND and is not the current runtime source of truth. Use [README.md](/Users/ark1/Public/MIND/README.md), [docs/demo-runbook.md](/Users/ark1/Public/MIND/docs/demo-runbook.md), and `npm run gate:phase5` for the active local workflow.
+
 ## Core Entities
 
 ### AppSession (IndexedDB)

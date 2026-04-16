@@ -1,5 +1,7 @@
 # AI Service Contract
 
+> [ARCHIVAL] This contract document describes a historical pre-Gemma phase of MIND and is not the current runtime source of truth. Use [README.md](/Users/ark1/Public/MIND/README.md), [docs/demo-runbook.md](/Users/ark1/Public/MIND/docs/demo-runbook.md), and `npm run gate:phase5` for the active local workflow.
+
 This contract defines the structured communication between the MIND application frontend and the selected AI backend.
 
 ## 1. Request (Frontend -> Backend/AI)

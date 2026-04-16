@@ -5,6 +5,8 @@
 **Plan**: `specs/006-mind-vnext-prd/plan.md`
 **Constitution**: MIND Constitution v3.0.0
 
+> Current runtime source of truth: [README.md](/Users/ark1/Public/MIND/README.md), [docs/demo-runbook.md](/Users/ark1/Public/MIND/docs/demo-runbook.md), and `npm run gate:phase5`
+
 > **Authority order**: Constitution v3.0.0 → spec.md → plan.md → research.md → this file
 > No task may introduce planner-drift, backlog UI, mode selectors, synthetic success, or cloud sync.
 
@@ -19,7 +21,7 @@
 - [x] T003 [P] Read and internalize `specs/006-mind-vnext-prd/plan.md` — note Phase 1 dependency order: `idb.ts → ollama-runtime.ts → health/route.ts → ai/route.ts → Fallback.tsx → page.tsx`
 - [x] T004 [P] Read and internalize `specs/006-mind-vnext-prd/contracts/ai-contract.md` — note success schema, failure schema, output hierarchy rule (action > summary > reply draft), and blocker detection rules
 - [x] T005 [P] Read and internalize `specs/006-mind-vnext-prd/data-model.md` — note all vNext entity extensions and persistence rules
-- [x] T006 Verify dev server is running (`npm run dev`) and app loads at `localhost:3000` without errors
+- [x] T006 Verify the canonical app path from `README.md` / `docs/demo-runbook.md` loads at `localhost:3000` without errors
 
 **Checkpoint**: Codebase understood, no changes made, all specs internalized.
 
@@ -37,10 +39,10 @@
 - [x] T010 Add vNext optional fields to the `Action` interface in `src/lib/store/idb.ts`: `workflowType?: 'client_response' | 'client_resume'`, `situationSummary?: string`, `replyDraft?: string`, `detectedBlockers?: string[]`
 - [x] T011 Export `AiFailureReason` and `ActiveDumpContext` types from `src/lib/store/idb.ts` so they can be imported by route files, components, and `page.tsx`
 - [x] T012 Define `AiHealthResult` interface in `src/lib/ai/ollama-runtime.ts`: `{ status: 'ready' | 'checking' | 'unavailable' | 'model_missing'; model: string; reason?: string; detail?: string; retryable: boolean; actions?: string[] }`
-- [x] T013 Update `getAiHealth()` in `src/lib/ai/ollama-runtime.ts` to return `AiHealthResult` — map each status to: `ready` → `{ retryable: true }`; `checking` → `{ reason: 'กำลังโหลดโมเดล...', retryable: true }`; `model_missing` → `{ reason: 'ไม่พบโมเดลในเครื่อง', retryable: false, actions: ['ollama pull qwen2.5:3b'] }`; `unavailable` → `{ reason: 'Ollama ไม่พร้อมใช้งาน', retryable: true, actions: ['ollama serve'] }`
+- [x] T013 Update `getAiHealth()` in `src/lib/ai/ollama-runtime.ts` to return `AiHealthResult` — map each status to: `ready` → `{ retryable: true }`; `checking` → `{ reason: 'กำลังโหลดโมเดล...', retryable: true }`; `model_missing` → `{ reason: 'ไม่พบโมเดลในเครื่อง', retryable: false, actions: ['npm run ollama:pull:gemma'] }`; `unavailable` → `{ reason: 'Ollama ไม่พร้อมใช้งาน', retryable: true, actions: ['npm run ollama:serve:cpu-safe'] }`
 - [x] T014 Export `AiHealthResult` type from `src/lib/ai/ollama-runtime.ts`
 
-**Checkpoint**: IDB types extended, health result type enriched, migration shim in place. `npm run dev` still loads without TypeScript errors.
+**Checkpoint**: IDB types extended, health result type enriched, migration shim in place. The canonical app path still loads without TypeScript errors.
 
 ---
 
@@ -56,7 +58,7 @@
 
 - [x] T015 [US1] Update `src/app/api/ai/health/route.ts` — no logic change needed; confirm the route still delegates directly to `getAiHealth()` and returns the full `AiHealthResult` shape (which now includes `reason`, `detail`, `retryable`, `actions` after T013)
 - [x] T016 [US1] Remove the automatic `synthesizeLocally()` fallback from `src/app/api/ai/route.ts` (lines approx. 180–193) — delete the silent local synthesis path and the import of `synthesizeLocally` from this file
-- [x] T017 [US1] Add structured Ollama-unavailable failure response in `src/app/api/ai/route.ts`: when all model candidates fail with endpoint errors, return `NextResponse.json({ ok: false, error: { type: 'ollama_unavailable', reason: lastEndpointReason ? 'service_down' : 'unknown', message: 'ไม่สามารถเชื่อมต่อ Ollama ได้ในขณะนี้', detail: lastEndpointReason ?? lastValidationReason, retryable: true, actions: ['ollama serve', 'ollama pull qwen2.5:3b'] } }, { status: 503 })`
+- [x] T017 [US1] Add structured Ollama-unavailable failure response in `src/app/api/ai/route.ts`: when all model candidates fail with endpoint errors, return `NextResponse.json({ ok: false, error: { type: 'ollama_unavailable', reason: lastEndpointReason ? 'service_down' : 'unknown', message: 'ไม่สามารถเชื่อมต่อ Ollama ได้ในขณะนี้', detail: lastEndpointReason ?? lastValidationReason, retryable: true, actions: ['npm run ollama:serve:cpu-safe', 'npm run ollama:pull:gemma'] } }, { status: 503 })`
 - [x] T018 [US1] Add structured validation-failure response in `src/app/api/ai/route.ts`: when all models produced parseable JSON that fails Zod validation, return `NextResponse.json({ ok: false, error: { type: 'validation_failed', reason: 'unknown', message: 'โมเดลตอบกลับในรูปแบบที่ไม่ถูกต้อง', detail: lastValidationReason, retryable: true } }, { status: 422 })`
 - [x] T019 [US1] Add session hydration migration in `src/app/page.tsx` `load()` function: after calling `getSession()`, check if `session.activeDumpContext` is a string (legacy) and if so replace it with `{ text: session.activeDumpContext, createdAt: session.lastActive }` before setting state — call `saveSession()` with the migrated session
 - [x] T020 [US1] Update synthesis failure handler in `src/app/page.tsx`: when `POST /api/ai` returns non-2xx or response body has `ok: false`, extract `error.reason` as `AiFailureReason`, write to `session.activeDumpContext.lastFailureReason` and `session.lastFailureReason`, then `saveSession()` and transition to `MANUAL_FALLBACK`
@@ -68,7 +70,7 @@
 - [x] T026 [US1] Pass required props to `ManualFallback` / `Fallback` component from `src/app/page.tsx`: `lastFailureReason`, `suggestedActions`, `onRetry`, `onManualContinue` — ensure `activeDumpContext.text` is never re-rendered into user-visible dump input during retry
 - [x] T027 [US1] Verify no success animation exists after retry succeeds in `src/app/page.tsx` and `src/components/ActionScaffold/OneAction.tsx` — transition must be instant and silent
 
-**Checkpoint**: Phase 3 complete. With Ollama offline, dump → honest retry panel (service_down label). Re-enable Ollama → retry → silent ONE_ACTION. No local synthesis output shown as AI. `npm run dev` builds without TypeScript errors.
+**Checkpoint**: Phase 3 complete. With Ollama offline, dump → honest retry panel (service_down label). Re-enable Ollama → retry → silent ONE_ACTION. No local synthesis output shown as AI. The canonical app path still builds without TypeScript errors.
 
 ---
 
@@ -129,7 +131,26 @@
 - [x] T048 Silent completion loop verification — complete an action (click Done from SCAFFOLD) and verify immediate return to `DUMP_ENTRY` with no animation, no celebration, no sound, no delay
 - [x] T049 Update `specs/006-mind-vnext-prd/checklists/requirements.md` — mark completed items, note any items deferred to a later phase
 
-Note on `T044` as of 2026-04-07: official `Ollama.app` runtime on this Apple M5 machine now boots and serves both `llama3.2:1b` and `qwen2.5:3b`, `/api/ai/health` returns `ready` with `qwen2.5:3b`, canonical `client_resume` now succeeds on qwen primary, and canonical `client_response` now succeeds through the qwen repair layer without falling through to llama. Browser hierarchy review (`T047`), silent completion (`T048`), honest recovery validation, `npx tsc --noEmit`, `npm run lint`, and `npm run build` are all green, so the quickstart smoke gate is now closed.
+Note on `T044`: the current canonical local path is the Gemma CPU-safe workflow documented in `README.md` and `docs/demo-runbook.md`; browser hierarchy review (`T047`), silent completion (`T048`), honest recovery validation, `npx tsc --noEmit`, `npm run lint`, and `npm run build` are all green, so the quickstart smoke gate is now closed.
+
+---
+
+## Phase 7: User Story 4 — Reentry-First Room Hierarchy Tightening (Priority: P0)
+
+**Goal**: Turn the `Real Run #1` friction verdict into ticket-ready UX work so the room opens with one obvious path: `reentry brief -> ONE_ACTION -> dump if needed`, while demoting `Studio`, `DecisionBoard`, and other secondary surfaces.
+
+**User Stories covered**: market-fit friction-zero `P0 now`; Research-backed workflow review `Mode transitions (BounceBack, MorningRitual, ONE_ACTION) — P0 now`
+
+**Independent Test**: Open a stale room that resolves to `BOUNCE_BACK` or `MORNING_RITUAL` → verify the first viewport shows reentry brief, one dominant continue action, and a visible dump/start-fresh fallback. Open `DUMP_ENTRY` on a fresh room → verify the dump field is immediately usable and no competing `Studio` or secondary tools appear above the primary entry point. Continue into `ONE_ACTION` → verify the hero action and primary CTA remain above fold and tuning/secondary controls do not compete for first attention.
+
+### Implementation for User Story 4
+
+- [ ] T050 [US4] Update `src/app/page.tsx` room shell hierarchy for `DUMP_ENTRY`, `BOUNCE_BACK`, and `MORNING_RITUAL`: make the primary canvas render the reentry/dump path first; keep `StudioPanel` and any secondary tools behind an explicit secondary affordance on first paint; do not render competing panels above the main CTA path
+- [ ] T051 [US4] Refactor `src/components/Recovery/BounceBack.tsx` and `src/components/Ritual/MorningRitual.tsx` so the first viewport hierarchy is consistent: short reentry brief, one dominant continue/use-suggested action, then start-fresh/dump fallback; remove duplicate explanatory blocks that restate the same resume narrative twice
+- [ ] T052 [P] [US4] Tighten `src/components/ActionScaffold/OneAction.tsx`: keep only the action hero, rationale, primary CTA, and secondary CTA above the first fold; move tuning controls, “why this”, reply draft helpers, and other supporting surfaces lower or collapsed by default so `ONE_ACTION` reads as one committed next move instead of a settings panel
+- [ ] T053 [P] [US4] Simplify `src/components/BrainDump/Input.tsx` and related `DUMP_ENTRY` copy in `src/app/page.tsx`: make dump submission read as “paste / drop / go”, keep the input visible without pre-reading other panels, and ensure the user can start without choosing a mode, room subtype, or extra tooling first
+
+**Checkpoint**: Phase 7 complete. Stale-room reentry starts from one obvious CTA, fresh-room dump entry is visible immediately, and `ONE_ACTION` preserves a single dominant forward path without secondary surface noise above fold.
 
 ---
 
@@ -143,6 +164,7 @@ Note on `T044` as of 2026-04-07: official `Ollama.app` runtime on this Apple M5 
 - **Phase 4 (US2 — AI Intelligence)**: Depends on Phase 2 — can start in parallel with Phase 3, but `OneAction.tsx` changes (T032, T033) must come after `idb.ts` Action fields (T010)
 - **Phase 5 (US3 — Telemetry)**: Depends on Phase 3 and Phase 4 — all events depend on the workflows they instrument being implemented first
 - **Phase 6 (Polish)**: Depends on Phases 3, 4, 5 all being complete
+- **Phase 7 (US4 — Reentry-First Hierarchy)**: Depends on Phase 6 truth being stable — this phase is a UX tightening pass on top of the current route structure and should not start until existing behavior and docs are the baseline
 
 ### User Story Dependencies
 
@@ -151,6 +173,7 @@ Note on `T044` as of 2026-04-07: official `Ollama.app` runtime on this Apple M5 
 | US1 — Honest Recovery | Phase 2 complete | US2 (different files, T028 is [P]) |
 | US2 — AI Intelligence | Phase 2 complete; T010 (Action fields) | US1 (different files mostly) |
 | US3 — Telemetry | US1 complete (retry events); US2 complete (workflow events) | T035 is [P] — event types can be added early |
+| US4 — Reentry-First Hierarchy | Phase 6 complete; existing room flows must remain green | T052 and T053 can run in parallel after T050 defines top-level shell direction |
 
 ### Within Each Phase
 
@@ -158,6 +181,7 @@ Note on `T044` as of 2026-04-07: official `Ollama.app` runtime on this Apple M5 
 - Within Phase 3: T015 → T016 → T017 → T018 (route changes in order) → T019 → T020 → T021 → T022 (page.tsx in order) → T023 → T024 → T025 → T026 → T027 (Fallback in order)
 - Within Phase 4: T028 [P] and T031 [P] can start as soon as Phase 2 is done; T029 depends on T028; T030 depends on T029; T032, T033, T034 depend on T031
 - Within Phase 5: T035 [P] can be done anytime after Phase 2; T036–T040 depend on US1 and US2 being implemented; T041 depends on Phase 4
+- Within Phase 7: T050 defines page-level hierarchy; T051 depends on T050 so reentry surfaces match the shell; T052 and T053 can run in parallel after T050 because they tighten `ONE_ACTION` and `DUMP_ENTRY` within the chosen first-paint hierarchy
 
 ### Parallel Opportunities
 
@@ -173,6 +197,10 @@ T007 → T008 → T009 → T010 → T011 → T012 → T013 → T014
 # Phase 5 — T035 can start early
 T035 (add EventName types) ← add anytime after Phase 2
 T036-T041 ← after Phases 3 & 4
+
+# Phase 7 — after Phase 6 baseline is stable
+T050 → T051
+T050 → [T052, T053 in parallel]
 ```
 
 ---
@@ -224,6 +252,7 @@ Task T023-T027: Fallback.tsx — retry-first layout, failure reason, actions
 3. US2 (Phase 4) → client intelligence added → client workflows validated
 4. US3 (Phase 5) → telemetry wired → metrics traceable
 5. Polish (Phase 6) → privacy, hierarchy, drift audited
+6. US4 (Phase 7) → reentry-first hierarchy tightened → first-paint friction reduced
 
 ### Anti-Drift Checklist (check before each task)
 
@@ -236,6 +265,7 @@ Before implementing any task, verify the change does NOT:
 - [ ] Add any streak, badge, or success animation
 - [ ] Make any `fetch()` call to a non-localhost URL
 - [ ] Add a new `SessionStatus` for client_response or client_resume (workflow differentiation lives in `workflow_type` field, not new states)
+- [ ] Put `Studio`, `DecisionBoard`, or any secondary tooling above the main `reentry / ONE_ACTION / dump` path on first paint
 
 ---
 
@@ -249,9 +279,10 @@ Before implementing any task, verify the change does NOT:
 | Phase 4: US2 Intelligence | T028–T034 | T028, T031 | Blocks Phase 5 telemetry |
 | Phase 5: US3 Telemetry | T035–T041 | T035 | Depends on US1 + US2 |
 | Phase 6: Polish | T042–T049 | T042, T043, T045, T046, T047 | Final gate |
+| Phase 7: US4 Reentry-First Hierarchy | T050–T053 | T052, T053 | Depends on Phase 6 baseline staying intact |
 
-**Total tasks**: 49
-**Parallelizable tasks**: 16 (marked [P])
-**Critical path**: T007 → T008 → T009 → T010 → T012 → T013 → T016 → T017 → T020 → T021 → T029 → T031 → T032 → T033 → T036 → T044
+**Total tasks**: 53
+**Parallelizable tasks**: 18 (marked [P])
+**Critical path**: T007 → T008 → T009 → T010 → T012 → T013 → T016 → T017 → T020 → T021 → T029 → T031 → T032 → T033 → T036 → T044 → T050 → T051
 
 **MVP scope**: Phases 1–3 only (T001–T027) — delivers honest Ollama recovery without any synthetic success, as a self-contained, independently testable milestone.

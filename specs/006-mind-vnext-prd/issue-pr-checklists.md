@@ -2,6 +2,8 @@
 
 Updated: 2026-04-08
 
+> Current runtime source of truth: [README.md](/Users/ark1/Public/MIND/README.md), [docs/demo-runbook.md](/Users/ark1/Public/MIND/docs/demo-runbook.md), and `npm run gate:phase5`
+
 ## Purpose
 
 เอกสารนี้แปลง `ticket-ready-sprints.md` ให้กลายเป็น execution checklist ที่ engineer หยิบไปเปิด issue หรือทำ PR ต่อได้ทันที โดยยังยึด MIND doctrine เดิม:
@@ -41,7 +43,7 @@ Updated: 2026-04-08
 - Verification checklist:
   - [ ] รัน benchmark `rescue` ได้จาก npm script
   - [ ] report แสดง `first-pass`, `repair`, `validation-failure`, `median latency`
-  - [ ] ใช้งานกับ `qwen2.5:3b` local route ได้จริง
+  - [ ] ใช้งานกับ canonical local AI route ได้จริง
 - Files in scope:
   - `scripts/benchmark-rescue-route.ts`
   - `package.json`
@@ -147,6 +149,38 @@ Updated: 2026-04-08
 - Done when:
   - ทีมดู log แล้วบอกได้ว่าปัญหาของ rescue อยู่ที่ pass ไหน
 
+### RH-06 — Rescue retry/timeout quality pass
+
+- Issue Title: `RH-06 Rescue retry/timeout quality pass`
+- Problem: หลังปิด `422` incident แล้ว caveat หลักของ rescue ยังเหลือที่ retry/timeout confidence ไม่ใช่ loop integration
+- PR Goal: ลด timeout ของ rescue path และเพิ่มความมั่นใจของ retry path โดยไม่ขยาย scope ไป schema, Studio, หรือ multi-room
+- Implementation checklist:
+  - [x] ทบทวน `rescue` timeout / retry / repair budget เฉพาะ route นี้
+  - [x] ปรับ retry/backoff เฉพาะ transient rescue failure ถ้า benchmark บอกว่าคุ้ม
+  - [x] ปรับ prompt ได้เฉพาะเมื่อช่วยลด timeout/retry failure ชัดเจน
+  - [x] รักษา `rescue-balanced-repair-160` เป็น live baseline จนกว่าจะมี evidence ใหม่ชนะชัด
+  - [x] เพิ่ม log/telemetry ที่ช่วยอ่าน `first-pass`, `repair`, `timeout`, `retry` ให้ตรงขึ้นถ้าจำเป็น
+- Verification checklist:
+  - [x] `routeValidationFailureRate = 0`
+  - [x] `clientOkRate = 1`
+  - [ ] `retrySuccessRate` ดีขึ้นจาก current accepted baseline
+  - [x] repeated live loop ไม่มี `422`
+  - [x] repeated live loop ไม่มี timeout เพิ่มจาก baseline ที่ยอมรับอยู่
+- Files in scope:
+  - `src/app/api/ai/rescue/route.ts`
+  - `src/lib/orchestrator/task-events.ts`
+  - `src/lib/ai/operation-prompts.ts`
+  - `src/lib/ai/operation-telemetry.ts`
+- Do not change:
+  - อย่าแตะ multi-room
+  - อย่าเพิ่ม top-level route ใหม่
+  - อย่าเปลี่ยน schema/contract
+  - อย่าแตะ Studio/reentry gate ที่เขียวอยู่แล้ว
+  - อย่าเปิด tuning playground ใหม่ถ้ายังไม่มี hypothesis ใหม่ที่ชัดกว่า “ลองอีก preset”
+- Done when:
+  - rescue retry/timeout quality ดีขึ้นแบบวัดได้ หรืออย่างน้อยทีมตอบได้ชัดว่า caveat ยังอยู่ตรงไหนโดยไม่ต้องขยาย scope
+  - current pass note: `specs/006-mind-vnext-prd/rh-06-rescue-retry-timeout-pass-note.md`
+
 ## Sprint 2 — Eval Gates & Model Budgeting
 
 ### EG-01 — Benchmark coverage for all AI operations
@@ -201,7 +235,7 @@ Updated: 2026-04-08
 ### EG-03 — Model budget tuning pass
 
 - Issue Title: `EG-03 Model budget tuning pass`
-- Problem: `qwen2.5:3b` ยังต้อง prove ให้ชัดว่าเหมาะกับแต่ละ phase แค่ไหน
+- Problem: primary/fallback model mix ยังต้อง prove ให้ชัดว่าเหมาะกับแต่ละ phase แค่ไหน
 - PR Goal: ให้แต่ละ route มี budget ที่อธิบายได้จาก benchmark ไม่ใช่ใช้ค่าเหมารวม
 - Implementation checklist:
   - [ ] อ่าน benchmark ทุก route ก่อนเลือกค่าใหม่
@@ -261,9 +295,10 @@ Updated: 2026-04-08
 
 ### Phase 5 gate before demo / release
 
-- ใช้ `npm run gate:phase5` เป็น command เดียวก่อน demo / release
+- ใช้ `npm run gate:phase5` เป็น command เดียวและเป็น ritual บังคับก่อน demo / release
 - ถ้า command นี้ fail ที่ step ไหน ให้ถือว่า `ห้ามปล่อย` จนกว่าจะรู้สาเหตุและแก้ regression
 - ใช้ `specs/006-mind-vnext-prd/phase-5-pre-demo-pre-release-gate-note.md` เป็นคำอธิบาย canonical ของ stop-ship rule
+- gate นี้ต้องครอบเคส `sales inquiry / demo request` ด้วย เพื่อกัน regression ที่ทำให้ MIND อ่าน inquiry เป็น generic project resume
 - Verification checklist:
   - [ ] ทุก state ตอบได้ว่า “ตอนนี้คืออะไร”
   - [ ] ทุก state ตอบได้ว่า “ต้องทำอะไรต่อ”

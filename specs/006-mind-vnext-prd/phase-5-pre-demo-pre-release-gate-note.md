@@ -1,83 +1,50 @@
 # Phase 5 Pre-Demo / Pre-Release Gate Note
 
-Updated: 2026-04-09
+Updated: 2026-04-13
 
 ## Purpose
 
-เอกสารนี้นิยาม gate เดียวก่อน demo หรือ deploy สำหรับ MIND ในช่วงที่ยังเป็น single-room / DUMP-first และ `rescue` ยังอยู่ในสถานะ caveat-managed
+The current canonical readiness gate is `npm run gate:phase5`.
+It certifies the room-first reentry loop for controlled demo / closed beta readiness.
+
+The active source of truth is now:
+
+- [README.md](/Users/ark1/Public/MIND/README.md)
+- [docs/demo-runbook.md](/Users/ark1/Public/MIND/docs/demo-runbook.md)
 
 ## Required command gate
 
-command เดียวที่ใช้เป็น checklist จริง:
+Run only this command as the release gate:
 
-- `npm run gate:phase5`
+```bash
+npm run gate:phase5
+```
 
-คำสั่งที่ต้องผ่านทั้งหมด:
+The gate runs:
 
+- `npm run runtime:ollama:check:gemma`
 - `npm test`
 - `npm run build`
-- `npm run smoke:studio`
-- `npm run smoke:studio-mobile`
-- `npm run smoke:reentry-mobile`
-- `npm run smoke:task-flow:repeat`
-- `npm run benchmark:rescue`
+- `npm run smoke:ai-routes:gemma`
+- `npm run smoke:demo-browser`
 
 ## Stop-ship rules
 
-ถ้าอันนี้แดง ให้ถือว่า `ห้ามปล่อย`:
+If any gate step fails, hold the demo / release and fix the regression first.
 
-- `npm test` แดง -> ห้าม deploy
-- `npm run build` แดง -> ห้าม deploy
-- `npm run smoke:studio` แดง -> ห้าม demo / release
-- `npm run smoke:studio-mobile` แดง -> ห้าม demo / release
-- `npm run smoke:reentry-mobile` แดง -> ห้าม demo / release
-- `npm run smoke:task-flow:repeat` ไม่ถึง `5/5` -> ห้าม demo / release
-- `npm run smoke:task-flow:repeat` มี `422` -> ห้าม demo / release
-- `npm run smoke:task-flow:repeat` มี timeout มากกว่าค่า baseline ที่ยอมรับอยู่ -> ห้าม release
-- `npm run benchmark:rescue` มี `routeValidationFailureRate > 0` ใน baseline ที่จะใช้ -> ห้าม release
-- `npm run benchmark:rescue` มี `clientOkRate < 1` ใน baseline ที่จะใช้ -> ห้าม release
-- `npm run benchmark:rescue` มี `retrySuccessRate` แย่ลงจาก baseline ที่ยอมรับอยู่ -> ห้าม release
+What a pass means:
 
-## Current accepted baseline
+- controlled demo / small closed beta is okay
+- broad launch is not implied
+- the room-first reentry loop is stable enough for demo use
 
-baseline ที่ใช้เป็น reference ตอนนี้:
+## What changed from older Phase 5 notes
 
-- `rescue-balanced-repair-160`
-
-สถานะ:
-
-- `interim`
-- `keep=false`
-- ใช้ได้สำหรับ Phase 5 gate
-- ยังไม่ใช่ค่า promote/default ของ product
-
-## What Counts As Good Enough For Phase 5
-
-Phase 5 เริ่มได้เมื่อ:
-
-- Studio / reentry smokes ผ่านครบทั้ง desktop และ mobile
-- task-flow repeat ผ่านบน interim live baseline ปัจจุบัน
-- rescue benchmark ไม่ regress จากค่าที่ยอมรับอยู่
-- ไม่มี evidence ใหม่ว่าปัญหาอยู่ที่ loop integration
-
-สิ่งนี้ไม่ได้แปลว่า rescue perfect แล้ว
-
-สิ่งนี้แปลว่า:
-
-- rescue caveat ถูก bound ไว้แล้ว
-- gate ก่อน demo/release ชัดพอ
-- ทีมไม่ต้อง tune ต่อแบบไม่มี stop rule
-
-## Decision Modes After Each Gate Run
-
-หลังรัน gate ให้ใช้คำตัดสินได้แค่ 3 แบบ:
-
-- `ship for controlled demo`
-- `hold release and fix regression`
-- `keep caveat, but do not expand scope`
+- `sales inquiry` smoke is no longer part of the gate
+- `task-flow repeat` is no longer part of the gate
+- `benchmark:rescue` is no longer part of the gate
 
 ## Related Docs
 
 - Phase 4 closeout: `specs/006-mind-vnext-prd/phase-4-closeout-note.md`
-- Rescue timeout-budget round 3: `specs/006-mind-vnext-prd/rescue-timeout-budget-tuning-round-3-note.md`
-- Phase 4 live baseline comparison: `specs/006-mind-vnext-prd/phase-4-live-baseline-comparison-note.md`
+- Phase 5 demo runtime runbook: `specs/006-mind-vnext-prd/phase-5-demo-runtime-runbook.md`

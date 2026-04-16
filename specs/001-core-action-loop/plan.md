@@ -1,5 +1,7 @@
 # Implementation Plan: Core Action Loop
 
+> [ARCHIVAL] This plan describes a historical pre-Gemma phase of MIND and is not the current runtime source of truth. Use [README.md](/Users/ark1/Public/MIND/README.md), [docs/demo-runbook.md](/Users/ark1/Public/MIND/docs/demo-runbook.md), and `npm run gate:phase5` for the active local workflow.
+
 **Branch**: `001-core-action-loop` | **Date**: 2026-04-04 | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `specs/001-core-action-loop/spec.md`
 

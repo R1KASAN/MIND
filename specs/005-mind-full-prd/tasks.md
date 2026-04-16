@@ -1,5 +1,7 @@
 # Tasks: MIND Full PRD (005-mind-full-prd)
 
+> [ARCHIVAL] This task list describes a historical pre-Gemma phase of MIND and is not the current runtime source of truth. Use [README.md](/Users/ark1/Public/MIND/README.md), [docs/demo-runbook.md](/Users/ark1/Public/MIND/docs/demo-runbook.md), and `npm run gate:phase5` for the active local workflow.
+
 **Input**: `specs/005-mind-full-prd/` — plan.md, spec.md, research.md, data-model.md, contracts/ai-contract.md, quickstart.md, checklists/implementation-readiness.md
 **Stack**: Next.js 16 (App Router), React 19, TypeScript 5, idb-keyval 6, Zod 4, Vanilla CSS
 **Hypotheses**: H1 (One trusted action), H2 (Start Scaffold), H3 (Rescue/Bounce-back), H4 (Overview trust), H5 (Local-first trust), H6 (AI explainability), H7 (Morning Ritual), H8 (Safe extension), H9 (Silent loop momentum), H10 (Cheap rejection rotation), H11 (ManualFallback retry momentum), H12 (Passive AI feedback)
