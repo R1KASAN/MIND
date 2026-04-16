@@ -109,6 +109,8 @@ export function getStudioIntents(
 ): StudioIntent[] {
   const task = session.task;
   const hasActionContext = Boolean(task && action && payload);
+  const completionLocked = task?.assistantMode === 'scaffold_completion';
+  const hasLiveScaffoldContext = hasActionContext && !completionLocked;
   const canReviewStatus = Boolean(task);
   const canResumeFlow = Boolean(task);
 
@@ -135,21 +137,33 @@ export function getStudioIntents(
     },
     {
       id: 'make_smaller',
-      label: 'ย่อยงานให้เล็ก',
-      description: hasActionContext
+      label: completionLocked ? 'งานรอบนี้จบแล้ว' : 'ย่อยงานให้เล็ก',
+      description: hasLiveScaffoldContext
         ? 'กลับไปแตกก้าวนี้ให้เล็กลง โดยยังไม่ทิ้งเป้าหมายเดิม'
-        : 'ต้องมีก้าวปัจจุบันก่อน ถึงจะย่อยให้เล็กลงต่อได้',
-      active: hasActionContext,
-      blockedReason: hasActionContext ? undefined : 'ต้องมีก้าวปัจจุบันก่อนถึงจะย่อยต่อได้',
+        : completionLocked
+          ? 'งานรอบนี้จบแล้ว ถ้าจะเริ่มงานใหม่ให้กดจาก completion summary ก่อน'
+          : 'ต้องมีก้าวปัจจุบันก่อน ถึงจะย่อยให้เล็กลงต่อได้',
+      active: hasLiveScaffoldContext,
+      blockedReason: hasLiveScaffoldContext
+        ? undefined
+        : completionLocked
+          ? 'งานรอบนี้จบแล้ว ถ้าจะเริ่มงานใหม่ให้กดจาก completion summary ก่อน'
+          : 'ต้องมีก้าวปัจจุบันก่อนถึงจะย่อยต่อได้',
     },
     {
       id: 'unstick',
-      label: 'ช่วยตอนติด',
-      description: hasActionContext
+      label: completionLocked ? 'ยังไม่ต้อง rescue' : 'ช่วยตอนติด',
+      description: hasLiveScaffoldContext
         ? 'ให้ MIND ช่วยวินิจฉัยว่าติดตรงไหนจากบริบทเดิมของงานนี้'
-        : 'ต้องมี action ปัจจุบันก่อน ถึงจะช่วยวินิจฉัยอาการติดได้',
-      active: hasActionContext,
-      blockedReason: hasActionContext ? undefined : 'ต้องมีก้าวหรือ action ปัจจุบันก่อน',
+        : completionLocked
+          ? 'งานรอบนี้เพิ่งจบแล้ว จึงยังไม่ต้องเข้า rescue'
+          : 'ต้องมี action ปัจจุบันก่อน ถึงจะช่วยวินิจฉัยอาการติดได้',
+      active: hasLiveScaffoldContext,
+      blockedReason: hasLiveScaffoldContext
+        ? undefined
+        : completionLocked
+          ? 'งานรอบนี้เพิ่งจบแล้ว จึงยังไม่ต้องเข้า rescue'
+          : 'ต้องมีก้าวหรือ action ปัจจุบันก่อน',
     },
   ];
 }

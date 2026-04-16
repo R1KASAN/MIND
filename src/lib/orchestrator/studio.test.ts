@@ -93,6 +93,57 @@ test('getStudioIntents blocks advanced actions without current action context', 
   assert.equal(intents.find((intent) => intent.id === 'unstick')?.active, false);
 });
 
+test('getStudioIntents blocks scaffold-only actions while completion summary is open', () => {
+  const session: AppSession = {
+    lastActive: 100,
+    uiRoute: 'SCAFFOLD',
+    status: 'SCAFFOLD',
+    notThisCount: 0,
+    currentActionId: 'action-1',
+    currentPayload: {
+      workflow_type: 'client_resume',
+      requires_clarification: false,
+      situation_summary: 'proposal กำลังขยับต่อ',
+      recommended_action: {
+        title: 'ล็อก requirement ก่อนทำ proposal',
+        rationale: 'เริ่มตรงนี้ก่อน',
+        micro_steps: ['รวบ requirement', 'แยก assumption', 'เตรียม timeline'],
+      },
+      alternative_actions: [],
+      detected_blockers: [],
+    },
+    task: {
+      id: 'task-1',
+      workflowType: 'client_resume',
+      sourceText: 'proposal AI',
+      sourceFiles: [],
+      extractedText: '',
+      createdAt: 10,
+      pendingInputs: [],
+      blockerSignals: [],
+      lifecycleState: 'in_scaffold',
+      assistantMode: 'scaffold_completion',
+      currentStepIndex: 2,
+      currentActionId: 'action-1',
+      rescueHistory: [],
+    },
+  };
+
+  const intents = getStudioIntents(session, {
+    id: 'action-1',
+    createdAt: 10,
+    title: 'ล็อก requirement ก่อนทำ proposal',
+    rationale: 'เริ่มตรงนี้ก่อน',
+    microSteps: ['รวบ requirement', 'แยก assumption', 'เตรียม timeline'],
+    isPinned: false,
+    state: 'IN_PROGRESS',
+  }, session.currentPayload);
+
+  assert.equal(intents.find((intent) => intent.id === 'make_smaller')?.active, false);
+  assert.equal(intents.find((intent) => intent.id === 'unstick')?.active, false);
+  assert.equal(intents.find((intent) => intent.id === 'make_smaller')?.blockedReason?.includes('completion summary'), true);
+});
+
 test('hasFreshReentryBrief compares brief timestamp against session activity', () => {
   assert.equal(
     hasFreshReentryBrief({

@@ -1,11 +1,13 @@
 export type AiOperationPassType = 'primary_pass' | 'repair_pass' | 'fallback_pass' | 'timeout' | 'validation_failed' | 'endpoint_failed';
 export type AiOperationModelTier = 'primary' | 'fallback';
+export type AiOperationAttemptStage = 'primary' | 'repair' | 'fallback';
 
 export interface AiOperationTelemetryEntry {
   operationName: string;
   passType: AiOperationPassType;
   model?: string;
   modelTier?: AiOperationModelTier;
+  attemptStage?: AiOperationAttemptStage;
   repairUsed?: boolean;
   durationMs: number;
   detail?: string;
@@ -32,6 +34,7 @@ export function logAiOperationTelemetry(entry: AiOperationTelemetryEntry) {
     pass_type: entry.passType,
     model: entry.model,
     model_tier: entry.modelTier,
+    attempt_stage: entry.attemptStage,
     repair_used: entry.repairUsed ?? false,
     duration_ms: entry.durationMs,
     detail: entry.detail,

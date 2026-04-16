@@ -1,9 +1,13 @@
 import { NextResponse } from 'next/server';
 import {
+  DEFAULT_AI_START_ACTION,
+  getAiInstallActions,
   getAiHealth,
   getSynthesisCandidateModels,
+  isPrimaryModel,
   markModelFailure,
   markModelSuccess,
+  OLLAMA_CPU_SAFE_OPTIONS,
   OLLAMA_CHAT_ENDPOINT,
 } from '@/lib/ai/ollama-runtime';
 import {
@@ -18,7 +22,6 @@ import {
 } from '@/lib/ai/contract';
 import type { AiFailureReason } from '@/lib/store/idb';
 
-const PRIMARY_MODEL = process.env.AI_MODEL || 'qwen2.5:3b';
 const QWEN_SYNTHESIS_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_QWEN_MS || 60000) || 60000;
 const QWEN_REPAIR_TIMEOUT_MS = Number(process.env.AI_REPAIR_TIMEOUT_QWEN_MS || 30000) || 30000;
 const FALLBACK_SYNTHESIS_TIMEOUT_MS =
@@ -85,10 +88,6 @@ function failureResponse(
   );
 }
 
-function isPrimaryModel(model: string) {
-  return model.startsWith(PRIMARY_MODEL.split(':')[0]);
-}
-
 function remainingBudget(deadline: number) {
   return deadline - Date.now();
 }
@@ -132,6 +131,7 @@ async function fetchFromModel(options: {
         stream: false,
         keep_alive: '5m',
         options: {
+          ...OLLAMA_CPU_SAFE_OPTIONS,
           temperature: 0,
           num_predict: numPredict,
         },
@@ -342,7 +342,7 @@ export async function POST(req: Request) {
         503,
         true,
         lastFailedModel,
-        ['ollama serve', 'ollama pull qwen2.5:3b'],
+        [DEFAULT_AI_START_ACTION, ...getAiInstallActions()],
       );
     }
 

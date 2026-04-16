@@ -1,9 +1,14 @@
 import { NextResponse } from 'next/server';
 import {
+  DEFAULT_AI_START_ACTION,
+  getAiInstallActions,
   getAiHealth,
+  getModelTier,
   getSynthesisCandidateModels,
+  isPrimaryModel,
   markModelFailure,
   markModelSuccess,
+  OLLAMA_CPU_SAFE_OPTIONS,
   OLLAMA_CHAT_ENDPOINT,
 } from '@/lib/ai/ollama-runtime';
 import type { AiFailureReason } from '@/lib/store/idb';
@@ -15,7 +20,6 @@ import {
   resolveAiOperationPassType,
 } from '@/lib/ai/operation-telemetry';
 
-const PRIMARY_MODEL = process.env.AI_MODEL || 'qwen2.5:3b';
 const PRIMARY_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_QWEN_MS || 60000) || 60000;
 const REPAIR_TIMEOUT_MS = Number(process.env.AI_REPAIR_TIMEOUT_QWEN_MS || 30000) || 30000;
 const FALLBACK_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_FALLBACK_MS || 20000) || 20000;
@@ -84,10 +88,6 @@ export function failureResponse(
   );
 }
 
-function isPrimaryModel(model: string) {
-  return model.startsWith(PRIMARY_MODEL.split(':')[0]);
-}
-
 function remainingBudget(deadline: number) {
   return deadline - Date.now();
 }
@@ -127,6 +127,7 @@ async function fetchFromModel(options: {
         stream: false,
         keep_alive: '5m',
         options: {
+          ...OLLAMA_CPU_SAFE_OPTIONS,
           temperature: 0,
           num_predict: numPredict,
         },
@@ -258,7 +259,7 @@ export async function runAiOperation<T>(options: {
   };
 
   for (const model of candidates) {
-    const modelTier = isPrimaryModel(model) ? 'primary' : 'fallback';
+    const modelTier = getModelTier(model) === 'primary' ? 'primary' : 'fallback';
     let rawOutput: string;
 
     try {
@@ -279,6 +280,7 @@ export async function runAiOperation<T>(options: {
         passType: isAiTimeoutDetail(error.message) ? 'timeout' : 'endpoint_failed',
         model,
         modelTier,
+        attemptStage: modelTier === 'fallback' ? 'fallback' : 'primary',
         repairUsed: false,
         durationMs: Date.now() - operationStartedAt,
         detail: error.message,
@@ -298,6 +300,7 @@ export async function runAiOperation<T>(options: {
         passType,
         model,
         modelTier,
+        attemptStage: modelTier === 'fallback' ? 'fallback' : 'primary',
         repairUsed: false,
         durationMs: Date.now() - operationStartedAt,
       });
@@ -329,6 +332,7 @@ export async function runAiOperation<T>(options: {
           passType,
           model,
           modelTier,
+          attemptStage: modelTier === 'fallback' ? 'fallback' : 'repair',
           repairUsed: true,
           durationMs: Date.now() - operationStartedAt,
         });
@@ -343,6 +347,7 @@ export async function runAiOperation<T>(options: {
             passType: isAiTimeoutDetail(repairError.message) ? 'timeout' : 'endpoint_failed',
             model,
             modelTier,
+            attemptStage: modelTier === 'fallback' ? 'fallback' : 'repair',
             repairUsed: true,
             durationMs: Date.now() - operationStartedAt,
             detail: repairError.message,
@@ -360,6 +365,7 @@ export async function runAiOperation<T>(options: {
             passType: 'validation_failed',
             model,
             modelTier,
+            attemptStage: modelTier === 'fallback' ? 'fallback' : 'repair',
             repairUsed: true,
             durationMs: Date.now() - operationStartedAt,
             detail: lastValidationReason,
@@ -379,12 +385,14 @@ export async function runAiOperation<T>(options: {
   }
 
   if (lastEndpointReason) {
+    const failedModelTier = getModelTier(lastFailedModel) === 'primary' ? 'primary' : 'fallback';
     logAiOperationTelemetry({
       operationName,
       passType: isAiTimeoutDetail(lastEndpointReason) ? 'timeout' : 'endpoint_failed',
       model: lastFailedModel,
-      modelTier: lastFailedModel && isPrimaryModel(lastFailedModel) ? 'primary' : 'fallback',
-      repairUsed: false,
+      modelTier: failedModelTier,
+      attemptStage: lastFailureRepairUsed ? 'repair' : failedModelTier === 'fallback' ? 'fallback' : 'primary',
+      repairUsed: lastFailureRepairUsed,
       durationMs: Date.now() - operationStartedAt,
       detail: lastEndpointReason,
     });
@@ -396,7 +404,7 @@ export async function runAiOperation<T>(options: {
       503,
       true,
       lastFailedModel,
-      ['ollama serve', 'ollama pull qwen2.5:3b'],
+      [DEFAULT_AI_START_ACTION, ...getAiInstallActions()],
       {
         passType: lastFailurePassType ?? (isAiTimeoutDetail(lastEndpointReason) ? 'timeout' : 'endpoint_failed'),
         durationMs: Date.now() - operationStartedAt,
@@ -409,8 +417,14 @@ export async function runAiOperation<T>(options: {
     operationName,
     passType: 'validation_failed',
     model: lastFailedModel,
-    modelTier: lastFailedModel && isPrimaryModel(lastFailedModel) ? 'primary' : 'fallback',
-    repairUsed: false,
+    modelTier: getModelTier(lastFailedModel) === 'primary' ? 'primary' : 'fallback',
+    attemptStage:
+      lastFailureRepairUsed
+        ? 'repair'
+        : getModelTier(lastFailedModel) !== 'primary'
+          ? 'fallback'
+          : 'primary',
+    repairUsed: lastFailureRepairUsed,
     durationMs: Date.now() - operationStartedAt,
     detail: lastValidationReason,
   });

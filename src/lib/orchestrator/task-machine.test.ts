@@ -49,6 +49,13 @@ test('buildActionSuccessArtifacts keeps continuity and persists durable negotiat
   };
   const intake: AiIntakeResponse = {
     workflowType: 'client_response',
+    taskShape: {
+      deliverableType: 'reply',
+      immediateNeed: 'send_reply_now',
+      missingInputs: [],
+      workContext: 'ลูกค้ารอคำตอบเรื่อง timeline อยู่',
+      confidence: 0.92,
+    },
     roomDigest: 'ลูกค้ารอ timeline',
     taskFrame: {
       objective: 'ตอบลูกค้าเรื่อง timeline',
@@ -94,6 +101,67 @@ test('buildActionSuccessArtifacts keeps continuity and persists durable negotiat
   assert.equal(result.nextTask.constraints?.preferReplyFirst, true);
   assert.equal(result.nextTask.actionExplanation, actionResponse.whyThisNow);
   assert.equal(result.nextTask.currentPlan?.steps.length, 3);
+  assert.equal(result.nextTask.taskShape?.deliverableType, 'reply');
+  assert.equal(result.payload.task_shape?.immediateNeed, 'send_reply_now');
+});
+
+test('buildActionSuccessArtifacts keeps proposal-start tasks resume-first and removes reply draft from payload', () => {
+  const task = makeTask({
+    workflowType: 'client_resume',
+    sourceText: 'ลูกค้าขอ proposal AI แต่ requirement ยังไม่ชัด ต้องทำ timeline และ estimate',
+  });
+  const intake: AiIntakeResponse = {
+    workflowType: 'client_resume',
+    taskShape: {
+      deliverableType: 'proposal',
+      immediateNeed: 'define_scope',
+      missingInputs: ['requirement ที่ต้องการจริง', 'ข้อมูลสำหรับ estimate ราคาและ effort'],
+      workContext: 'ลูกค้าขอ proposal AI แต่ requirement ยังไม่ชัด note กระจัดกระจาย และยังเริ่มงานไม่ได้',
+      confidence: 0.91,
+    },
+    roomDigest: 'ลูกค้าขอ proposal AI แต่ requirement ยังไม่ชัด',
+    taskFrame: {
+      objective: 'รวบ requirement และ scope ที่ยังไม่ชัดก่อนทำ proposal',
+      stage: 'กำลังล็อกข้อมูลตั้งต้นเพื่อเริ่ม timeline และ estimate ได้จริง',
+      stakeholders: ['client'],
+    },
+    blockers: ['unclear_scope'],
+    requiresClarification: false,
+    clarificationQuestion: undefined,
+    candidateActions: [],
+    meta: {
+      model: 'qwen2.5:3b',
+      usedRoomFiles: [],
+      repairUsed: false,
+    },
+  };
+  const actionResponse: AiActionResponse = {
+    chosenAction: {
+      title: 'รวบ requirement ที่มีและจุดที่ยังขาดก่อน',
+      rationale: 'proposal, timeline และ estimate จะเริ่มได้จริงก็ต่อเมื่อ requirement กับ scope ถูกล็อกพอประมาณก่อน',
+      successSignal: 'ได้ requirement และ assumptions ชุดแรกที่ใช้ร่าง proposal รอบแรกได้',
+    },
+    alternatives: [],
+    whyThisNow: 'ตอนนี้ยังไม่ควรกระโดดไปทำ timeline หรือ estimate เพราะ requirement และ scope ยังไม่ชัดพอ',
+    replyDraft: undefined,
+    situationSummary: 'ลูกค้าขอ proposal AI แต่ requirement ยังไม่สรุป note กระจัดกระจาย และ timeline กับ estimate ยังติดข้อมูลไม่ครบ',
+    meta: {
+      model: 'qwen2.5:3b',
+      usedRoomFiles: [],
+      repairUsed: false,
+    },
+  };
+
+  const result = buildActionSuccessArtifacts({
+    task,
+    intake,
+    actionResponse,
+  });
+
+  assert.equal(result.workflowType, 'client_resume');
+  assert.equal(result.nextTask.taskShape?.deliverableType, 'proposal');
+  assert.equal(result.payload.reply_draft, undefined);
+  assert.equal(result.payload.task_shape?.immediateNeed, 'define_scope');
 });
 
 test('buildScaffoldSuccessArtifacts updates payload and step checkpoint', () => {

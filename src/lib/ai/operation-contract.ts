@@ -11,6 +11,13 @@ import {
   type AiScaffoldResponse,
   AiScaffoldResponseSchema,
 } from '@/lib/ai/operations';
+import {
+  buildActionFallbackCopy,
+  buildIntakeFallbackCandidates,
+  deriveTaskShapeFromText,
+  inferWorkflowTypeFromTaskShape,
+  type TaskShape,
+} from '@/lib/ai/task-shape';
 import type { RescueReason } from '@/lib/store/idb';
 
 export type AiOperationValidationFailureKind =
@@ -248,52 +255,21 @@ function formatZodError(error: ZodError) {
     .join('; ');
 }
 
-function inferFallbackWorkflowTypeFromText(text?: string) {
-  const lower = text?.toLowerCase() ?? '';
-  if (
-    lower.includes('ลูกค้า') ||
-    lower.includes('feedback') ||
-    lower.includes('reply') ||
-    lower.includes('ตอบ') ||
-    lower.includes('email') ||
-    lower.includes('chat')
-  ) {
-    return 'client_response' as const;
-  }
-  return 'client_resume' as const;
-}
+function normalizeTaskShapeCandidate(value: unknown, sourceText: string, fallbackTaskShape?: TaskShape) {
+  const object = asObject(tryParseJsonString(value));
 
-function buildFallbackIntakeCandidates(workflowType: 'client_response' | 'client_resume') {
-  if (workflowType === 'client_response') {
-    return [
-      {
-        title: 'สรุปประเด็นหลักจากข้อความลูกค้าก่อน',
-        rationale: 'ช่วยให้เห็นว่าต้องตอบเรื่องไหนก่อนโดยไม่ต้องอ่านวนหลายรอบ',
-        kind: 'reply_first' as const,
-      },
-      {
-        title: 'ร่างข้อความถามกลับเพื่อเก็บข้อมูลที่ยังขาด',
-        rationale: 'เหมาะเมื่อ feedback หรือคำขอยังไม่ชัดพอจะลงมือแก้งานทันที',
-        kind: 'dependency_first' as const,
-      },
-    ];
-  }
-
-  return [
-    {
-      title: 'สรุปสถานะล่าสุดของโปรเจกต์จากบริบทที่มี',
-      rationale: 'ช่วยให้กลับเข้าบริบทของงานค้างได้เร็วโดยไม่ต้องไล่อ่านใหม่ทั้งหมด',
-      kind: 'resume_first' as const,
-    },
-    {
-      title: 'ระบุส่วนที่ยังค้างหรือยังไม่ชัดก่อนเริ่มงานต่อ',
-      rationale: 'เหมาะเมื่อยังไม่แน่ใจว่าต้องเริ่มจากจุดไหนหรือรออะไรอยู่',
-      kind: 'dependency_first' as const,
-    },
-  ];
+  return deriveTaskShapeFromText(sourceText, {
+    deliverableType: pickAlias(object ?? {}, ['deliverableType', 'deliverable_type']) ?? fallbackTaskShape?.deliverableType,
+    immediateNeed: pickAlias(object ?? {}, ['immediateNeed', 'immediate_need']) ?? fallbackTaskShape?.immediateNeed,
+    missingInputs: pickAlias(object ?? {}, ['missingInputs', 'missing_inputs']) ?? fallbackTaskShape?.missingInputs,
+    workContext: pickAlias(object ?? {}, ['workContext', 'work_context']) ?? fallbackTaskShape?.workContext,
+    confidence: pickAlias(object ?? {}, ['confidence']) ?? fallbackTaskShape?.confidence,
+  });
 }
 
 function normalizeIntakeCandidateWithFallback(value: unknown, options?: {
+  fallbackSourceText?: string;
+  fallbackTaskShape?: TaskShape;
   fallbackWorkflowType?: 'client_response' | 'client_resume';
   fallbackRoomDigest?: string;
   fallbackObjective?: string;
@@ -303,15 +279,21 @@ function normalizeIntakeCandidateWithFallback(value: unknown, options?: {
   if (!object) return value;
 
   const taskFrameObject = asObject(pickAlias(object, ['taskFrame', 'task_frame'])) ?? {};
+  const sourceText = options?.fallbackSourceText ?? options?.fallbackRoomDigest ?? '';
+  const taskShape = normalizeTaskShapeCandidate(
+    pickAlias(object, ['taskShape', 'task_shape']),
+    sourceText,
+    options?.fallbackTaskShape,
+  );
   const candidateActionsRaw = Array.isArray(pickAlias(object, ['candidateActions', 'candidate_actions']))
     ? pickAlias(object, ['candidateActions', 'candidate_actions']) as unknown[]
     : [];
   const metaObject = asObject(pickAlias(object, ['meta'])) ?? {};
-  const fallbackWorkflowType = options?.fallbackWorkflowType ?? inferFallbackWorkflowTypeFromText(options?.fallbackRoomDigest);
-  const fallbackCandidates = buildFallbackIntakeCandidates(fallbackWorkflowType);
+  const fallbackWorkflowType = inferWorkflowTypeFromTaskShape(taskShape);
+  const fallbackCandidates = buildIntakeFallbackCandidates(fallbackWorkflowType, taskShape);
 
   return {
-    workflowType: pickAlias(object, ['workflowType', 'workflow_type']) ?? fallbackWorkflowType,
+    workflowType: fallbackWorkflowType,
     roomDigest: pickAlias(object, ['roomDigest', 'room_digest', 'summary']) ?? options?.fallbackRoomDigest,
     taskFrame: {
       objective: pickAlias(taskFrameObject, ['objective', 'goal']) ?? options?.fallbackObjective,
@@ -323,6 +305,7 @@ function normalizeIntakeCandidateWithFallback(value: unknown, options?: {
       pickAlias(object, ['requiresClarification', 'requires_clarification']) ?? false,
     clarificationQuestion:
       pickAlias(object, ['clarificationQuestion', 'clarification_question', 'clarification_nudge']),
+    taskShape,
     candidateActions: (candidateActionsRaw.length > 0 ? candidateActionsRaw : fallbackCandidates).map((candidate, index) => {
       const actionObject = asObject(candidate) ?? {};
       return {
@@ -349,43 +332,27 @@ function buildFallbackActionContent(options?: {
   fallbackWhyThisNow?: string;
   fallbackSituationSummary?: string;
   fallbackReplyDraft?: string;
+  fallbackTaskShape?: TaskShape;
+  fallbackWorkflowType?: 'client_response' | 'client_resume';
 }) {
+  const fallbackCopy = options?.fallbackTaskShape && options?.fallbackWorkflowType
+    ? buildActionFallbackCopy(options.fallbackWorkflowType, options.fallbackTaskShape)
+    : undefined;
   return {
-    chosenTitle: options?.fallbackChosenTitle ?? 'เริ่มจากก้าวที่แตะได้ทันที',
-    chosenRationale: options?.fallbackChosenRationale ?? 'ช่วยให้ขยับงานนี้ต่อได้โดยไม่ต้องคิดใหม่ทั้งก้อน',
-    successSignal: options?.fallbackSuccessSignal ?? 'เห็นความคืบหน้าหนึ่งจุดของงานนี้',
-    whyThisNow: options?.fallbackWhyThisNow ?? 'ตอนนี้ควรเริ่มจากก้าวที่ลดแรงเสียดทานก่อน เพื่อให้บริบทกลับมาเร็วที่สุด',
-    situationSummary: options?.fallbackSituationSummary ?? 'ตอนนี้ยังมีข้อมูลพอให้เริ่มจากก้าวเล็กที่ชัดเจนก่อน',
-    replyDraft: options?.fallbackReplyDraft,
+    chosenTitle: options?.fallbackChosenTitle ?? fallbackCopy?.chosenTitle ?? 'เริ่มจากก้าวที่แตะได้ทันที',
+    chosenRationale: options?.fallbackChosenRationale ?? fallbackCopy?.chosenRationale ?? 'ช่วยให้ขยับงานนี้ต่อได้โดยไม่ต้องคิดใหม่ทั้งก้อน',
+    successSignal: options?.fallbackSuccessSignal ?? fallbackCopy?.successSignal ?? 'เห็นความคืบหน้าหนึ่งจุดของงานนี้',
+    whyThisNow: options?.fallbackWhyThisNow ?? fallbackCopy?.whyThisNow ?? 'ตอนนี้ควรเริ่มจากก้าวที่ลดแรงเสียดทานก่อน เพื่อให้บริบทกลับมาเร็วที่สุด',
+    situationSummary: options?.fallbackSituationSummary ?? fallbackCopy?.situationSummary ?? 'ตอนนี้ยังมีข้อมูลพอให้เริ่มจากก้าวเล็กที่ชัดเจนก่อน',
+    replyDraft: options?.fallbackReplyDraft ?? fallbackCopy?.replyDraft,
   };
 }
 
 function buildFallbackActionAlternatives(
   workflowType: 'client_response' | 'client_resume' = 'client_resume',
+  taskShape?: TaskShape,
 ) {
-  if (workflowType === 'client_response') {
-    return [
-      {
-        title: 'สรุปประเด็นหลักของลูกค้าก่อนแล้วค่อยตอบ',
-        rationale: 'ช่วยตัด noise ก่อน เพื่อให้ตอบกลับได้ตรงโดยไม่ต้องอ่านวน',
-      },
-      {
-        title: 'ร่างข้อความถามกลับเฉพาะจุดที่ยังไม่ชัด',
-        rationale: 'เหมาะเมื่อยังมีข้อมูลที่ต้องเคลียร์ก่อน commit คำตอบหรือ scope',
-      },
-    ];
-  }
-
-  return [
-    {
-      title: 'สรุปว่างานนี้ค้างตรงไหนก่อนเริ่มต่อ',
-      rationale: 'ช่วยกลับเข้าบริบทของงานค้างโดยไม่ต้องไล่ดูทุกอย่างใหม่',
-    },
-    {
-      title: 'ตัดก้าวแรกให้เล็กพอเริ่มได้ในไม่กี่นาที',
-      rationale: 'เหมาะเมื่อรู้ทิศแล้วแต่ยังเริ่มไม่ออกเพราะงานยังดูใหญ่เกินไป',
-    },
-  ];
+  return buildActionFallbackCopy(workflowType, taskShape ?? deriveTaskShapeFromText('')).alternatives;
 }
 
 function sanitizePlainTextLine(value: string) {
@@ -393,6 +360,82 @@ function sanitizePlainTextLine(value: string) {
     .replace(/^[-*•\d.)\s]+/u, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function looksReplyFirstTitle(value: string | undefined) {
+  const text = coerceString(value)?.toLowerCase();
+  if (!text) return false;
+  return (
+    text.includes('ตอบลูกค้า') ||
+    text.includes('ตอบกลับ') ||
+    text.includes('reply') ||
+    text.includes('สรุปประเด็นหลักจากข้อความลูกค้าก่อน') ||
+    text.includes('ร่างข้อความถามกลับ')
+  );
+}
+
+function looksGenericAlternativeTitle(value: string | undefined) {
+  const text = coerceString(value)?.toLowerCase();
+  if (!text) return true;
+  return (
+    text === 'จัดการกับ blocker ที่มีอยู่' ||
+    text === 'สรุปข้อมูลที่มีอยู่' ||
+    text.includes('blocker') ||
+    text.includes('ข้อมูลที่มีอยู่') ||
+    text.includes('สิ่งที่มีอยู่') ||
+    text.includes('เคลียร์ blocker')
+  );
+}
+
+function looksTooGenericForDemoRequestTitle(value: string | undefined) {
+  const text = coerceString(value)?.toLowerCase();
+  if (!text) return true;
+  if (text.includes('สรุปสถานะล่าสุดของโปรเจกต์จากบริบทที่มี')) return true;
+  if (text.includes('สรุปประเด็นหลักจากข้อความลูกค้าก่อน')) return true;
+  return !(
+    text.includes('demo') ||
+    text.includes('เดโม') ||
+    text.includes('pilot') ||
+    text.includes('นัด') ||
+    text.includes('ตอบ')
+  );
+}
+
+function isDemoRequestTaskShape(taskShape: TaskShape | undefined) {
+  if (!taskShape) return false;
+  const contextText = [
+    taskShape.workContext,
+    ...taskShape.missingInputs,
+  ]
+    .join(' ')
+    .toLowerCase();
+
+  return (
+    contextText.includes('demo') ||
+    contextText.includes('เดโม') ||
+    contextText.includes('pilot') ||
+    contextText.includes('นัด')
+  );
+}
+
+function looksLikeSerializedJsonBlob(value: string | undefined) {
+  const text = coerceString(value);
+  if (!text) return false;
+  const compact = text.replace(/\s+/g, ' ').trim();
+
+  if (
+    compact.startsWith('{"') ||
+    compact.startsWith('{ "') ||
+    compact.startsWith('[{"') ||
+    compact.startsWith('[ {"')
+  ) {
+    return true;
+  }
+
+  return (
+    compact.startsWith('{') &&
+    /"(chosenAction|alternatives|whyThisNow|replyDraft|situationSummary|meta)"\s*:/.test(compact)
+  );
 }
 
 function buildPlainTextActionCandidate(raw: string, options?: {
@@ -403,9 +446,10 @@ function buildPlainTextActionCandidate(raw: string, options?: {
   fallbackSituationSummary?: string;
   fallbackReplyDraft?: string;
   fallbackWorkflowType?: 'client_response' | 'client_resume';
+  fallbackTaskShape?: TaskShape;
 }) {
   const fallbackAction = buildFallbackActionContent(options);
-  const fallbackAlternatives = buildFallbackActionAlternatives(options?.fallbackWorkflowType);
+  const fallbackAlternatives = buildFallbackActionAlternatives(options?.fallbackWorkflowType, options?.fallbackTaskShape);
   const cleaned = raw
     .replace(/```(?:json)?/gi, ' ')
     .replace(/```/g, ' ')
@@ -416,7 +460,9 @@ function buildPlainTextActionCandidate(raw: string, options?: {
     .filter(Boolean);
   const merged = sanitizePlainTextLine(cleaned);
   const firstMeaningfulLine = lines[0];
-  const summaryText = merged || firstMeaningfulLine;
+  const safeFirstLine = looksLikeSerializedJsonBlob(firstMeaningfulLine) ? undefined : firstMeaningfulLine;
+  const safeMerged = looksLikeSerializedJsonBlob(merged) ? undefined : merged;
+  const summaryText = safeMerged || safeFirstLine;
 
   return {
     chosenAction: {
@@ -425,7 +471,7 @@ function buildPlainTextActionCandidate(raw: string, options?: {
       successSignal: fallbackAction.successSignal,
     },
     alternatives: fallbackAlternatives,
-    whyThisNow: firstMeaningfulLine || fallbackAction.whyThisNow,
+    whyThisNow: safeFirstLine || fallbackAction.whyThisNow,
     replyDraft: fallbackAction.replyDraft,
     situationSummary: summaryText || fallbackAction.situationSummary,
     meta: {
@@ -447,6 +493,7 @@ function normalizeActionCandidate(value: unknown, options?: {
   fallbackSituationSummary?: string;
   fallbackReplyDraft?: string;
   fallbackWorkflowType?: 'client_response' | 'client_resume';
+  fallbackTaskShape?: TaskShape;
 }) {
   const object = asObject(unwrapEnvelope(value)) ?? firstObjectFromArray(unwrapEnvelope(value));
   if (!object) return value;
@@ -456,27 +503,73 @@ function normalizeActionCandidate(value: unknown, options?: {
     ? pickAlias(object, ['alternatives', 'alternative_actions']) as unknown[]
     : [];
   const fallbackAction = buildFallbackActionContent(options);
-  const fallbackAlternatives = buildFallbackActionAlternatives(options?.fallbackWorkflowType);
+  const fallbackAlternatives = buildFallbackActionAlternatives(options?.fallbackWorkflowType, options?.fallbackTaskShape);
+  const taskShapeFallback =
+    options?.fallbackWorkflowType && options?.fallbackTaskShape
+      ? buildActionFallbackCopy(options.fallbackWorkflowType, options.fallbackTaskShape)
+      : undefined;
+  const shouldKeepReplyDraft = options?.fallbackWorkflowType === 'client_response';
+  const rawChosenTitle =
+    coerceString(pickAlias(chosenObject, ['title', 'action_title'])) ??
+    fallbackAction.chosenTitle;
+  const shouldUseDemoRequestFallback =
+    options?.fallbackWorkflowType === 'client_response' &&
+    options.fallbackTaskShape?.immediateNeed === 'send_reply_now' &&
+    isDemoRequestTaskShape(options.fallbackTaskShape) &&
+    looksTooGenericForDemoRequestTitle(rawChosenTitle) &&
+    Boolean(taskShapeFallback);
+
+  const normalizedAlternatives = (alternativesRaw.length > 0 ? alternativesRaw : fallbackAlternatives).map((candidate, index) => {
+    const actionObject = asObject(candidate) ?? {};
+    const mappedTitle =
+      coerceString(pickAlias(actionObject, ['title'])) ??
+      fallbackAlternatives[index]?.title ??
+      fallbackAlternatives[0]?.title ??
+      '';
+    const mappedRationale =
+      coerceString(pickAlias(actionObject, ['rationale', 'reason'])) ??
+      fallbackAlternatives[index]?.rationale ??
+      fallbackAlternatives[0]?.rationale ??
+      '';
+    const mapped = {
+      title: mappedTitle,
+      rationale: mappedRationale,
+    };
+
+    if (
+      options?.fallbackTaskShape?.deliverableType === 'proposal' &&
+      looksGenericAlternativeTitle(mappedTitle)
+    ) {
+      return fallbackAlternatives[index] ?? fallbackAlternatives[0];
+    }
+
+    return mapped;
+  });
 
   return {
     chosenAction: {
-      title: pickAlias(chosenObject, ['title', 'action_title']) ?? fallbackAction.chosenTitle,
-      rationale: pickAlias(chosenObject, ['rationale', 'reason']) ?? fallbackAction.chosenRationale,
-      successSignal: pickAlias(chosenObject, ['successSignal', 'success_signal']) ?? fallbackAction.successSignal,
+      title: shouldUseDemoRequestFallback
+        ? taskShapeFallback?.chosenTitle ?? fallbackAction.chosenTitle
+        : rawChosenTitle,
+      rationale: shouldUseDemoRequestFallback
+        ? taskShapeFallback?.chosenRationale ?? fallbackAction.chosenRationale
+        : pickAlias(chosenObject, ['rationale', 'reason']) ?? fallbackAction.chosenRationale,
+      successSignal: shouldUseDemoRequestFallback
+        ? taskShapeFallback?.successSignal ?? fallbackAction.successSignal
+        : pickAlias(chosenObject, ['successSignal', 'success_signal']) ?? fallbackAction.successSignal,
     },
-    alternatives: (alternativesRaw.length > 0 ? alternativesRaw : fallbackAlternatives).map((candidate, index) => {
-      const actionObject = asObject(candidate) ?? {};
-      return {
-        title: pickAlias(actionObject, ['title']) ?? fallbackAlternatives[index]?.title ?? fallbackAlternatives[0]?.title,
-        rationale:
-          pickAlias(actionObject, ['rationale', 'reason']) ??
-          fallbackAlternatives[index]?.rationale ??
-          fallbackAlternatives[0]?.rationale,
-      };
-    }),
-    whyThisNow: pickAlias(object, ['whyThisNow', 'why_this_now', 'rationale']) ?? fallbackAction.whyThisNow,
-    replyDraft: pickAlias(object, ['replyDraft', 'reply_draft']) ?? fallbackAction.replyDraft,
-    situationSummary: pickAlias(object, ['situationSummary', 'situation_summary']) ?? fallbackAction.situationSummary,
+    alternatives: shouldUseDemoRequestFallback
+      ? taskShapeFallback?.alternatives ?? normalizedAlternatives
+      : normalizedAlternatives,
+    whyThisNow: shouldUseDemoRequestFallback
+      ? taskShapeFallback?.whyThisNow ?? fallbackAction.whyThisNow
+      : pickAlias(object, ['whyThisNow', 'why_this_now', 'rationale']) ?? fallbackAction.whyThisNow,
+    replyDraft: shouldKeepReplyDraft
+      ? pickAlias(object, ['replyDraft', 'reply_draft']) ?? taskShapeFallback?.replyDraft ?? fallbackAction.replyDraft
+      : undefined,
+    situationSummary: shouldUseDemoRequestFallback
+      ? taskShapeFallback?.situationSummary ?? fallbackAction.situationSummary
+      : pickAlias(object, ['situationSummary', 'situation_summary']) ?? fallbackAction.situationSummary,
     meta: {
       model: pickAlias(metaObject, ['model']) ?? '',
       passType: pickAlias(metaObject, ['passType', 'pass_type']),
@@ -486,6 +579,44 @@ function normalizeActionCandidate(value: unknown, options?: {
       repairUsed: pickAlias(metaObject, ['repairUsed', 'repair_used']) ?? false,
     },
   };
+}
+
+function validateActionContextAlignment(
+  data: AiActionResponse,
+  options?: {
+    fallbackWorkflowType?: 'client_response' | 'client_resume';
+    fallbackTaskShape?: TaskShape;
+  },
+) {
+  if (
+    options?.fallbackWorkflowType === 'client_resume' &&
+    options.fallbackTaskShape?.deliverableType === 'proposal' &&
+    looksReplyFirstTitle(data.chosenAction.title)
+  ) {
+    throw new AiOperationContractError(
+      'semantic_validation_failed',
+      'chosenAction must start proposal work, not reply-first',
+    );
+  }
+
+  if (options?.fallbackWorkflowType === 'client_resume' && data.replyDraft) {
+    throw new AiOperationContractError(
+      'semantic_validation_failed',
+      'replyDraft is only allowed for true send_reply_now tasks',
+    );
+  }
+
+  if (
+    options?.fallbackWorkflowType === 'client_response' &&
+    options.fallbackTaskShape?.immediateNeed === 'send_reply_now' &&
+    isDemoRequestTaskShape(options.fallbackTaskShape) &&
+    looksTooGenericForDemoRequestTitle(data.chosenAction.title)
+  ) {
+    throw new AiOperationContractError(
+      'semantic_validation_failed',
+      'chosenAction must acknowledge the demo/pilot reply context',
+    );
+  }
 }
 
 function arrayify(value: unknown) {
@@ -788,7 +919,18 @@ function normalizeReentryCandidate(value: unknown, options?: {
 }
 
 function validateSemanticText(label: string, value: string | undefined) {
-  if (isPlaceholderText(coerceString(value))) {
+  const normalized = coerceString(value);
+  if (
+    normalized &&
+    (
+      ['{', '}', '[', ']'].includes(normalized) ||
+      ((normalized.startsWith('{') || normalized.startsWith('[')) && !/[ก-๙a-zA-Z0-9]/.test(normalized.slice(0, 8)))
+    )
+  ) {
+    throw new AiOperationContractError('semantic_validation_failed', `${label} must not be malformed structured text`);
+  }
+
+  if (isPlaceholderText(normalized)) {
     throw new AiOperationContractError('semantic_validation_failed', `${label} must be real text`);
   }
 }
@@ -802,6 +944,8 @@ function validateOperation<T>(schema: ZodSchema<T>, normalized: unknown) {
 }
 
 export function parseAiIntakeResponse(raw: string, options?: {
+  fallbackSourceText?: string;
+  fallbackTaskShape?: TaskShape;
   fallbackWorkflowType?: 'client_response' | 'client_resume';
   fallbackRoomDigest?: string;
   fallbackObjective?: string;
@@ -822,6 +966,7 @@ export function parseAiIntakeResponse(raw: string, options?: {
   validateSemanticText('roomDigest', data.roomDigest);
   validateSemanticText('taskFrame.objective', data.taskFrame.objective);
   validateSemanticText('taskFrame.stage', data.taskFrame.stage);
+  validateSemanticText('taskShape.workContext', data.taskShape.workContext);
   for (const candidate of data.candidateActions) {
     validateSemanticText('candidateActions.title', candidate.title);
     validateSemanticText('candidateActions.rationale', candidate.rationale);
@@ -837,6 +982,7 @@ export function parseAiActionResponse(raw: string, options?: {
   fallbackSituationSummary?: string;
   fallbackReplyDraft?: string;
   fallbackWorkflowType?: 'client_response' | 'client_resume';
+  fallbackTaskShape?: TaskShape;
 }): AiActionResponse {
   const extracted = extractJsonCandidate(raw);
   if (!extracted) {
@@ -847,6 +993,7 @@ export function parseAiActionResponse(raw: string, options?: {
     validateSemanticText('chosenAction.successSignal', data.chosenAction.successSignal);
     validateSemanticText('whyThisNow', data.whyThisNow);
     validateSemanticText('situationSummary', data.situationSummary);
+    validateActionContextAlignment(data, options);
     return data;
   }
 
@@ -864,6 +1011,7 @@ export function parseAiActionResponse(raw: string, options?: {
   validateSemanticText('chosenAction.successSignal', data.chosenAction.successSignal);
   validateSemanticText('whyThisNow', data.whyThisNow);
   validateSemanticText('situationSummary', data.situationSummary);
+  validateActionContextAlignment(data, options);
   return data;
 }
 

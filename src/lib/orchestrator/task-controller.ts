@@ -42,16 +42,18 @@ import {
   resolveWorkflowType,
   routeFromResumeTarget,
 } from '@/lib/orchestrator/task-machine';
+import { synthesizeLocally } from '@/lib/ai/local-synthesis';
+import type { AnalyticsEventProperties } from '@/lib/analytics/local-analytics';
+import type { IcpTag } from '@/lib/business/monetization';
 import {
   classifyScaffoldRefineResult,
-  getVisibleScaffoldStep,
+  getVisibleScaffoldSteps,
   SCAFFOLD_REFINE_FAILURE_COPY,
   type ScaffoldRefineFeedback,
 } from '@/lib/orchestrator/scaffold-refine';
 import {
   requestAction,
   requestIntake,
-  requestLegacySynthesis,
   requestReentry,
   requestRescue,
   requestScaffold,
@@ -93,6 +95,10 @@ export interface TaskControllerBindings {
   persistSession?: (session: AppSession) => Promise<void>;
   persistActionSave?: (action: Action) => Promise<void>;
   persistActionUpdate?: (id: string, modifications: Partial<Action>) => Promise<void>;
+  businessContext?: {
+    scenarioId?: string;
+    icpTag?: IcpTag;
+  };
 }
 
 function trimAiOpsFeed(entry: AiOpsDebugEntry, record: (entry: AiOpsDebugEntry) => void) {
@@ -149,6 +155,39 @@ export function createTaskController(bindings: TaskControllerBindings) {
       bindings.setScaffoldRefineFeedback(null);
     }
   };
+
+  const buildAnalyticsBase = (
+    task?: TaskContext,
+    extra: AnalyticsEventProperties = {},
+  ): AnalyticsEventProperties => {
+    const base = getBaseSession();
+    const activeTask = task ?? (base ? getSessionTask(base) : undefined);
+    const sourceContextCount = activeTask
+      ? activeTask.sourceFiles.length + (activeTask.sourceText.trim().length > 0 ? 1 : 0)
+      : base?.activeDumpContext
+        ? 1
+        : 0;
+
+    return {
+      room_id: activeTask?.roomId ?? base?.roomId,
+      room_title: base?.roomTitle,
+      room_scenario_type: base?.roomScenarioType,
+      session_id: String(base?.task?.id ?? base?.activeDumpContext?.createdAt ?? base?.lastActive ?? Date.now()),
+      task_id: activeTask?.id ?? base?.task?.id,
+      ui_route: base?.uiRoute,
+      assistant_mode: activeTask?.assistantMode ?? base?.task?.assistantMode,
+      scenario_id: bindings.businessContext?.scenarioId,
+      icp_tag: bindings.businessContext?.icpTag,
+      source_context_count: sourceContextCount,
+      action_id: activeTask?.currentActionId ?? bindings.currentActionState?.id ?? base?.currentActionId ?? undefined,
+      ...extra,
+    };
+  };
+
+  const getScaffoldStepTexts = (task: TaskContext, payload: AiSynthesisResponse | null) =>
+    task.currentPlan?.steps.map((step) => step.text)
+      ?? payload?.recommended_action.micro_steps
+      ?? [];
 
   const setScaffoldRefineError = (message = SCAFFOLD_REFINE_FAILURE_COPY) => {
     bindings.setScaffoldRefineFeedback({
@@ -229,6 +268,16 @@ export function createTaskController(bindings: TaskControllerBindings) {
     }, nextTask);
   };
 
+  const buildStableSummary = (task: TaskContext, summaryCandidates: Array<string | undefined>) => {
+    for (const candidate of summaryCandidates) {
+      const normalized = candidate?.replace(/\s+/g, ' ').trim();
+      if (normalized) return normalized;
+    }
+
+    const sourceFallback = task.sourceText.replace(/\s+/g, ' ').trim();
+    return sourceFallback ? sourceFallback.slice(0, 220) : undefined;
+  };
+
   const applyActionOperationSuccess = async (options: {
     task: TaskContext;
     intake: AiIntakeResponse;
@@ -245,6 +294,16 @@ export function createTaskController(bindings: TaskControllerBindings) {
       existingAction,
       persistedNegotiationMode,
     });
+    const stableSummary = buildStableSummary(task, [
+      actionResponse.situationSummary,
+      intake.roomDigest,
+      artifacts.payload.situation_summary,
+      task.lastStableSummary,
+    ]);
+    const nextTask: TaskContext = {
+      ...artifacts.nextTask,
+      lastStableSummary: stableSummary,
+    };
 
     bindings.setCurrentPayload(artifacts.payload);
     bindings.setCurrentWhyThisNow(artifacts.whyThisNow);
@@ -291,10 +350,14 @@ export function createTaskController(bindings: TaskControllerBindings) {
       lastWorkflowType: artifacts.workflowType,
       lastFailureReason: undefined,
       notThisCount: 0,
-    }, artifacts.nextTask);
+    }, nextTask);
   };
 
-  const handleLegacySynthesisSuccess = async (data: AiSynthesisResponse, fromRetry = false) => {
+  const handleLegacySynthesisSuccess = async (
+    data: AiSynthesisResponse,
+    fromRetry = false,
+    source: 'ollama' | 'deterministic_fallback' = 'ollama',
+  ) => {
     const workflowType = resolveWorkflowType(data);
     const base = getBaseSession();
     if (!base) return;
@@ -332,13 +395,14 @@ export function createTaskController(bindings: TaskControllerBindings) {
     bindings.setCurrentRescueState(null);
     bindings.setIsRescueLoading(false);
     clearScaffoldRefineState();
-    trackEvent('synthesis_completed', { source: 'ollama' });
+    trackEvent('synthesis_completed', { source });
     trackEvent('workflow_classified', { workflow_type: workflowType });
     trackEvent(workflowType === 'client_response' ? 'client_response_submitted' : 'client_resume_submitted');
     rememberWorkflow(workflowType);
 
-    const actionDraft: Action = {
+      const actionDraft: Action = {
       id: Date.now().toString(),
+      roomId: currentTask.roomId,
       createdAt: Date.now(),
       title: normalizedData.recommended_action.title,
       rationale: normalizedData.recommended_action.rationale,
@@ -376,6 +440,10 @@ export function createTaskController(bindings: TaskControllerBindings) {
       lastFailureReason: undefined,
       lastAiOperation: 'action',
       actionExplanation: undefined,
+      lastStableSummary: buildStableSummary(currentTask, [
+        normalizedData.situation_summary,
+        currentTask.lastStableSummary,
+      ]),
       currentPlan: {
         actionTitle: normalizedData.recommended_action.title,
         steps: normalizedData.recommended_action.micro_steps.map((step, index) => ({
@@ -398,6 +466,21 @@ export function createTaskController(bindings: TaskControllerBindings) {
     }, nextTask);
   };
 
+  const applyDeterministicFallback = async (
+    task: TaskContext,
+    failure: SynthesisFailure,
+    options?: { fromRetry?: boolean },
+  ) => {
+    try {
+      const localFallback = synthesizeLocally(task.sourceText);
+      await handleLegacySynthesisSuccess(localFallback, options?.fromRetry, 'deterministic_fallback');
+      return true;
+    } catch {
+      await enterManualFallback(failure.reason, failure.message, failure.actions, failure.retryable);
+      return false;
+    }
+  };
+
   const runAiLifecycle = async (task: TaskContext, fromRetry = false) => {
     try {
       const intake = await requestIntake(task);
@@ -405,6 +488,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
       const intakeTask: TaskContext = {
         ...task,
         workflowType: intake.workflowType,
+        taskShape: intake.taskShape,
         blockerSignals: intake.blockers,
         taskFrame: intake.taskFrame,
         assistantMode: 'intake_review',
@@ -414,18 +498,24 @@ export function createTaskController(bindings: TaskControllerBindings) {
       if (intake.requiresClarification) {
         bindings.setClarificationPrompt(intake.clarificationQuestion || 'ช่วยบอกอีกนิดว่าตอนนี้ต้องตอบหรือขยับส่วนไหนก่อน');
         bindings.setCurrentWhyThisNow('');
-        await updateStatus('CLARIFICATION', {
-          currentActionId: null,
-          currentPayload: undefined,
-          lastWorkflowType: intake.workflowType,
-          lastFailureReason: undefined,
-        }, {
+        const clarificationTask: TaskContext = {
           ...intakeTask,
           lifecycleState: 'clarification_needed',
           currentActionId: null,
           currentStepIndex: 0,
           lastFailureReason: undefined,
-        });
+          lastStableSummary: buildStableSummary(intakeTask, [
+            intake.roomDigest,
+            intake.taskFrame.objective,
+            intakeTask.lastStableSummary,
+          ]),
+        };
+        await updateStatus('CLARIFICATION', {
+          currentActionId: null,
+          currentPayload: undefined,
+          lastWorkflowType: intake.workflowType,
+          lastFailureReason: undefined,
+        }, clarificationTask);
         return;
       }
 
@@ -459,21 +549,35 @@ export function createTaskController(bindings: TaskControllerBindings) {
     if (!base || !hasResumableTask(base.task)) return;
 
     const currentTask = getSessionTask(base);
+    const reentryStartedAt = Date.now();
+    const reentryGapDays = Math.max(0, (reentryStartedAt - base.lastActive) / (1000 * 60 * 60 * 24));
+    trackEvent('reentry_started', buildAnalyticsBase(currentTask, {
+      reentry_gap_days: reentryGapDays,
+      outcome_label: scope,
+    }));
     bindings.setIsReentryLoading(true);
     try {
-      const reentry = await requestReentry(currentTask, bindings.currentActionState, scope);
+      const reentry = await requestReentry(currentTask, bindings.currentActionState, scope, currentTask.currentStepIndex);
       recordSuccess('reentry', reentry);
       const { nextTask } = buildReentryTaskArtifacts(currentTask, reentry);
+      const persistedReentryTask: TaskContext = {
+        ...nextTask,
+        lastStableSummary: buildStableSummary(currentTask, [
+          reentry.reentrySummary,
+          nextTask.reentryBrief?.summary,
+          currentTask.lastStableSummary,
+        ]),
+      };
       const updated = normalizeSession({
         ...base,
         status: base.uiRoute,
         uiRoute: base.uiRoute,
-        task: nextTask,
+        task: persistedReentryTask,
         lastActive: Date.now(),
       });
       bindings.sessionRef.current = updated;
       bindings.setSession(updated);
-    await persistSession(updated);
+      await persistSession(updated);
     } catch (error) {
       if (error instanceof SynthesisFailure) {
         recordFailure(error);
@@ -509,6 +613,12 @@ export function createTaskController(bindings: TaskControllerBindings) {
         (bindings.currentPayload ? resolveWorkflowType(bindings.currentPayload) : 'client_resume');
       const intake: AiIntakeResponse = {
         workflowType: fallbackWorkflowType,
+        taskShape: trackedTask.taskShape ?? {
+          deliverableType: 'unknown',
+          immediateNeed: fallbackWorkflowType === 'client_response' ? 'send_reply_now' : 'resume_execution',
+          missingInputs: [],
+          workContext: trackedTask.lastSynthesis?.situation_summary ?? trackedTask.sourceText.slice(0, 280),
+        },
         roomDigest: trackedTask.lastSynthesis?.situation_summary ?? trackedTask.sourceText.slice(0, 280),
         taskFrame: trackedTask.taskFrame ?? {
           objective: bindings.currentActionState?.title ?? 'พางานนี้ไปต่อ',
@@ -554,6 +664,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
     const base = getBaseSession();
     if (!base || !bindings.currentPayload) return;
     const currentTask = getSessionTask(base);
+    const fromRescue = base.uiRoute === 'RESCUE' || currentTask.lifecycleState === 'stalled';
     const taskForScaffold: TaskContext = {
       ...currentTask,
       lifecycleState: 'in_scaffold',
@@ -569,8 +680,8 @@ export function createTaskController(bindings: TaskControllerBindings) {
       state: 'IN_PROGRESS' as const,
       workflowType: taskForScaffold.workflowType,
     };
-    const previousVisibleStep = getVisibleScaffoldStep(
-      bindings.currentPayload.recommended_action.micro_steps,
+    const previousVisibleSteps = getVisibleScaffoldSteps(
+      getScaffoldStepTexts(currentTask, bindings.currentPayload),
       taskForScaffold.currentStepIndex,
     );
 
@@ -586,11 +697,11 @@ export function createTaskController(bindings: TaskControllerBindings) {
         payload: bindings.currentPayload,
         scaffold,
       });
-      const nextVisibleStep = getVisibleScaffoldStep(
-        nextPayload.recommended_action.micro_steps,
+      const nextVisibleSteps = getVisibleScaffoldSteps(
+        nextTask.currentPlan?.steps.map((step) => step.text) ?? nextPayload.recommended_action.micro_steps,
         nextTask.currentStepIndex,
       );
-      const refineResult = classifyScaffoldRefineResult(previousVisibleStep, nextVisibleStep);
+      const refineResult = classifyScaffoldRefineResult(previousVisibleSteps, nextVisibleSteps);
 
       if (refineResult !== 'success') {
         setScaffoldRefineError();
@@ -610,6 +721,13 @@ export function createTaskController(bindings: TaskControllerBindings) {
         currentActionId: currentAction.id || base.currentActionId,
         currentPayload: nextPayload,
       }, nextTask);
+      if (fromRescue) {
+        const lastRescueReason = currentTask.rescueHistory[currentTask.rescueHistory.length - 1]?.reason ?? 'unknown';
+        trackEvent('rescue_resolved', buildAnalyticsBase(nextTask, {
+          rescue_reason: lastRescueReason,
+          outcome_label: 'make_smaller',
+        }));
+      }
     } catch (error) {
       if (error instanceof SynthesisFailure) {
         recordFailure(error);
@@ -629,10 +747,34 @@ export function createTaskController(bindings: TaskControllerBindings) {
       lifecycleState: 'stalled',
       assistantMode: 'rescue_diagnosis',
     };
+    const rescueFallbackState: AiRescueResponse = {
+      diagnosis: {
+        primaryReason: 'unknown',
+        explanation:
+          'MIND ยังวินิจฉัยไม่สำเร็จในรอบนี้ แต่บริบทงานและข้อความเดิมของคุณยังอยู่ครบ ลองย่อยให้เล็กลงอีก หรือพักไว้แล้วกลับมาลอง rescue ใหม่ได้',
+      },
+      rescuePlan: {
+        mode: 'shrink',
+        steps: [
+          'กลับไปทำแค่ส่วนเล็กที่สุดของ step นี้ก่อน',
+          'ถ้ายังติดอยู่จริง งานนี้ยังถูกเก็บไว้เหมือนเดิม ค่อยกลับมาลองใหม่เมื่อพร้อม',
+        ],
+      },
+      suggestedMessage: undefined,
+      meta: {
+        model: bindings.aiModel,
+        repairUsed: false,
+        usedRoomFiles: [],
+      },
+    };
     clearScaffoldRefineState();
-    bindings.setCurrentRescueState(null);
+    bindings.setCurrentRescueState(rescueFallbackState);
     bindings.setIsRescueLoading(true);
     await updateStatus('RESCUE', {}, nextTask);
+    trackEvent('rescue_triggered', buildAnalyticsBase(nextTask, {
+      rescue_reason: 'unknown',
+      outcome_label: 'enter_rescue',
+    }));
 
     try {
       const rescue = await requestRescue(nextTask, bindings.currentActionState, currentTask.currentStepIndex);
@@ -655,10 +797,29 @@ export function createTaskController(bindings: TaskControllerBindings) {
       if (error instanceof SynthesisFailure) {
         recordFailure(error);
       }
+      const base = getBaseSession();
+      const currentTask = base ? getSessionTask(base) : null;
+      const rescueFallbackTask: TaskContext | null = currentTask
+        ? {
+            ...currentTask,
+            lifecycleState: 'stalled',
+            assistantMode: 'rescue_diagnosis',
+            lastAiOperation: 'rescue',
+            rescueHistory: [
+              ...currentTask.rescueHistory,
+              {
+                reason: 'unknown',
+                mode: 'shrink',
+                createdAt: Date.now(),
+              },
+            ],
+          }
+        : null;
       bindings.setCurrentRescueState({
         diagnosis: {
           primaryReason: 'unknown',
-          explanation: 'MIND ยังวินิจฉัยไม่สำเร็จในรอบนี้ แต่บริบทงานและข้อความเดิมของคุณยังอยู่ครบ ลองย่อยให้เล็กลงอีก หรือพักไว้แล้วกลับมาลอง rescue ใหม่ได้',
+          explanation:
+            'MIND ยังวินิจฉัยไม่สำเร็จในรอบนี้ แต่บริบทงานและข้อความเดิมของคุณยังอยู่ครบ ลองย่อยให้เล็กลงอีก หรือพักไว้แล้วกลับมาลอง rescue ใหม่ได้',
         },
         rescuePlan: {
           mode: 'shrink',
@@ -674,16 +835,21 @@ export function createTaskController(bindings: TaskControllerBindings) {
           usedRoomFiles: [],
         },
       });
+      if (rescueFallbackTask) {
+        await updateStatus('RESCUE', {}, rescueFallbackTask);
+      }
     } finally {
       bindings.setIsRescueLoading(false);
     }
   };
 
   const handleDump = async (submission: RoomSubmission) => {
+    const base = getBaseSession();
     bindings.setDumpStartTime(Date.now());
     const createdAt = Date.now();
     const task: TaskContext = {
       id: `${createdAt}`,
+      roomId: base?.roomId,
       workflowType: undefined,
       sourceText: submission.sourceText,
       sourceFiles: submission.sourceFiles,
@@ -705,6 +871,9 @@ export function createTaskController(bindings: TaskControllerBindings) {
       currentPayload: undefined,
       lastFailureReason: undefined,
     }, task);
+    trackEvent('task_opened', buildAnalyticsBase(task, {
+      outcome_label: 'dump_submitted',
+    }));
     trackEvent('synthesis_started');
     bindings.setManualFallbackSuggestedActions([]);
     bindings.setClarificationPrompt('');
@@ -720,22 +889,17 @@ export function createTaskController(bindings: TaskControllerBindings) {
     try {
       await runAiLifecycle(task);
     } catch (err) {
-      try {
-        const data = await requestLegacySynthesis(task);
-        recordSuccess('legacy_synthesis', data as unknown as { meta?: never });
-        await handleLegacySynthesisSuccess(data);
-      } catch {
-        const failure = err instanceof SynthesisFailure
-          ? err
-          : new SynthesisFailure('unknown', 'ไม่สามารถเชื่อมต่อกับ AI endpoint ได้');
-        await enterManualFallback(failure.reason, failure.message, failure.actions, failure.retryable);
-      }
+      const failure = err instanceof SynthesisFailure
+        ? err
+        : new SynthesisFailure('unknown', 'ไม่สามารถเชื่อมต่อกับ AI endpoint ได้');
+      await applyDeterministicFallback(task, failure);
     }
   };
 
   const handleManualRescue = async (actionTitle: string) => {
     const base = getBaseSession();
     if (!base) return;
+    const currentTask = getSessionTask(base);
     const steps = [
       `เปิดสิ่งที่ต้องใช้เพื่อเริ่ม "${actionTitle}"`,
       'โฟกัสแค่ 2 นาทีแรกของงานนี้พอ',
@@ -743,6 +907,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
     ];
     const actionDraft: Action = {
       id: Date.now().toString(),
+      roomId: currentTask.roomId,
       createdAt: Date.now(),
       title: actionTitle,
       rationale: 'ก้าวถัดไปที่ผู้ใช้ระบุเอง',
@@ -759,7 +924,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
     clearScaffoldRefineState();
     const payload = buildPayloadFromAction({ ...actionDraft, microSteps: steps });
     bindings.setCurrentPayload(payload);
-    const task = getSessionTask(base);
+    const task = currentTask;
     const nextTask: TaskContext = {
       ...task,
       lifecycleState: 'in_scaffold',
@@ -807,15 +972,11 @@ export function createTaskController(bindings: TaskControllerBindings) {
     try {
       await runAiLifecycle(retriedTask, true);
     } catch (err) {
-      try {
-        const data = await requestLegacySynthesis(retriedTask);
-        recordSuccess('legacy_synthesis', data as unknown as { meta?: never });
-        await handleLegacySynthesisSuccess(data, true);
-      } catch {
-        const failure = err instanceof SynthesisFailure
-          ? err
-          : new SynthesisFailure('unknown', 'ลองให้ AI ใหม่ไม่สำเร็จ');
-        await enterManualFallback(failure.reason, failure.message, failure.actions, failure.retryable);
+      const failure = err instanceof SynthesisFailure
+        ? err
+        : new SynthesisFailure('unknown', 'ลองให้ AI ใหม่ไม่สำเร็จ');
+      const recovered = await applyDeterministicFallback(retriedTask, failure, { fromRetry: true });
+      if (!recovered) {
         throw failure;
       }
     }
@@ -845,10 +1006,13 @@ export function createTaskController(bindings: TaskControllerBindings) {
       return;
     }
 
-    bindings.setCurrentPayload(payload);
+      bindings.setCurrentPayload(payload);
     const nextTask: TaskContext = {
       ...currentTask,
       lifecycleState: route === 'SCAFFOLD' ? 'in_scaffold' : 'has_one_action',
+      assistantMode: route === 'SCAFFOLD'
+        ? currentTask.assistantMode ?? 'scaffold_refinement'
+        : 'action_negotiation',
       currentActionId: bindings.currentActionState.id,
       currentStepIndex: route === 'SCAFFOLD' ? currentTask.currentStepIndex : 0,
       lastSynthesis: payload,
@@ -867,7 +1031,49 @@ export function createTaskController(bindings: TaskControllerBindings) {
     const suggested = base.task.reentryBrief.topActions[0];
     if (!suggested) return;
     trackEvent('reentry_suggestion_selected', { target: suggested.resumeTarget });
-    await resumeTaskFromRoute(routeFromResumeTarget(suggested.resumeTarget));
+    const targetRoute = routeFromResumeTarget(suggested.resumeTarget);
+    const currentTask = getSessionTask(base);
+    const existingPayload = bindings.currentPayload
+      || (bindings.currentActionState ? buildPayloadFromAction(bindings.currentActionState) : currentTask.lastSynthesis);
+
+    if ((targetRoute === 'ONE_ACTION' || targetRoute === 'SCAFFOLD') && (!existingPayload || !bindings.currentActionState)) {
+      const action: Action = {
+        id: Date.now().toString(),
+        roomId: currentTask.roomId,
+        createdAt: Date.now(),
+        title: suggested.title,
+        rationale: suggested.rationale,
+        microSteps: buildBootstrapMicroSteps({ title: suggested.title }),
+        isPinned: false,
+        state: 'PENDING',
+        workflowType: currentTask.workflowType,
+        situationSummary: currentTask.reentryBrief?.summary,
+        replyDraft: currentTask.workflowType === 'client_response' ? currentTask.lastSynthesis?.reply_draft : undefined,
+        detectedBlockers: currentTask.blockerSignals,
+      };
+      const payload = buildPayloadFromAction(action);
+      const nextTask: TaskContext = {
+        ...currentTask,
+        lifecycleState: targetRoute === 'SCAFFOLD' ? 'in_scaffold' : 'has_one_action',
+        assistantMode: targetRoute === 'SCAFFOLD' ? 'scaffold_refinement' : 'action_negotiation',
+        currentActionId: action.id,
+        currentStepIndex: targetRoute === 'SCAFFOLD' ? currentTask.currentStepIndex : 0,
+        lastSynthesis: payload,
+        reentryBrief: currentTask.reentryBrief,
+      };
+
+      bindings.setCurrentActionState(action);
+      bindings.setCurrentPayload(payload);
+      bindings.setCurrentWhyThisNow(suggested.rationale);
+      await persistActionSave(action);
+      await updateStatus(targetRoute, {
+        currentActionId: action.id,
+        currentPayload: payload,
+      }, nextTask);
+      return;
+    }
+
+    await resumeTaskFromRoute(targetRoute);
   };
 
   const openDumpWithCurrentContext = async () => {
@@ -939,16 +1145,10 @@ export function createTaskController(bindings: TaskControllerBindings) {
     try {
       await runAiLifecycle(nextTask);
     } catch (err) {
-      try {
-        const data = await requestLegacySynthesis(nextTask);
-        recordSuccess('legacy_synthesis', data as unknown as { meta?: never });
-        await handleLegacySynthesisSuccess(data);
-      } catch {
-        const failure = err instanceof SynthesisFailure
-          ? err
-          : new SynthesisFailure('unknown', 'ไม่สามารถเชื่อมต่อกับ AI endpoint ได้');
-        await enterManualFallback(failure.reason, failure.message, failure.actions, failure.retryable);
-      }
+      const failure = err instanceof SynthesisFailure
+        ? err
+        : new SynthesisFailure('unknown', 'ไม่สามารถเชื่อมต่อกับ AI endpoint ได้');
+      await applyDeterministicFallback(nextTask, failure);
     }
   };
 
@@ -957,6 +1157,12 @@ export function createTaskController(bindings: TaskControllerBindings) {
       await persistActionUpdate(bindings.currentActionState.id, { state: 'IN_PROGRESS' });
       trackEvent('action_accepted');
     }
+    const baseForAction = getBaseSession();
+    const currentTaskForAction = baseForAction ? getSessionTask(baseForAction) : null;
+    trackEvent('first_action_selected', buildAnalyticsBase(currentTaskForAction ?? undefined, {
+      latency_ms: bindings.dumpStartTime ? Date.now() - bindings.dumpStartTime : undefined,
+      outcome_label: 'accepted_primary_action',
+    }));
     if (bindings.dumpStartTime) {
       trackEvent('time_to_action_ms', { ms: Date.now() - bindings.dumpStartTime });
       bindings.setDumpStartTime(null);
@@ -1043,8 +1249,12 @@ export function createTaskController(bindings: TaskControllerBindings) {
     const alt = currentPayload.alternative_actions[index];
     if (!alt) return;
     const workflowType = resolveWorkflowType(currentPayload);
+    const base = getBaseSession();
+    if (!base) return;
+    const currentTask = getSessionTask(base);
     const actionDraft: Action = {
       id: Date.now().toString(),
+      roomId: currentTask.roomId,
       createdAt: Date.now(),
       title: alt.title,
       rationale: alt.rationale,
@@ -1063,9 +1273,6 @@ export function createTaskController(bindings: TaskControllerBindings) {
     bindings.setCurrentWhyThisNow('');
     const newPayload = buildPayloadFromAction(actionDraft);
     bindings.setCurrentPayload(newPayload);
-    const base = getBaseSession();
-    if (!base) return;
-    const currentTask = getSessionTask(base);
     const nextTask: TaskContext = {
       ...currentTask,
       workflowType,
@@ -1087,9 +1294,78 @@ export function createTaskController(bindings: TaskControllerBindings) {
   };
 
   const handleCompleteScaffold = async () => {
+    const base = getBaseSession();
+    if (!base || !bindings.currentPayload) return;
+
+    const currentTask = getSessionTask(base);
+    const stepTexts = getScaffoldStepTexts(currentTask, bindings.currentPayload);
+    const lastStepIndex = Math.max(stepTexts.length - 1, 0);
+
+    bindings.setCurrentRescueState(null);
+    bindings.setIsRescueLoading(false);
+    bindings.setIsNegotiatingAction(false);
+    bindings.setIsReentryLoading(false);
+    clearScaffoldRefineState();
+
+    if (currentTask.currentStepIndex < lastStepIndex) {
+      const nextTask: TaskContext = {
+        ...currentTask,
+        lifecycleState: 'in_scaffold',
+        assistantMode: 'scaffold_refinement',
+        currentStepIndex: currentTask.currentStepIndex + 1,
+        lastSynthesis: bindings.currentPayload,
+        lastFailureReason: undefined,
+      };
+      await updateStatus('SCAFFOLD', {
+        currentActionId: currentTask.currentActionId,
+        currentPayload: bindings.currentPayload,
+        lastFailureReason: undefined,
+      }, nextTask);
+      return;
+    }
+
+    const completionTask: TaskContext = {
+      ...currentTask,
+      lifecycleState: 'in_scaffold',
+      assistantMode: 'scaffold_completion',
+      currentStepIndex: lastStepIndex,
+      lastSynthesis: bindings.currentPayload,
+      lastFailureReason: undefined,
+    };
+
+    await updateStatus('SCAFFOLD', {
+      currentActionId: currentTask.currentActionId,
+      currentPayload: bindings.currentPayload,
+      lastFailureReason: undefined,
+    }, completionTask);
+  };
+
+  const handleReturnToScaffoldSteps = async () => {
+    const base = getBaseSession();
+    if (!base || !bindings.currentPayload) return;
+
+    const currentTask = getSessionTask(base);
+    const nextTask: TaskContext = {
+      ...currentTask,
+      lifecycleState: 'in_scaffold',
+      assistantMode: 'scaffold_refinement',
+      lastSynthesis: bindings.currentPayload,
+      lastFailureReason: undefined,
+    };
+
+    await updateStatus('SCAFFOLD', {
+      currentActionId: currentTask.currentActionId,
+      currentPayload: bindings.currentPayload,
+      lastFailureReason: undefined,
+    }, nextTask);
+  };
+
+  const handleStartNewFromCompletedScaffold = async () => {
     if (bindings.currentActionState) {
       await persistActionUpdate(bindings.currentActionState.id, { state: 'COMPLETED' });
     }
+    const base = getBaseSession();
+    const completedTask = base ? getSessionTask(base) : null;
     bindings.setCurrentActionState(null);
     bindings.setCurrentPayload(null);
     bindings.setClarificationPrompt('');
@@ -1105,6 +1381,11 @@ export function createTaskController(bindings: TaskControllerBindings) {
       activeDumpContext: undefined,
       lastFailureReason: undefined,
     }, null);
+    if (completedTask) {
+      trackEvent('task_completed', buildAnalyticsBase(completedTask, {
+        outcome_label: 'completed_and_reset',
+      }));
+    }
   };
 
   const handleWalkAwayFromRescue = async () => {
@@ -1169,6 +1450,8 @@ export function createTaskController(bindings: TaskControllerBindings) {
     handleOneActionAdjustmentTouched,
     handleDecisionBoardSelect,
     handleCompleteScaffold,
+    handleReturnToScaffoldSteps,
+    handleStartNewFromCompletedScaffold,
     handleWalkAwayFromRescue,
     deriveResumeRoute: () => {
       const base = getBaseSession();

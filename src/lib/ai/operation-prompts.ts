@@ -9,15 +9,17 @@ function truncateText(value: string | undefined, maxChars: number) {
 }
 
 function describeFiles(task: TaskContext) {
-  if (task.sourceFiles.length === 0) return 'ไม่มีไฟล์แนบ';
-  return task.sourceFiles
+  const sourceFiles = task.sourceFiles ?? [];
+  if (sourceFiles.length === 0) return 'ไม่มีไฟล์แนบ';
+  return sourceFiles
     .map((file) => `- ${file.name} (${file.kind}, ${file.status})`)
     .join('\n');
 }
 
 function describePendingInputs(task: TaskContext) {
-  if (task.pendingInputs.length === 0) return 'ไม่มี';
-  return task.pendingInputs
+  const pendingInputs = task.pendingInputs ?? [];
+  if (pendingInputs.length === 0) return 'ไม่มี';
+  return pendingInputs
     .map((input) => `- ${input.kind}: ${input.answer}`)
     .join('\n');
 }
@@ -32,12 +34,34 @@ function describeAction(action: Action | null | undefined) {
   ].join('\n');
 }
 
+function describeRescueAction(action: Action | null | undefined, currentStepIndex: number) {
+  if (!action) return 'ไม่มี action ปัจจุบัน';
+  const currentStep = action.microSteps[currentStepIndex] ?? action.microSteps[0] ?? action.title;
+  return [
+    `title: ${action.title}`,
+    `currentStep: ${currentStep}`,
+    `micro_steps:`,
+    ...action.microSteps.slice(0, 3).map((step, index) => `  ${index + 1}. ${step}`),
+  ].join('\n');
+}
+
 export function buildOperationTaskContext(task: TaskContext) {
+  const blockerSignals = task.blockerSignals ?? [];
+  const rescueHistory = task.rescueHistory ?? [];
+  const taskShape = task.taskShape
+    ? [
+        `deliverableType: ${task.taskShape.deliverableType}`,
+        `immediateNeed: ${task.taskShape.immediateNeed}`,
+        `missingInputs: ${(task.taskShape.missingInputs ?? []).join(', ') || 'ไม่มี'}`,
+        `workContext: ${task.taskShape.workContext}`,
+        `confidence: ${task.taskShape.confidence ?? 'ไม่ระบุ'}`,
+      ].join('\n')
+    : 'ไม่มี';
   const taskFrame = task.taskFrame
     ? [
         `objective: ${task.taskFrame.objective}`,
         `stage: ${task.taskFrame.stage}`,
-        `stakeholders: ${task.taskFrame.stakeholders.join(', ') || 'ไม่มี'}`,
+        `stakeholders: ${(task.taskFrame.stakeholders ?? []).join(', ') || 'ไม่มี'}`,
       ].join('\n')
     : 'ไม่มี';
   const currentPlan = task.currentPlan
@@ -45,11 +69,11 @@ export function buildOperationTaskContext(task: TaskContext) {
         `actionTitle: ${task.currentPlan.actionTitle}`,
         `successSignal: ${task.currentPlan.successSignal ?? 'ไม่มี'}`,
         `steps:`,
-        ...task.currentPlan.steps.map((step, index) => `  ${index + 1}. ${step.text}`),
+        ...(task.currentPlan.steps ?? []).map((step, index) => `  ${index + 1}. ${step.text}`),
       ].join('\n')
     : 'ไม่มี';
-  const rescueHistory = task.rescueHistory.length > 0
-    ? task.rescueHistory.map((entry) => `- ${entry.reason} -> ${entry.mode}`).join('\n')
+  const rescueHistoryText = rescueHistory.length > 0
+    ? rescueHistory.map((entry) => `- ${entry.reason} -> ${entry.mode}`).join('\n')
     : 'ไม่มี';
   const constraints = task.constraints
     ? [
@@ -78,7 +102,10 @@ export function buildOperationTaskContext(task: TaskContext) {
     describePendingInputs(task),
     '',
     `blockerSignals:`,
-    task.blockerSignals.length > 0 ? task.blockerSignals.join(', ') : 'ไม่มี',
+    blockerSignals.length > 0 ? blockerSignals.join(', ') : 'ไม่มี',
+    '',
+    `taskShape:`,
+    taskShape,
     '',
     `taskFrame:`,
     taskFrame,
@@ -90,7 +117,7 @@ export function buildOperationTaskContext(task: TaskContext) {
     constraints,
     '',
     `rescueHistory:`,
-    rescueHistory,
+    rescueHistoryText,
     '',
     `actionExplanation:`,
     task.actionExplanation || 'ไม่มี',
@@ -115,6 +142,7 @@ export const INTAKE_SYSTEM_PROMPT = `
 
 เป้าหมาย:
 - classify input เป็น client_response หรือ client_resume
+- extract task shape ของงานให้ตรงกับบริบทจริง
 - สรุป room นี้ให้เร็ว
 - สร้าง task frame
 - หา blockers
@@ -127,8 +155,20 @@ export const INTAKE_SYSTEM_PROMPT = `
 - ใช้ภาษาไทยธุรกิจที่อ่านง่าย
 - candidateActions ต้องไม่เกิน 3 รายการ
 - roomDigest ต้องสรุปบริบทจริง ไม่ใช่ประโยคกว้าง
+- taskShape ต้องสรุปว่ากำลังทำ deliverable อะไร และ immediate need ตอนนี้คืออะไร
+- ถ้าผู้ใช้กำลังเตรียม proposal, scope, requirement, timeline หรือ estimate ให้เอนเอียงไปทาง client_resume
+- คำว่า "ลูกค้า" อย่างเดียวไม่พอจะจัดเป็น client_response
+- จัดเป็น client_response เฉพาะเมื่อ user มี intent ชัดว่าจะตอบ ส่ง หรือถามกลับตอนนี้
 - taskFrame ต้องตอบว่ากำลังทำอะไร อยู่ช่วงไหน และใครเกี่ยวข้อง
 - blockers เป็นสิ่งที่ขัดการตอบหรือเริ่มงานจริง
+- คืน taskShape รูปแบบนี้เสมอ:
+  {
+    "deliverableType": "reply | proposal | timeline | estimate | execution | unknown",
+    "immediateNeed": "send_reply_now | define_scope | prepare_inputs | resume_execution",
+    "missingInputs": ["string"],
+    "workContext": "string",
+    "confidence": 0.0
+  }
 `.trim();
 
 export const ACTION_SYSTEM_PROMPT = `
@@ -139,6 +179,7 @@ export const ACTION_SYSTEM_PROMPT = `
 - อธิบาย why-this-now
 - เสนอ alternatives แบบสั้น
 - ถ้าเป็น client_response ให้ช่วย draft ข้อความตอบกลับ
+- ถ้าเป็น client_resume และ taskShape ชี้ว่าเป็น proposal/timeline/estimate ให้เน้นเริ่มงานจาก requirement, scope, assumptions หรือ input ที่ยังขาด
 - สรุปสถานการณ์แบบกระชับ
 
 กฎ:
@@ -148,6 +189,10 @@ export const ACTION_SYSTEM_PROMPT = `
 - ห้ามวางแผนกว้าง ๆ
 - ถ้ามี blocker ให้ action จัดการ blocker ก่อน
 - ถ้ามี candidate action ที่เหมาะ ให้ใช้เป็นฐาน ไม่ต้องเปลี่ยนทิศงานโดยไม่จำเป็น
+- ถ้า taskShape.immediateNeed = define_scope ให้ action จัด requirement, scope, unknowns ก่อน timeline หรือราคา
+- ถ้า taskShape.immediateNeed = prepare_inputs ให้ action รวบข้อมูลขั้นต่ำสำหรับ timeline หรือ estimate ก่อน
+- ห้าม default ไปที่ "สรุปข้อความลูกค้า" หรือ "ตอบลูกค้า" ถ้างานจริงเป็น proposal/resume task
+- alternatives ต้องเป็นก้าวที่ concrete และเริ่มได้จริง ไม่ใช่ชื่อกว้าง ๆ เช่น "จัดการ blocker ที่มีอยู่" หรือ "สรุปข้อมูลที่มีอยู่"
 - ถ้ามี negotiation mode ให้ปรับ action ตาม mode นั้นโดยยังยึด task เดิม
 - ถ้ามี constraints เรื่องเวลาและพลังงาน ให้ใช้เป็นตัวกำหนดขนาดและน้ำหนักของ action
 - smaller = ทำให้เริ่มง่ายขึ้น
@@ -155,6 +200,7 @@ export const ACTION_SYSTEM_PROMPT = `
 - safer = ลดความเสี่ยงหรือ commitment
 - reply_first = ให้เอนเอียงไปทางตอบลูกค้าก่อน
 - resume_first = ให้เอนเอียงไปทางเริ่มงานก่อน
+- replyDraft ต้องเป็น null ถ้า task นี้ไม่ใช่ send_reply_now จริง
 - รูปแบบที่ต้องคืน:
   {
     "chosenAction": {
@@ -205,6 +251,7 @@ export const RESCUE_SYSTEM_PROMPT = `
 
 กฎ:
 - ตอบเป็น JSON object เดียวเท่านั้น
+- ห้ามตอบเป็น markdown, code fence, หรือคำอธิบายก่อนหลัง JSON
 - diagnosis.primaryReason ต้องเป็นหนึ่งใน:
   missing_context, dependency, unclear_scope, too_big, low_energy, unknown
 - diagnosis.explanation ต้องอธิบายสาเหตุจริง 1-2 ประโยค
@@ -212,6 +259,24 @@ export const RESCUE_SYSTEM_PROMPT = `
   clarify, follow_up, shrink, switch_track, pause_cleanly
 - rescuePlan.steps ต้องมี 2-4 รายการ
 - rescuePlan.steps ต้องพา user ขยับต่อได้จริง ไม่ใช่แค่ปลอบใจ
+- ถ้าไม่แน่ใจ ให้เลือก unknown พร้อมแผนที่ conservative แทนการแต่งข้อมูลเพิ่ม
+- คืน object รูปแบบนี้เท่านั้น:
+  {
+    "diagnosis": {
+      "primaryReason": "missing_context | dependency | unclear_scope | too_big | low_energy | unknown",
+      "explanation": "string"
+    },
+    "rescuePlan": {
+      "mode": "clarify | follow_up | shrink | switch_track | pause_cleanly",
+      "steps": ["string", "string"]
+    },
+    "suggestedMessage": "string หรือ null",
+    "meta": {
+      "model": "string",
+      "usedRoomFiles": [],
+      "repairUsed": false
+    }
+  }
 `.trim();
 
 export const REENTRY_SYSTEM_PROMPT = `
@@ -306,20 +371,22 @@ export function buildScaffoldUserPrompt(task: TaskContext, action: Action, curre
 }
 
 export function buildRescueUserPrompt(task: TaskContext, action: Action | null | undefined, currentStepIndex: number) {
+  const latestRescue = task.rescueHistory[task.rescueHistory.length - 1];
   return [
     `workflowType: ${task.workflowType ?? 'unknown'}`,
     `lifecycleState: ${task.lifecycleState}`,
     `currentStepIndex: ${currentStepIndex}`,
     `blockerSignals: ${task.blockerSignals.length > 0 ? task.blockerSignals.join(', ') : 'ไม่มี'}`,
     `constraints: timeBudgetMin=${task.constraints?.timeBudgetMin ?? 'ไม่ระบุ'}, energyLevel=${task.constraints?.energyLevel ?? 'ไม่ระบุ'}, preferReplyFirst=${task.constraints?.preferReplyFirst ?? 'ไม่ระบุ'}`,
-    `sourceText: ${truncateText(task.sourceText, 900)}`,
-    `extractedText: ${truncateText(task.extractedText, 500)}`,
-    `pendingInputs: ${truncateText(describePendingInputs(task), 400)}`,
+    `sourceText: ${truncateText(task.sourceText, 700)}`,
+    `extractedText: ${truncateText(task.extractedText, 300)}`,
+    `pendingInputs: ${truncateText(describePendingInputs(task), 220)}`,
+    latestRescue ? `latestRescue: ${latestRescue.reason} -> ${latestRescue.mode}` : 'latestRescue: ไม่มี',
     '',
     'currentAction:',
-    describeAction(action),
+    describeRescueAction(action, currentStepIndex),
     '',
-    'operationGoal: diagnose why the user is stuck and return the best rescue mode',
+    'operationGoal: diagnose why the user is stuck and return the best rescue mode as valid JSON only',
   ].join('\n');
 }
 

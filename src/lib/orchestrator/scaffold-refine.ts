@@ -19,14 +19,35 @@ export function normalizeComparableScaffoldStep(step: string): string {
     .trim();
 }
 
+export function normalizeComparableScaffoldSteps(steps: string[]): string[] {
+  return steps.map((step) => normalizeComparableScaffoldStep(step));
+}
+
 export function getVisibleScaffoldStep(steps: string[], currentStepIndex: number): string {
   if (steps.length === 0) return '';
   const safeIndex = Math.min(Math.max(currentStepIndex, 0), steps.length - 1);
   return steps[safeIndex] ?? '';
 }
 
-export function classifyScaffoldRefineResult(previousVisibleStep: string, nextVisibleStep: string): ScaffoldRefineResult {
-  return normalizeComparableScaffoldStep(previousVisibleStep) === normalizeComparableScaffoldStep(nextVisibleStep)
-    ? 'no_change'
-    : 'success';
+export function getVisibleScaffoldSteps(steps: string[], currentStepIndex: number): string[] {
+  if (steps.length === 0) return [];
+  const safeIndex = Math.min(Math.max(currentStepIndex, 0), steps.length - 1);
+  return steps.slice(safeIndex);
+}
+
+export function classifyScaffoldRefineResult(previousVisibleSteps: string[], nextVisibleSteps: string[]): ScaffoldRefineResult {
+  const previousComparable = normalizeComparableScaffoldSteps(previousVisibleSteps);
+  const nextComparable = normalizeComparableScaffoldSteps(nextVisibleSteps);
+
+  if (previousComparable.length !== nextComparable.length) {
+    return 'success';
+  }
+
+  for (let index = 0; index < previousComparable.length; index += 1) {
+    if ((previousComparable[index] ?? '') !== (nextComparable[index] ?? '')) {
+      return 'success';
+    }
+  }
+
+  return 'no_change';
 }

@@ -1,5 +1,13 @@
 import { del, get, set, update } from 'idb-keyval';
 import type { AiSynthesisResponse } from '@/lib/ai/schema';
+import type { TaskShape } from '@/lib/ai/task-shape';
+import {
+  buildBusinessLoopSummary,
+  clearAnalyticsEvents,
+  getAnalyticsEvents,
+  type BusinessLoopSummary,
+  type LocalAnalyticsEvent,
+} from '@/lib/analytics/local-analytics';
 import {
   composeRoomSourceText,
   normalizeRoomSourceFiles,
@@ -8,6 +16,10 @@ import {
 
 export type ActionState = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'ARCHIVED';
 export type WorkflowType = 'client_response' | 'client_resume';
+export type RoomScenarioType =
+  | 'client_project_restart'
+  | 'sales_inquiry_demo_request'
+  | 'general_client_room';
 export type UIRoute =
   | 'DUMP_ENTRY'
   | 'MORNING_RITUAL'
@@ -42,6 +54,7 @@ export type AssistantMode =
   | 'intake_review'
   | 'action_negotiation'
   | 'scaffold_refinement'
+  | 'scaffold_completion'
   | 'rescue_diagnosis'
   | 'reentry_brief';
 export type RescueReason =
@@ -60,6 +73,7 @@ export type RescueMode =
 export type ReentryImpact = 'high' | 'medium';
 export type ReentryEffort = 'low' | 'medium';
 export type ReentryResumeTarget = 'ONE_ACTION' | 'SCAFFOLD' | 'DUMP_ENTRY';
+export type RoomAiFreshness = 'fresh' | 'stale' | 'fallback';
 export type AiOperationName =
   | 'intake'
   | 'action'
@@ -134,8 +148,10 @@ export interface ActiveDumpContext {
 }
 
 export interface CreateTaskContextInput {
+  roomId?: string;
   sourceText: string;
   workflowType?: WorkflowType;
+  taskShape?: TaskShape;
   createdAt?: number;
   sourceFiles?: RoomSourceFile[];
   extractedText?: string;
@@ -151,7 +167,9 @@ export interface CreateTaskContextInput {
 
 export interface TaskContext {
   id: string;
+  roomId?: string;
   workflowType?: WorkflowType;
+  taskShape?: TaskShape;
   sourceText: string;
   sourceFiles: RoomSourceFile[];
   extractedText: string;
@@ -170,6 +188,7 @@ export interface TaskContext {
   constraints?: TaskConstraints;
   actionExplanation?: string;
   reentryBrief?: ReentryBrief;
+  lastStableSummary?: string;
   assistantMode?: AssistantMode;
   lastAiOperation?: AiOperationName;
   oneActionTracking?: OneActionTracking;
@@ -177,6 +196,7 @@ export interface TaskContext {
 
 export interface Action {
   id: string;
+  roomId?: string;
   createdAt: number;
   title: string;
   rationale: string;
@@ -190,6 +210,9 @@ export interface Action {
 }
 
 export interface AppSession {
+  roomId?: string;
+  roomTitle?: string;
+  roomScenarioType?: RoomScenarioType;
   lastActive: number;
   uiRoute: UIRoute;
   status?: SessionStatus;
@@ -209,10 +232,43 @@ export interface MindExport {
   exportedAt: string;
   session: AppSession;
   actions: Action[];
+  rooms: RoomRecord[];
+  roomWorkspace: RoomWorkspace;
+  analytics: {
+    events: LocalAnalyticsEvent[];
+    summary: BusinessLoopSummary;
+  };
+}
+
+export interface RoomRecord {
+  id: string;
+  title: string;
+  clientName: string;
+  scenarioType: RoomScenarioType;
+  lastState: UIRoute;
+  lastReentryBrief?: ReentryBrief;
+  lastKnownGoodBrief?: string;
+  lastKnownGoodNextMoves: string[];
+  lastKnownGoodAt?: number;
+  aiFreshness: RoomAiFreshness;
+  lastUpdatedAt: number;
+  unread: boolean;
+  stale: boolean;
+  contextSummary: string;
+  nextMoves: string[];
+  session: AppSession;
+}
+
+export interface RoomWorkspace {
+  activeRoomId: string | null;
+  rooms: RoomRecord[];
+  lastUpdatedAt: number;
 }
 
 const SESSION_KEY = 'mind_session';
 const ACTIONS_KEY = 'mind_actions';
+const ROOM_WORKSPACE_KEY = 'mind_room_workspace_v1';
+const DEFAULT_ROOM_TITLE = 'ห้องงานใหม่';
 
 const DEFAULT_TASK_LIFECYCLE_BY_ROUTE: Record<UIRoute, TaskLifecycleState> = {
   DUMP_ENTRY: 'dumped',
@@ -263,6 +319,14 @@ function isTaskLifecycleState(value: unknown): value is TaskLifecycleState {
 
 function isWorkflowType(value: unknown): value is WorkflowType {
   return value === 'client_response' || value === 'client_resume';
+}
+
+function isRoomScenarioType(value: unknown): value is RoomScenarioType {
+  return (
+    value === 'client_project_restart' ||
+    value === 'sales_inquiry_demo_request' ||
+    value === 'general_client_room'
+  );
 }
 
 function isFailureReason(value: unknown): value is AiFailureReason {
@@ -344,6 +408,44 @@ function normalizeCurrentPlan(value: unknown): CurrentPlan | undefined {
     actionTitle,
     successSignal,
     steps,
+  };
+}
+
+function normalizeTaskShape(value: unknown): TaskShape | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const deliverableType =
+    record.deliverableType === 'reply' ||
+    record.deliverableType === 'proposal' ||
+    record.deliverableType === 'timeline' ||
+    record.deliverableType === 'estimate' ||
+    record.deliverableType === 'execution' ||
+    record.deliverableType === 'unknown'
+      ? record.deliverableType
+      : undefined;
+  const immediateNeed =
+    record.immediateNeed === 'send_reply_now' ||
+    record.immediateNeed === 'define_scope' ||
+    record.immediateNeed === 'prepare_inputs' ||
+    record.immediateNeed === 'resume_execution'
+      ? record.immediateNeed
+      : undefined;
+  const missingInputs = Array.isArray(record.missingInputs)
+    ? record.missingInputs.map((item) => normalizeOptionalString(item)).filter((item): item is string => Boolean(item))
+    : [];
+  const workContext = normalizeOptionalString(record.workContext);
+  const confidence = typeof record.confidence === 'number' && Number.isFinite(record.confidence)
+    ? Math.max(0, Math.min(1, record.confidence))
+    : undefined;
+
+  if (!deliverableType || !immediateNeed || !workContext) return undefined;
+
+  return {
+    deliverableType,
+    immediateNeed,
+    missingInputs,
+    workContext,
+    confidence,
   };
 }
 
@@ -445,6 +547,7 @@ function normalizeAssistantMode(value: unknown): AssistantMode | undefined {
     value === 'intake_review' ||
     value === 'action_negotiation' ||
     value === 'scaffold_refinement' ||
+    value === 'scaffold_completion' ||
     value === 'rescue_diagnosis' ||
     value === 'reentry_brief'
   )
@@ -464,6 +567,12 @@ function normalizeAiOperationName(value: unknown): AiOperationName | undefined {
     : undefined;
 }
 
+function normalizeRoomAiFreshness(value: unknown): RoomAiFreshness | undefined {
+  return value === 'fresh' || value === 'stale' || value === 'fallback'
+    ? value
+    : undefined;
+}
+
 function normalizeOneActionTracking(value: unknown): OneActionTracking | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
@@ -478,10 +587,230 @@ function normalizeOneActionTracking(value: unknown): OneActionTracking | undefin
   return { hasViewedAlternative, hasAdjusted };
 }
 
+function looksGenericRoomTitle(value?: string) {
+  if (!value) return true;
+  const normalized = value.trim().toLowerCase();
+  return (
+    normalized.length === 0 ||
+    normalized === DEFAULT_ROOM_TITLE ||
+    normalized.startsWith('room ') ||
+    normalized.startsWith('client room ') ||
+    normalized.startsWith('ห้องงานใหม่')
+  );
+}
+
+function truncateRoomLabel(value: string, maxLength = 72) {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function deriveRoomTitleFromSession(session: AppSession, fallbackTitle = DEFAULT_ROOM_TITLE) {
+  const candidates = [
+    !looksGenericRoomTitle(session.roomTitle) ? session.roomTitle : undefined,
+    session.task?.taskFrame?.objective,
+    session.task?.currentPlan?.actionTitle,
+    session.task?.reentryBrief?.topActions[0]?.title,
+    session.currentPayload?.recommended_action.title,
+    session.task?.sourceText?.split('\n')[0],
+    session.activeDumpContext?.text?.split('\n')[0],
+  ].filter((value): value is string => Boolean(normalizeOptionalString(value)));
+
+  if (candidates.length === 0) return fallbackTitle;
+  return truncateRoomLabel(candidates[0].replace(/\s+/g, ' ').trim(), 72);
+}
+
+function deriveRoomSummaryFromSession(session: AppSession) {
+  const summary =
+    session.task?.reentryBrief?.summary ||
+    session.task?.lastStableSummary ||
+    session.task?.lastSynthesis?.situation_summary ||
+    session.currentPayload?.situation_summary ||
+    session.task?.sourceText ||
+    session.activeDumpContext?.text ||
+    'เริ่มห้องนี้ด้วย client chaos แล้วให้ MIND ช่วยหา next move';
+  return truncateRoomLabel(summary.replace(/\s+/g, ' ').trim(), 160);
+}
+
+function deriveRoomNextMovesFromSession(session: AppSession) {
+  const fromReentry = session.task?.reentryBrief?.topActions.map((item) => item.title) ?? [];
+  if (fromReentry.length > 0) return fromReentry.slice(0, 3);
+
+  const fromPlan = session.task?.currentPlan?.steps.map((step) => step.text) ?? [];
+  if (fromPlan.length > 0) return fromPlan.slice(0, 3).map((step) => truncateRoomLabel(step, 72));
+
+  const fromPayload = session.currentPayload?.recommended_action.micro_steps ?? [];
+  if (fromPayload.length > 0) return fromPayload.slice(0, 3).map((step) => truncateRoomLabel(step, 72));
+
+  const title = session.currentPayload?.recommended_action.title ?? session.task?.currentPlan?.actionTitle;
+  return title ? [truncateRoomLabel(title, 72)] : [];
+}
+
+function deriveSeedRoomSnapshot(session: AppSession) {
+  const brief = deriveRoomSummaryFromSession(session);
+  const nextMoves = deriveRoomNextMovesFromSession(session);
+  return {
+    brief,
+    nextMoves,
+    at: deriveRoomLastUpdatedAt(session),
+  };
+}
+
+function deriveRoomLastUpdatedAt(session: AppSession) {
+  return Math.max(
+    session.lastActive,
+    session.task?.createdAt ?? 0,
+    session.task?.lastAttemptAt ?? 0,
+    session.task?.reentryBrief?.createdAt ?? 0,
+  );
+}
+
+function roomHasContinuity(session: AppSession) {
+  return Boolean(session.task && session.task.lifecycleState !== 'done');
+}
+
+function roomHasCachedSavePoint(room?: Partial<RoomRecord> | null) {
+  return Boolean(
+    room &&
+      (
+        normalizeOptionalString(room.lastKnownGoodBrief) ||
+        room.lastKnownGoodNextMoves?.some((item) => Boolean(normalizeOptionalString(item))) ||
+        room.lastReentryBrief
+      ),
+  );
+}
+
+function deriveRoomFlags(session: AppSession, activeRoomId: string | null) {
+  const lastUpdatedAt = deriveRoomLastUpdatedAt(session);
+  const stale = Date.now() - lastUpdatedAt > 1000 * 60 * 60 * 24 * 3;
+  const unread = session.roomId !== activeRoomId && roomHasContinuity(session);
+  return { stale, unread, lastUpdatedAt };
+}
+
+function shouldPreserveExistingKnownGood(session: AppSession) {
+  if (!session.task) return true;
+  if (session.uiRoute === 'SYNTHESIZING' || session.uiRoute === 'MANUAL_FALLBACK') return true;
+  return (
+    session.task.lifecycleState === 'dumped' ||
+    session.task.lifecycleState === 'synthesizing' ||
+    session.task.lifecycleState === 'failed'
+  );
+}
+
+function buildLastKnownGoodFromSession(
+  session: AppSession,
+  existing?: Partial<RoomRecord>,
+) {
+  const existingBrief = normalizeOptionalString(existing?.lastKnownGoodBrief);
+  const existingNextMoves = Array.isArray(existing?.lastKnownGoodNextMoves)
+    ? existing.lastKnownGoodNextMoves
+        .map((item) => normalizeOptionalString(item))
+        .filter((item): item is string => Boolean(item))
+    : [];
+  const existingAt = typeof existing?.lastKnownGoodAt === 'number' ? existing.lastKnownGoodAt : undefined;
+  const preserveExisting = shouldPreserveExistingKnownGood(session) && (existingBrief || existingNextMoves.length > 0);
+
+  let brief: string | undefined;
+  let nextMoves: string[] = [];
+  let at: number | undefined;
+  let freshness: RoomAiFreshness = 'fallback';
+
+  if (session.task?.reentryBrief?.summary) {
+    brief = truncateRoomLabel(session.task.reentryBrief.summary.replace(/\s+/g, ' ').trim(), 160);
+    nextMoves = session.task.reentryBrief.topActions
+      .map((item) => truncateRoomLabel(item.title, 72))
+      .slice(0, 3);
+    at = session.task.reentryBrief.createdAt;
+    freshness = Date.now() - (at ?? 0) > 1000 * 60 * 60 * 24 * 3 ? 'stale' : 'fresh';
+  } else if (session.task?.lastStableSummary) {
+    brief = truncateRoomLabel(session.task.lastStableSummary.replace(/\s+/g, ' ').trim(), 160);
+    nextMoves = deriveRoomNextMovesFromSession(session);
+    at = deriveRoomLastUpdatedAt(session);
+    freshness = Date.now() - (at ?? 0) > 1000 * 60 * 60 * 24 * 3 ? 'stale' : 'fresh';
+  } else if (preserveExisting) {
+    brief = existingBrief;
+    nextMoves = existingNextMoves;
+    at = existingAt;
+    const stale = typeof at === 'number' && Date.now() - at > 1000 * 60 * 60 * 24 * 3;
+    freshness = stale ? 'stale' : 'fallback';
+  } else {
+    const seeded = deriveSeedRoomSnapshot(session);
+    brief = seeded.brief;
+    nextMoves = seeded.nextMoves;
+    at = seeded.at;
+    freshness = 'fallback';
+  }
+
+  return {
+    brief,
+    nextMoves,
+    at,
+    freshness,
+  };
+}
+
+export function buildRoomRecordFromSession(
+  session: AppSession,
+  activeRoomId: string | null,
+  existing?: Partial<RoomRecord>,
+): RoomRecord {
+  const title = deriveRoomTitleFromSession(session, existing?.title ?? DEFAULT_ROOM_TITLE);
+  const { stale, unread, lastUpdatedAt } = deriveRoomFlags(session, activeRoomId);
+  const lastKnownGood = buildLastKnownGoodFromSession(session, existing);
+
+  return {
+    id: session.roomId ?? existing?.id ?? `room-${session.lastActive}`,
+    title,
+    clientName: existing?.clientName ?? title,
+    scenarioType: session.roomScenarioType ?? existing?.scenarioType ?? 'general_client_room',
+    lastState: session.uiRoute,
+    lastReentryBrief: session.task?.reentryBrief ?? existing?.lastReentryBrief,
+    lastKnownGoodBrief: lastKnownGood.brief,
+    lastKnownGoodNextMoves: lastKnownGood.nextMoves,
+    lastKnownGoodAt: lastKnownGood.at,
+    aiFreshness: lastKnownGood.freshness,
+    lastUpdatedAt,
+    unread,
+    stale,
+    contextSummary: lastKnownGood.brief ?? deriveRoomSummaryFromSession(session),
+    nextMoves: lastKnownGood.nextMoves.length > 0 ? lastKnownGood.nextMoves : deriveRoomNextMovesFromSession(session),
+    session,
+  };
+}
+
+export function hydrateRoomSessionFromRecord(
+  session: AppSession,
+  room?: Partial<RoomRecord> | null,
+): AppSession {
+  if (!session.task) return session;
+  if (!roomHasCachedSavePoint(room)) return session;
+
+  const shouldRecoverTransientRoute =
+    session.uiRoute === 'SYNTHESIZING' ||
+    session.uiRoute === 'MANUAL_FALLBACK' ||
+    session.task.lifecycleState === 'synthesizing' ||
+    session.task.lifecycleState === 'failed';
+
+  if (!shouldRecoverTransientRoute) return session;
+
+  return normalizeSession({
+    ...session,
+    uiRoute: 'DUMP_ENTRY',
+    status: 'DUMP_ENTRY',
+    task: {
+      ...session.task,
+      lifecycleState: 'dumped',
+      reentryBrief: session.task.reentryBrief ?? room?.lastReentryBrief,
+      lastStableSummary: session.task.lastStableSummary ?? normalizeOptionalString(room?.lastKnownGoodBrief),
+    },
+  });
+}
+
 function normalizeTaskContext(task: unknown, fallback: {
+  roomId?: string;
   sourceText?: string;
   createdAt?: number;
   workflowType?: WorkflowType;
+  taskShape?: TaskShape;
   lifecycleState?: TaskLifecycleState;
   currentActionId?: string | null;
   lastAttemptAt?: number;
@@ -510,12 +839,14 @@ function normalizeTaskContext(task: unknown, fallback: {
   if (!sourceText) return undefined;
 
   const id = normalizeOptionalString(record.id) ?? `${record.createdAt ?? fallback.createdAt ?? Date.now()}`;
+  const roomId = normalizeOptionalString(record.roomId) ?? fallback.roomId;
   const lifecycleState = isTaskLifecycleState(record.lifecycleState)
     ? record.lifecycleState
     : fallback.lifecycleState ?? 'dumped';
   const workflowType = isWorkflowType(record.workflowType)
     ? record.workflowType
     : fallback.workflowType;
+  const taskShape = normalizeTaskShape(record.taskShape) ?? fallback.taskShape;
   const createdAt = typeof record.createdAt === 'number' ? record.createdAt : fallback.createdAt ?? Date.now();
   const lastAttemptAt = typeof record.lastAttemptAt === 'number' ? record.lastAttemptAt : fallback.lastAttemptAt;
   const lastFailureReason = isFailureReason(record.lastFailureReason)
@@ -536,13 +867,16 @@ function normalizeTaskContext(task: unknown, fallback: {
   const constraints = normalizeConstraints(record.constraints);
   const actionExplanation = normalizeOptionalString(record.actionExplanation);
   const reentryBrief = normalizeReentryBrief(record.reentryBrief);
+  const lastStableSummary = normalizeOptionalString(record.lastStableSummary);
   const assistantMode = normalizeAssistantMode(record.assistantMode);
   const lastAiOperation = normalizeAiOperationName(record.lastAiOperation);
   const oneActionTracking = normalizeOneActionTracking(record.oneActionTracking);
 
   return {
     id,
+    roomId,
     workflowType,
+    taskShape,
     sourceText,
     sourceFiles,
     extractedText,
@@ -561,6 +895,7 @@ function normalizeTaskContext(task: unknown, fallback: {
     constraints,
     actionExplanation,
     reentryBrief,
+    lastStableSummary,
     assistantMode,
     lastAiOperation,
     oneActionTracking,
@@ -583,12 +918,14 @@ function createTaskFromLegacyFields(session: Partial<AppSession> & { status?: un
   if (!sourceText) return undefined;
 
   return normalizeTaskContext(session.task, {
+    roomId: normalizeOptionalString(session.roomId),
     sourceText,
     createdAt:
       typeof legacyContext === 'object' && legacyContext && 'createdAt' in legacyContext && typeof legacyContext.createdAt === 'number'
         ? legacyContext.createdAt
         : session.lastActive,
     workflowType: session.lastWorkflowType,
+    taskShape: undefined,
     lifecycleState: DEFAULT_TASK_LIFECYCLE_BY_ROUTE[route],
     currentActionId: normalizeOptionalString(session.currentActionId) ?? null,
     lastAttemptAt:
@@ -636,7 +973,9 @@ export function createTaskContext(
 
   return {
     id: `${currentCreatedAt}`,
+    roomId: input.roomId,
     workflowType: input.workflowType,
+    taskShape: input.taskShape,
     sourceText,
     sourceFiles,
     extractedText,
@@ -690,6 +1029,7 @@ export function normalizeSession(session: Partial<AppSession> & { status?: unkno
       : 'DUMP_ENTRY';
 
   const existingTask = normalizeTaskContext(session.task, {
+    roomId: normalizeOptionalString(session.roomId),
     sourceText:
       typeof session.activeDumpContext === 'string'
         ? session.activeDumpContext
@@ -751,6 +1091,9 @@ export function normalizeSession(session: Partial<AppSession> & { status?: unkno
       : session.activeDumpContext;
 
   return {
+    roomId: normalizeOptionalString(session.roomId) ?? activeTask?.roomId ?? completedTask?.roomId,
+    roomTitle: normalizeOptionalString(session.roomTitle),
+    roomScenarioType: isRoomScenarioType(session.roomScenarioType) ? session.roomScenarioType : undefined,
     lastActive: typeof session.lastActive === 'number' ? session.lastActive : Date.now(),
     uiRoute,
     status: uiRoute,
@@ -769,8 +1112,15 @@ export function normalizeSession(session: Partial<AppSession> & { status?: unkno
   };
 }
 
-export function createDefaultSession(): AppSession {
+export function createDefaultSession(options?: {
+  roomId?: string;
+  roomTitle?: string;
+  roomScenarioType?: RoomScenarioType;
+}): AppSession {
   return normalizeSession({
+    roomId: options?.roomId,
+    roomTitle: options?.roomTitle,
+    roomScenarioType: options?.roomScenarioType,
     lastActive: Date.now(),
     uiRoute: 'DUMP_ENTRY',
     notThisCount: 0,
@@ -781,8 +1131,20 @@ export function createDefaultSession(): AppSession {
 }
 
 export async function getSession(): Promise<AppSession> {
+  const workspace = normalizeRoomWorkspace(await get(ROOM_WORKSPACE_KEY));
+  if (workspace?.activeRoomId) {
+    const activeRoom = workspace.rooms.find((room) => room.id === workspace.activeRoomId);
+    if (activeRoom) {
+      return normalizeSession(activeRoom.session);
+    }
+  }
+
   const session = await get<AppSession & { activeDumpContext?: string | ActiveDumpContext; task?: TaskContext }>(SESSION_KEY);
-  if (!session) return createDefaultSession();
+  if (!session) {
+    const seededWorkspace = await getRoomWorkspace();
+    const seededSession = seededWorkspace.rooms.find((room) => room.id === seededWorkspace.activeRoomId)?.session;
+    return seededSession ?? createDefaultSession();
+  }
   return normalizeSession(session);
 }
 
@@ -790,6 +1152,9 @@ export async function saveSession(session: AppSession): Promise<void> {
   const normalized = normalizeSession(session);
   normalized.lastActive = Date.now();
   await set(SESSION_KEY, normalized);
+  if (normalized.roomId) {
+    await syncRoomFromSession(normalized);
+  }
 }
 
 export async function getActions(): Promise<Action[]> {
@@ -820,15 +1185,368 @@ export async function saveActions(newActions: Action[]): Promise<void> {
   await set(ACTIONS_KEY, newActions);
 }
 
+function normalizeRoomRecord(value: unknown, activeRoomId: string | null): RoomRecord | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const session = normalizeSession(record.session as Partial<AppSession> & { status?: unknown });
+  const nextSession = normalizeSession({
+    ...session,
+    roomId: normalizeOptionalString(record.id) ?? session.roomId,
+    roomTitle: normalizeOptionalString(record.title) ?? session.roomTitle,
+    roomScenarioType: isRoomScenarioType(record.scenarioType) ? record.scenarioType : session.roomScenarioType,
+  });
+  return buildRoomRecordFromSession(nextSession, activeRoomId, {
+    id: normalizeOptionalString(record.id) ?? nextSession.roomId ?? `room-${nextSession.lastActive}`,
+    title: normalizeOptionalString(record.title) ?? nextSession.roomTitle ?? DEFAULT_ROOM_TITLE,
+    clientName: normalizeOptionalString(record.clientName) ?? nextSession.roomTitle ?? DEFAULT_ROOM_TITLE,
+    scenarioType: isRoomScenarioType(record.scenarioType) ? record.scenarioType : nextSession.roomScenarioType,
+    lastKnownGoodBrief: normalizeOptionalString(record.lastKnownGoodBrief),
+    lastKnownGoodNextMoves: Array.isArray(record.lastKnownGoodNextMoves)
+      ? record.lastKnownGoodNextMoves
+          .map((item) => normalizeOptionalString(item))
+          .filter((item): item is string => Boolean(item))
+      : [],
+    lastKnownGoodAt: typeof record.lastKnownGoodAt === 'number' ? record.lastKnownGoodAt : undefined,
+    aiFreshness: normalizeRoomAiFreshness(record.aiFreshness),
+  });
+}
+
+function normalizeRoomWorkspace(value: unknown): RoomWorkspace | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const activeRoomId = normalizeOptionalString(record.activeRoomId) ?? null;
+  const rooms = Array.isArray(record.rooms)
+    ? record.rooms
+        .map((item) => normalizeRoomRecord(item, activeRoomId))
+        .filter((item): item is RoomRecord => Boolean(item))
+    : [];
+
+  if (rooms.length === 0) return undefined;
+
+  const normalizedActiveRoomId = rooms.some((room) => room.id === activeRoomId)
+    ? activeRoomId
+    : rooms[0]?.id ?? null;
+
+  return {
+    activeRoomId: normalizedActiveRoomId,
+    rooms: rooms.map((room) => buildRoomRecordFromSession(room.session, normalizedActiveRoomId, room)),
+    lastUpdatedAt: typeof record.lastUpdatedAt === 'number' ? record.lastUpdatedAt : Date.now(),
+  };
+}
+
+function buildBlankRoomTitle(index: number) {
+  if (index <= 1) return DEFAULT_ROOM_TITLE;
+  return `ห้องงานใหม่ ${index}`;
+}
+
+function createRoomId() {
+  return `room-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function buildRoomSessionSeed(input?: {
+  roomId?: string;
+  roomTitle?: string;
+  roomScenarioType?: RoomScenarioType;
+}): AppSession {
+  const roomId = input?.roomId ?? createRoomId();
+  const roomTitle = input?.roomTitle ?? DEFAULT_ROOM_TITLE;
+  return createDefaultSession({
+    roomId,
+    roomTitle,
+    roomScenarioType: input?.roomScenarioType ?? 'general_client_room',
+  });
+}
+
+async function persistRoomWorkspace(workspace: RoomWorkspace): Promise<void> {
+  await set(ROOM_WORKSPACE_KEY, workspace);
+}
+
+export async function getRoomWorkspace(): Promise<RoomWorkspace> {
+  const storedWorkspace = normalizeRoomWorkspace(await get(ROOM_WORKSPACE_KEY));
+  if (storedWorkspace) {
+    return storedWorkspace;
+  }
+
+  const legacySession = await get<AppSession & { activeDumpContext?: string | ActiveDumpContext; task?: TaskContext }>(SESSION_KEY);
+  if (legacySession) {
+    const normalizedLegacy = normalizeSession(legacySession);
+    const roomId = normalizedLegacy.roomId ?? createRoomId();
+    const sessionWithRoom = normalizeSession({
+      ...normalizedLegacy,
+      roomId,
+      roomTitle: normalizedLegacy.roomTitle ?? deriveRoomTitleFromSession(normalizedLegacy),
+      roomScenarioType: normalizedLegacy.roomScenarioType ?? 'general_client_room',
+    });
+    const workspace: RoomWorkspace = {
+      activeRoomId: roomId,
+      rooms: [buildRoomRecordFromSession(sessionWithRoom, roomId)],
+      lastUpdatedAt: Date.now(),
+    };
+    await persistRoomWorkspace(workspace);
+    await set(SESSION_KEY, sessionWithRoom);
+    return workspace;
+  }
+
+  const seedSession = buildRoomSessionSeed();
+  const workspace: RoomWorkspace = {
+    activeRoomId: seedSession.roomId ?? null,
+    rooms: [buildRoomRecordFromSession(seedSession, seedSession.roomId ?? null, {
+      title: DEFAULT_ROOM_TITLE,
+      clientName: DEFAULT_ROOM_TITLE,
+      scenarioType: 'general_client_room',
+    })],
+    lastUpdatedAt: Date.now(),
+  };
+  await persistRoomWorkspace(workspace);
+  await set(SESSION_KEY, seedSession);
+  return workspace;
+}
+
+export async function getRooms(): Promise<RoomRecord[]> {
+  const workspace = await getRoomWorkspace();
+  return workspace.rooms;
+}
+
+export async function createRoom(input?: {
+  title?: string;
+  scenarioType?: RoomScenarioType;
+  makeActive?: boolean;
+}): Promise<RoomRecord> {
+  const workspace = await getRoomWorkspace();
+  const roomId = createRoomId();
+  const nextTitle = normalizeOptionalString(input?.title) ?? buildBlankRoomTitle(workspace.rooms.length + 1);
+  const session = buildRoomSessionSeed({
+    roomId,
+    roomTitle: nextTitle,
+    roomScenarioType: input?.scenarioType ?? 'general_client_room',
+  });
+  const room = buildRoomRecordFromSession(session, input?.makeActive === false ? workspace.activeRoomId : roomId, {
+    title: nextTitle,
+    clientName: nextTitle,
+    scenarioType: input?.scenarioType ?? 'general_client_room',
+  });
+  const activeRoomId = input?.makeActive === false ? workspace.activeRoomId : roomId;
+  const nextWorkspace: RoomWorkspace = {
+    activeRoomId,
+    rooms: [...workspace.rooms, room].map((item) => buildRoomRecordFromSession(item.session, activeRoomId, item)),
+    lastUpdatedAt: Date.now(),
+  };
+  await persistRoomWorkspace(nextWorkspace);
+  if (activeRoomId === roomId) {
+    await set(SESSION_KEY, session);
+  }
+  return room;
+}
+
+export async function activateRoom(roomId: string): Promise<AppSession> {
+  const workspace = await getRoomWorkspace();
+  const targetRoom = workspace.rooms.find((room) => room.id === roomId);
+  if (!targetRoom) {
+    const fallbackSession = workspace.rooms[0]?.session ?? buildRoomSessionSeed();
+    await set(SESSION_KEY, fallbackSession);
+    return fallbackSession;
+  }
+
+  const hydratedSession = hydrateRoomSessionFromRecord(targetRoom.session, targetRoom);
+  const nextWorkspace: RoomWorkspace = {
+    activeRoomId: roomId,
+    rooms: workspace.rooms.map((room) => {
+      const session = room.id === roomId ? hydratedSession : room.session;
+      return buildRoomRecordFromSession(session, roomId, room);
+    }),
+    lastUpdatedAt: Date.now(),
+  };
+  await persistRoomWorkspace(nextWorkspace);
+  await set(SESSION_KEY, hydratedSession);
+  return hydratedSession;
+}
+
+export async function syncRoomFromSession(session: AppSession): Promise<RoomWorkspace> {
+  const normalized = normalizeSession(session);
+  const workspace = await getRoomWorkspace();
+  const roomId = normalized.roomId ?? workspace.activeRoomId ?? createRoomId();
+  const nextSession = normalizeSession({
+    ...normalized,
+    roomId,
+    roomTitle: normalized.roomTitle ?? deriveRoomTitleFromSession(normalized),
+    roomScenarioType: normalized.roomScenarioType ?? 'general_client_room',
+  });
+  const existing = workspace.rooms.find((room) => room.id === roomId);
+  const nextRoom = buildRoomRecordFromSession(nextSession, roomId, existing ?? {
+    id: roomId,
+    title: nextSession.roomTitle ?? DEFAULT_ROOM_TITLE,
+    clientName: nextSession.roomTitle ?? DEFAULT_ROOM_TITLE,
+    scenarioType: nextSession.roomScenarioType ?? 'general_client_room',
+  });
+  const remainingRooms = workspace.rooms.filter((room) => room.id !== roomId);
+  const nextWorkspace: RoomWorkspace = {
+    activeRoomId: roomId,
+    rooms: [nextRoom, ...remainingRooms].map((room) => buildRoomRecordFromSession(room.session, roomId, room)),
+    lastUpdatedAt: Date.now(),
+  };
+  await persistRoomWorkspace(nextWorkspace);
+  await set(SESSION_KEY, nextSession);
+  return nextWorkspace;
+}
+
+export async function ensureDemoRooms(primaryScenario: RoomScenarioType = 'client_project_restart'): Promise<RoomWorkspace> {
+  const workspace = await getRoomWorkspace();
+  const hasDemoRooms = workspace.rooms.some((room) => room.id.startsWith('demo-room-'));
+  if (hasDemoRooms) {
+    return workspace;
+  }
+
+  const demoRooms: RoomRecord[] = [
+    buildRoomRecordFromSession(
+      normalizeSession({
+        ...buildRoomSessionSeed({
+          roomId: 'demo-room-restart',
+          roomTitle: 'ACME - Website revamp',
+          roomScenarioType: 'client_project_restart',
+        }),
+        activeDumpContext: {
+          text: 'โปรเจกต์เว็บลูกค้า ACME ค้างมาหลายวัน มี feedback กระจัดกระจายหลายที่',
+          createdAt: Date.now() - 1000 * 60 * 60 * 24 * 2,
+        },
+        task: {
+          ...createTaskContext({
+            roomId: 'demo-room-restart',
+            sourceText: 'โปรเจกต์เว็บลูกค้า ACME ค้างมาหลายวัน มี feedback กระจัดกระจายหลายที่',
+            workflowType: 'client_resume',
+            createdAt: Date.now() - 1000 * 60 * 60 * 24 * 2,
+            lifecycleState: 'dumped',
+            currentStepIndex: 0,
+          }),
+          reentryBrief: {
+            summary: 'งานนี้ค้างหลัง feedback รอบล่าสุด สิ่งที่คุ้มสุดตอนนี้คือเปิดรายการแก้และตอบลูกค้าว่ากำลังเดินต่อ',
+            topActions: [
+              {
+                roomId: 'demo-room-restart',
+                title: 'สรุป feedback ล่าสุดเป็น checklist สั้น',
+                rationale: 'ช่วยกลับเข้า context โดยไม่ต้องอ่านทั้ง thread ใหม่',
+                impact: 'high',
+                effort: 'low',
+                resumeTarget: 'ONE_ACTION',
+              },
+              {
+                roomId: 'demo-room-restart',
+                title: 'ร่าง reply update ให้ลูกค้ารู้ว่างานอยู่ตรงไหน',
+                rationale: 'กัน lost trust และเปิดทางให้ project เดินต่อ',
+                impact: 'medium',
+                effort: 'low',
+                resumeTarget: 'DUMP_ENTRY',
+              },
+            ],
+            ignoredNoise: ['ยังไม่ต้องจัดไฟล์เก่าใน archive'],
+            createdAt: Date.now() - 1000 * 60 * 30,
+          },
+        },
+      }),
+      primaryScenario === 'client_project_restart' ? 'demo-room-restart' : 'demo-room-urgent',
+      {
+        id: 'demo-room-restart',
+        title: 'ACME - Website revamp',
+        clientName: 'ACME',
+        scenarioType: 'client_project_restart',
+      },
+    ),
+    buildRoomRecordFromSession(
+      normalizeSession({
+        ...buildRoomSessionSeed({
+          roomId: 'demo-room-urgent',
+          roomTitle: 'Northstar - Demo reply',
+          roomScenarioType: 'sales_inquiry_demo_request',
+        }),
+        activeDumpContext: {
+          text: 'ลูกค้า Northstar ขอ demo ด่วนและอยากได้สรุป scope ก่อนประชุม',
+          createdAt: Date.now() - 1000 * 60 * 60 * 6,
+        },
+        task: {
+          ...createTaskContext({
+            roomId: 'demo-room-urgent',
+            sourceText: 'ลูกค้า Northstar ขอ demo ด่วนและอยากได้สรุป scope ก่อนประชุม',
+            workflowType: 'client_response',
+            createdAt: Date.now() - 1000 * 60 * 60 * 6,
+            lifecycleState: 'dumped',
+            currentStepIndex: 0,
+          }),
+          reentryBrief: {
+            summary: 'ลูกค้ากำลังรอคำตอบสั้น ๆ เรื่อง demo slot, use case, และ next step ก่อนประชุม',
+            topActions: [
+              {
+                roomId: 'demo-room-urgent',
+                title: 'ร่าง reply สั้นเพื่อ confirm demo slot',
+                rationale: 'ช่วยกันดีลเย็นและตอบลูกค้าได้เร็วที่สุด',
+                impact: 'high',
+                effort: 'low',
+                resumeTarget: 'ONE_ACTION',
+              },
+              {
+                roomId: 'demo-room-urgent',
+                title: 'สรุป use case ที่ลูกค้าพูดถึง 3 ข้อ',
+                rationale: 'ช่วยให้คุย demo รอบหน้าไม่หลุด context',
+                impact: 'medium',
+                effort: 'low',
+                resumeTarget: 'DUMP_ENTRY',
+              },
+            ],
+            ignoredNoise: ['ยังไม่ต้องสรุป deck เต็ม'],
+            createdAt: Date.now() - 1000 * 60 * 20,
+          },
+        },
+      }),
+      primaryScenario === 'sales_inquiry_demo_request' ? 'demo-room-urgent' : 'demo-room-restart',
+      {
+        id: 'demo-room-urgent',
+        title: 'Northstar - Demo reply',
+        clientName: 'Northstar',
+        scenarioType: 'sales_inquiry_demo_request',
+      },
+    ),
+  ];
+
+  const mergedRooms = [
+    ...workspace.rooms.filter((room) => !room.id.startsWith('demo-room-')),
+    ...demoRooms,
+  ];
+  const activeRoomId = primaryScenario === 'sales_inquiry_demo_request' ? 'demo-room-urgent' : 'demo-room-restart';
+  const nextWorkspace: RoomWorkspace = {
+    activeRoomId,
+    rooms: mergedRooms.map((room) => buildRoomRecordFromSession(room.session, activeRoomId, room)),
+    lastUpdatedAt: Date.now(),
+  };
+  await persistRoomWorkspace(nextWorkspace);
+  const activeRoom = nextWorkspace.rooms.find((room) => room.id === activeRoomId);
+  if (activeRoom) {
+    await set(SESSION_KEY, activeRoom.session);
+  }
+  return nextWorkspace;
+}
+
+export async function clearRoomWorkspace(): Promise<void> {
+  await del(ROOM_WORKSPACE_KEY);
+}
+
 export async function exportAllData(): Promise<MindExport> {
-  const [session, actions] = await Promise.all([getSession(), getActions()]);
+  const [session, actions, analyticsEvents, roomWorkspace] = await Promise.all([
+    getSession(),
+    getActions(),
+    getAnalyticsEvents(),
+    getRoomWorkspace(),
+  ]);
   return {
     exportedAt: new Date().toISOString(),
     session,
-    actions
+    actions,
+    rooms: roomWorkspace.rooms,
+    roomWorkspace,
+    analytics: {
+      events: analyticsEvents,
+      summary: buildBusinessLoopSummary(analyticsEvents),
+    },
   };
 }
 
 export async function clearAllData(): Promise<void> {
-  await Promise.all([del(SESSION_KEY), del(ACTIONS_KEY)]);
+  await Promise.all([del(SESSION_KEY), del(ACTIONS_KEY), clearAnalyticsEvents(), clearRoomWorkspace()]);
 }

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AiTaskShapeSchema } from '@/lib/ai/operations';
 
 const NullableOptionalString = z.preprocess((value) => {
   if (value === null || value === undefined) return undefined;
@@ -30,6 +31,10 @@ export const AiSynthesisResponseSchema = z.object({
     if (value === null || value === undefined) return [];
     return value;
   }, z.array(z.string())).default([]),
+  task_shape: z.preprocess((value) => {
+    if (value === null || value === undefined) return undefined;
+    return value;
+  }, AiTaskShapeSchema.optional()),
 });
 
 export type AiSynthesisResponse = z.infer<typeof AiSynthesisResponseSchema>;

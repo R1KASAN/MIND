@@ -3,6 +3,12 @@ import { AiActionNegotiationModeSchema } from '@/lib/ai/operations';
 import { parseAiActionResponse } from '@/lib/ai/operation-contract';
 import type { AiIntakeResponse } from '@/lib/ai/operations';
 import {
+  buildActionFallbackCopy,
+  deriveTaskShapeFromText,
+  inferWorkflowTypeFromTaskShape,
+  shouldGenerateReplyDraft,
+} from '@/lib/ai/task-shape';
+import {
   ACTION_SYSTEM_PROMPT,
   AI_OPERATION_REPAIR_PROMPT,
   buildActionUserPrompt,
@@ -18,6 +24,13 @@ const ACTION_NUM_PREDICT = Number(process.env.AI_NUM_PREDICT_ACTION || 360) || 3
 const ACTION_REPAIR_NUM_PREDICT =
   Number(process.env.AI_NUM_PREDICT_ACTION_REPAIR || Math.max(420, ACTION_NUM_PREDICT)) ||
   Math.max(420, ACTION_NUM_PREDICT);
+const ACTION_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_ACTION_QWEN_MS || process.env.AI_TIMEOUT_QWEN_MS || 60000) || 60000;
+const ACTION_REPAIR_TIMEOUT_MS =
+  Number(process.env.AI_REPAIR_TIMEOUT_ACTION_QWEN_MS || process.env.AI_REPAIR_TIMEOUT_QWEN_MS || 30000) ||
+  30000;
+const ACTION_FALLBACK_TIMEOUT_MS =
+  Number(process.env.AI_TIMEOUT_ACTION_FALLBACK_MS || process.env.AI_TIMEOUT_FALLBACK_MS || 20000) ||
+  20000;
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
@@ -45,31 +58,19 @@ export async function POST(req: Request) {
   }
 
   const taskContext = buildOperationTaskContext(task);
-  const preferredTitle = preferredCandidate?.title ?? task.currentPlan?.actionTitle ?? task.taskFrame?.objective;
-  const preferredRationale =
-    preferredCandidate?.rationale ??
-    (task.workflowType === 'client_response'
-      ? 'ช่วยให้ตอบลูกค้าหรือเก็บข้อมูลที่ยังขาดได้เร็วขึ้น'
-      : 'ช่วยให้กลับเข้าบริบทของงานค้างและเริ่มขยับได้ทันที');
-  const fallbackSuccessSignal =
-    task.currentPlan?.successSignal ??
-    (task.workflowType === 'client_response'
-      ? 'ลูกค้าเห็นความคืบหน้าหรือได้ข้อความตอบกลับที่ชัดขึ้น'
-      : 'งานขยับไปหนึ่งจุดและรู้ว่าจะทำอะไรต่อ');
+  const fallbackTaskShape = task.taskShape ?? deriveTaskShapeFromText(task.sourceText);
+  const fallbackWorkflowType = task.workflowType ?? inferWorkflowTypeFromTaskShape(fallbackTaskShape);
+  const fallbackActionCopy = buildActionFallbackCopy(fallbackWorkflowType, fallbackTaskShape);
+  const preferredTitle = preferredCandidate?.title ?? task.currentPlan?.actionTitle ?? task.taskFrame?.objective ?? fallbackActionCopy.chosenTitle;
+  const preferredRationale = preferredCandidate?.rationale ?? fallbackActionCopy.chosenRationale;
+  const fallbackSuccessSignal = task.currentPlan?.successSignal ?? fallbackActionCopy.successSignal;
   const fallbackWhyThisNow = negotiation?.mode && negotiation.mode !== 'default'
     ? `ตอนนี้กำลังปรับ action ให้ ${negotiation.mode} ขึ้น โดยยังยึดงานเดิมและข้อจำกัดปัจจุบัน`
-    : `ตอนนี้ควรเริ่มจาก action ที่แตะได้จริงและพางานนี้ไปต่อได้ก่อน โดยยึดเวลา ${
-        task.constraints?.timeBudgetMin ?? 'ที่มีตอนนี้'
-      } และพลังงาน ${task.constraints?.energyLevel ?? 'ปัจจุบัน'}`;
-  const fallbackSituationSummary = task.sourceText.trim().slice(0, 220) || 'ตอนนี้ยังมีบริบทพอให้เลือกก้าวถัดไปที่ชัดเจนก่อน';
-  const fallbackReplyDraft = task.workflowType === 'client_response'
-    ? 'ขอผมสรุปประเด็นหลักจากข้อความนี้ก่อน แล้วจะกลับมาพร้อมคำตอบที่ชัดเจนให้ทันทีครับ'
+    : fallbackActionCopy.whyThisNow;
+  const fallbackSituationSummary = fallbackActionCopy.situationSummary;
+  const fallbackReplyDraft = shouldGenerateReplyDraft(fallbackWorkflowType, fallbackTaskShape)
+    ? fallbackActionCopy.replyDraft
     : undefined;
-  const fallbackWorkflowType = task.workflowType ?? (
-    /ลูกค้า|feedback|reply|ตอบ|email|chat/i.test(task.sourceText)
-      ? 'client_response'
-      : 'client_resume'
-  );
   return runAiOperation({
     operationName: 'action',
     systemPrompt: ACTION_SYSTEM_PROMPT,
@@ -85,8 +86,12 @@ export async function POST(req: Request) {
       fallbackSituationSummary,
       fallbackReplyDraft,
       fallbackWorkflowType,
+      fallbackTaskShape,
     }),
     numPredict: ACTION_NUM_PREDICT,
     repairNumPredict: ACTION_REPAIR_NUM_PREDICT,
+    primaryTimeoutMs: ACTION_TIMEOUT_MS,
+    repairTimeoutMs: ACTION_REPAIR_TIMEOUT_MS,
+    fallbackTimeoutMs: ACTION_FALLBACK_TIMEOUT_MS,
   });
 }

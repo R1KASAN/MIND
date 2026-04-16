@@ -1,4 +1,9 @@
 import type { AiSynthesisResponse } from '@/lib/ai/schema';
+import {
+  buildActionFallbackCopy,
+  deriveTaskShapeFromText,
+  inferWorkflowTypeFromTaskShape,
+} from '@/lib/ai/task-shape';
 
 const THAI_FILLER_PREFIXES = [
   'ต้อง',
@@ -92,18 +97,28 @@ export function synthesizeLocally(dump: string): AiSynthesisResponse {
   const segments = splitDump(dump);
   const primary = pickPrimarySegment(segments);
   const title = titleFromSegment(primary);
+  const taskShape = deriveTaskShapeFromText(dump);
+  const workflowType = inferWorkflowTypeFromTaskShape(taskShape);
+  const fallback = buildActionFallbackCopy(workflowType, taskShape);
+  const alternatives =
+    segments.length > 1
+      ? segments
+          .filter((segment) => segment !== primary)
+          .slice(0, 2)
+          .map((segment) => alternativeFromSegment(segment))
+      : fallback.alternatives;
 
   return {
+    workflow_type: workflowType,
     requires_clarification: false,
     recommended_action: {
       title,
       rationale: rationaleFromSegment(primary),
       micro_steps: microStepsFromSegment(primary, title),
     },
-    alternative_actions: segments
-      .filter((segment) => segment !== primary)
-      .slice(0, 2)
-      .map((segment) => alternativeFromSegment(segment)),
+    reply_draft: fallback.replyDraft,
+    alternative_actions: alternatives,
     detected_blockers: [],
+    task_shape: taskShape,
   };
 }

@@ -1,4 +1,5 @@
 import type { AiSynthesisResponse } from '@/lib/ai/schema';
+import type { TaskShape } from '@/lib/ai/task-shape';
 import type {
   AiActionNegotiationMode,
   AiActionResponse,
@@ -51,6 +52,7 @@ export function buildPayloadFromAiActionResponse(
   workflowType: WorkflowType,
   response: AiActionResponse,
   blockers: string[],
+  taskShape?: TaskShape,
 ): AiSynthesisResponse {
   return {
     workflow_type: workflowType,
@@ -68,6 +70,7 @@ export function buildPayloadFromAiActionResponse(
       rationale: alternative.rationale,
     })),
     detected_blockers: blockers,
+    task_shape: taskShape,
   };
 }
 
@@ -117,6 +120,18 @@ export function buildSynthesisInput(task: TaskContext): string {
 
   if (task.workflowType) {
     structuredContext.push(`workflow_type: ${task.workflowType}`);
+  }
+  if (task.taskShape) {
+    structuredContext.push(
+      [
+        'task_shape:',
+        `deliverable_type: ${task.taskShape.deliverableType}`,
+        `immediate_need: ${task.taskShape.immediateNeed}`,
+        `missing_inputs: ${task.taskShape.missingInputs.join(', ') || 'ไม่มี'}`,
+        `work_context: ${task.taskShape.workContext}`,
+        `confidence: ${task.taskShape.confidence ?? 'ไม่ระบุ'}`,
+      ].join('\n'),
+    );
   }
   if (task.currentStepIndex > 0) {
     structuredContext.push(`current_step_index: ${task.currentStepIndex}`);
@@ -202,6 +217,7 @@ export function toSmallerMicroStep(step: string): string {
 function buildActionStateFromPayload(
   workflowType: WorkflowType,
   payload: AiSynthesisResponse,
+  roomId?: string,
   existingAction?: Action | null,
 ): Action {
   if (existingAction) {
@@ -219,6 +235,7 @@ function buildActionStateFromPayload(
 
   return {
     id: Date.now().toString(),
+    roomId,
     createdAt: Date.now(),
     title: payload.recommended_action.title,
     rationale: payload.recommended_action.rationale,
@@ -241,8 +258,8 @@ export function buildActionSuccessArtifacts(input: {
 }) {
   const { task, intake, actionResponse, existingAction, persistedNegotiationMode } = input;
   const workflowType = intake.workflowType;
-  const payload = buildPayloadFromAiActionResponse(workflowType, actionResponse, intake.blockers);
-  const actionState = buildActionStateFromPayload(workflowType, payload, existingAction);
+  const payload = buildPayloadFromAiActionResponse(workflowType, actionResponse, intake.blockers, intake.taskShape);
+  const actionState = buildActionStateFromPayload(workflowType, payload, task.roomId, existingAction);
 
   let constraints = task.constraints
     ? { ...task.constraints }
@@ -256,6 +273,7 @@ export function buildActionSuccessArtifacts(input: {
   const nextTask: TaskContext = {
     ...task,
     workflowType,
+    taskShape: intake.taskShape,
     blockerSignals: intake.blockers,
     taskFrame: intake.taskFrame,
     lifecycleState: 'has_one_action',

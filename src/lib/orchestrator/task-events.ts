@@ -12,16 +12,62 @@ import {
   AiScaffoldResponseSchema,
   type AiScaffoldResponse,
 } from '@/lib/ai/operations';
+import { parseAiReentryResponse, parseAiRescueResponse } from '@/lib/ai/operation-contract';
 import type { AiOpsFailureTelemetry } from '@/lib/ai/ai-ops-debug';
 import type { AiSynthesisResponse } from '@/lib/ai/schema';
 import { AiSynthesisResponseSchema } from '@/lib/ai/schema';
 import { trackEvent } from '@/lib/instrumentation';
+import { composeRoomSourceText } from '@/lib/room';
 import type {
   Action,
   AiFailureReason,
   TaskContext,
 } from '@/lib/store/idb';
 import { buildSynthesisInput } from '@/lib/orchestrator/task-machine';
+
+type IntakeRequestTask = Pick<TaskContext, 'sourceText'> & Partial<Pick<
+  TaskContext,
+  | 'workflowType'
+  | 'taskShape'
+  | 'taskFrame'
+  | 'sourceFiles'
+  | 'extractedText'
+  | 'pendingInputs'
+  | 'blockerSignals'
+  | 'constraints'
+  | 'assistantMode'
+  | 'lastAiOperation'
+>>;
+
+function sourceTextIsCanonicalMergedRoomText(task: TaskContext) {
+  const normalizedSourceText = task.sourceText.trim();
+  const canonicalFileContext = composeRoomSourceText('', task.extractedText, task.sourceFiles).trim();
+
+  if (!canonicalFileContext) return true;
+  if (normalizedSourceText === canonicalFileContext) return true;
+
+  return normalizedSourceText.endsWith(`\n\n${canonicalFileContext}`);
+}
+
+function buildIntakeRequestTask(task: TaskContext): IntakeRequestTask {
+  const requestTask: IntakeRequestTask = {
+    sourceText: task.sourceText,
+  };
+
+  const hasFileContext = task.extractedText.trim().length > 0 || task.sourceFiles.length > 0;
+  if (!hasFileContext) return requestTask;
+
+  if (sourceTextIsCanonicalMergedRoomText(task)) return requestTask;
+
+  if (task.extractedText.trim()) {
+    requestTask.extractedText = task.extractedText;
+  }
+  if (task.sourceFiles.length > 0) {
+    requestTask.sourceFiles = task.sourceFiles;
+  }
+
+  return requestTask;
+}
 
 export class SynthesisFailure extends Error {
   reason: AiFailureReason;
@@ -109,6 +155,18 @@ function waitForBackoff(delayMs: number) {
   });
 }
 
+function getRescueRetryConfig() {
+  const maxAttempts = Number(process.env.MIND_RESCUE_RETRY_MAX_ATTEMPTS || 3) || 3;
+  const baseBackoffMs = Number(process.env.MIND_RESCUE_RETRY_BACKOFF_MS || 700) || 700;
+  const timeoutBackoffMs = Number(process.env.MIND_RESCUE_TIMEOUT_BACKOFF_MS || 1400) || 1400;
+
+  return {
+    maxAttempts: Math.max(1, Math.min(3, maxAttempts)),
+    baseBackoffMs: Math.max(100, baseBackoffMs),
+    timeoutBackoffMs: Math.max(200, timeoutBackoffMs),
+  };
+}
+
 function readFailureStatusCode(error: unknown) {
   if (error instanceof SynthesisFailure && typeof error.statusCode === 'number') {
     return error.statusCode;
@@ -137,6 +195,18 @@ function shouldRetryRescueFailure(error: unknown) {
   return false;
 }
 
+function resolveRescueRetryBackoffMs(attemptIndex: number, error: unknown) {
+  const { baseBackoffMs, timeoutBackoffMs } = getRescueRetryConfig();
+  const statusCode = readFailureStatusCode(error);
+  const isTimeoutLike =
+    (error instanceof SynthesisFailure && error.reason === 'request_timeout') ||
+    statusCode === 503 ||
+    (error instanceof TypeError);
+  const baseDelay = isTimeoutLike ? timeoutBackoffMs : baseBackoffMs;
+
+  return Math.min(baseDelay + attemptIndex * 500, baseDelay + 1000);
+}
+
 export async function requestLegacySynthesis(task: TaskContext): Promise<AiSynthesisResponse> {
   const dump = buildSynthesisInput(task);
   const response = await fetch('/api/ai', {
@@ -157,7 +227,7 @@ export async function requestIntake(task: TaskContext): Promise<AiIntakeResponse
   const response = await fetch('/api/ai/intake', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ task }),
+    body: JSON.stringify({ task: buildIntakeRequestTask(task) }),
   });
 
   return parseOperationResponse(
@@ -203,13 +273,31 @@ export async function requestScaffold(task: TaskContext, action: Action, current
 }
 
 export async function requestRescue(task: TaskContext, action: Action | null, currentStepIndex: number): Promise<AiRescueResponse> {
-  const body = JSON.stringify({ task, action, currentStepIndex });
+  const { maxAttempts } = getRescueRetryConfig();
   let retryAttempted = false;
+  let retryCount = 0;
   let initialFailureStatus: number | undefined;
   let initialFailureReason: AiFailureReason | 'network' | 'unknown' = 'unknown';
+  let initialFailurePassType: string | undefined;
+  let previousFailureStatus: number | undefined;
+  let previousFailureReason: AiFailureReason | 'network' | 'unknown' = 'unknown';
+  let previousFailurePassType: string | undefined;
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     try {
+      const body = JSON.stringify({
+        task,
+        action,
+        currentStepIndex,
+        retryContext: attempt > 0
+          ? {
+              attempt: attempt + 1,
+              previousStatus: previousFailureStatus,
+              previousReason: previousFailureReason,
+              previousPassType: previousFailurePassType,
+            }
+          : undefined,
+      });
       const response = await fetch('/api/ai/rescue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -228,8 +316,11 @@ export async function requestRescue(task: TaskContext, action: Action | null, cu
           operation: 'rescue',
           retryAttempted: true,
           retrySucceeded: true,
+          retryCount,
+          maxAttempts,
           recoveredFromStatus: initialFailureStatus,
           recoveredFromReason: initialFailureReason,
+          recoveredFromPassType: initialFailurePassType,
         });
       }
 
@@ -241,21 +332,35 @@ export async function requestRescue(task: TaskContext, action: Action | null, cu
         : error instanceof TypeError
           ? 'network'
           : 'unknown';
-      const canRetry = attempt === 0 && shouldRetryRescueFailure(error);
+      const failurePassType = error instanceof SynthesisFailure ? error.telemetry?.passType : undefined;
+      const canRetry = attempt < maxAttempts - 1 && shouldRetryRescueFailure(error);
+
+      previousFailureStatus = statusCode;
+      previousFailureReason = failureReason;
+      previousFailurePassType = failurePassType;
 
       if (canRetry) {
         retryAttempted = true;
-        initialFailureStatus = statusCode;
-        initialFailureReason = failureReason;
+        retryCount += 1;
+        initialFailureStatus ??= statusCode;
+        if (initialFailureReason === 'unknown') {
+          initialFailureReason = failureReason;
+        }
+        initialFailurePassType ??= failurePassType;
+        const retryBackoffMs = resolveRescueRetryBackoffMs(attempt, error);
         trackEvent('synthesis_failed', {
           operation: 'rescue',
           status: statusCode,
           reason: failureReason,
+          failurePassType: initialFailurePassType,
           retryAttempted: true,
           retrySucceeded: false,
+          retryCount,
+          maxAttempts,
           willRetry: true,
+          retryBackoffMs,
         });
-        await waitForBackoff(600);
+        await waitForBackoff(retryBackoffMs);
         continue;
       }
 
@@ -263,8 +368,11 @@ export async function requestRescue(task: TaskContext, action: Action | null, cu
         operation: 'rescue',
         status: statusCode,
         reason: failureReason,
+        failurePassType,
         retryAttempted,
         retrySucceeded: false,
+        retryCount,
+        maxAttempts,
       });
 
       if (error instanceof SynthesisFailure) {
@@ -272,26 +380,87 @@ export async function requestRescue(task: TaskContext, action: Action | null, cu
         error.retrySucceeded = false;
       }
 
-      throw error;
+      if (!shouldRetryRescueFailure(error)) {
+        throw error;
+      }
+
+      return parseAiRescueResponse(
+        JSON.stringify({
+          diagnosis: {
+            primaryReason: 'unknown',
+            explanation:
+              'MIND ยังวินิจฉัยไม่สำเร็จในรอบนี้ แต่บริบทงานและข้อความเดิมของคุณยังอยู่ครบ ลองย่อยให้เล็กลงอีก หรือพักไว้แล้วกลับมาลอง rescue ใหม่ได้',
+          },
+          rescuePlan: {
+            mode: 'shrink',
+            steps: [
+              'กลับไปทำแค่ส่วนเล็กที่สุดของ step นี้ก่อน',
+              'ถ้ายังติดอยู่จริง งานนี้ยังถูกเก็บไว้เหมือนเดิม ค่อยกลับมาลองใหม่เมื่อพร้อม',
+            ],
+          },
+        }),
+        {
+          fallbackReason: 'unknown',
+          fallbackActionTitle: action?.title ?? task.currentPlan?.actionTitle,
+          fallbackCurrentStep:
+            task.currentPlan?.steps[currentStepIndex]?.text ??
+            action?.microSteps?.[currentStepIndex],
+        },
+      );
     }
   }
 
   throw new SynthesisFailure('unknown', 'AI rescue ไม่สำเร็จ');
 }
 
-export async function requestReentry(task: TaskContext, action: Action | null, scope: AiReentryScope): Promise<AiReentryResponse> {
-  const response = await fetch('/api/ai/reentry', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ task, action, scope }),
-  });
+export async function requestReentry(
+  task: TaskContext,
+  action: Action | null,
+  scope: AiReentryScope,
+  currentStepIndex: number,
+): Promise<AiReentryResponse> {
+  try {
+    const response = await fetch('/api/ai/reentry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task, action, scope }),
+    });
 
-  return parseOperationResponse(
-    response,
-    AiReentryResponseSchema,
-    `AI reentry ไม่สำเร็จ (${response.status})`,
-    'reentry',
-  );
+    return parseOperationResponse(
+      response,
+      AiReentryResponseSchema,
+      `AI reentry ไม่สำเร็จ (${response.status})`,
+      'reentry',
+    );
+  } catch {
+    return parseAiReentryResponse(
+      JSON.stringify({
+        reentrySummary:
+          scope === 'morning_ritual'
+            ? 'กลับมาเช็กภาพรวมวันนี้ก่อน แล้วค่อยเลือกงานที่สำคัญที่สุด'
+            : 'กลับมาครั้งนี้เริ่มจากก้าวที่ใกล้ที่สุดก่อน เพื่อพางานนี้กลับเข้าสู่จังหวะเดิมได้เร็วสุด',
+        topActions: [
+          {
+            roomId: task.currentActionId ?? 'current-room',
+            title: action?.title ?? task.currentPlan?.actionTitle ?? 'สรุปสถานะล่าสุดของโปรเจกต์จากบริบทที่มี',
+            rationale: 'ช่วยกลับเข้าสู่งานค้างได้เร็วโดยไม่ต้องอ่านใหม่ทั้งหมด',
+            impact: 'high',
+            effort: 'low',
+            resumeTarget: 'ONE_ACTION',
+          },
+        ],
+        ignoredNoise: [],
+      }),
+      {
+        fallbackRoomId: task.currentActionId ?? 'current-room',
+        fallbackActionTitle: action?.title ?? task.currentPlan?.actionTitle,
+        fallbackCurrentStep:
+          task.currentPlan?.steps[currentStepIndex]?.text ??
+          action?.microSteps?.[currentStepIndex],
+        fallbackResumeTarget: 'ONE_ACTION',
+      },
+    );
+  }
 }
 
 export async function runIntakeActionFlow(task: TaskContext): Promise<
@@ -312,6 +481,7 @@ export async function runIntakeActionFlow(task: TaskContext): Promise<
   const intakeTask: TaskContext = {
     ...task,
     workflowType: intake.workflowType,
+    taskShape: intake.taskShape,
     blockerSignals: intake.blockers,
     taskFrame: intake.taskFrame,
     assistantMode: 'intake_review',

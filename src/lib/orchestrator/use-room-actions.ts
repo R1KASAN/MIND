@@ -1,0 +1,183 @@
+import { useEffect } from 'react';
+
+import type { AiSynthesisResponse } from '@/lib/ai/schema';
+import { hasResumableTask } from '@/lib/orchestrator/task-machine';
+import {
+  activateRoom,
+  createRoom,
+  normalizeSession,
+  type Action,
+  type AppSession,
+  type RoomRecord,
+  type RoomScenarioType,
+  type UIRoute,
+} from '@/lib/store/idb';
+
+interface TaskController {
+  resumeFromSuggestedReentry: () => Promise<void>;
+  resumeTaskFromRoute: (route: UIRoute) => Promise<void>;
+  deriveResumeRoute: () => UIRoute;
+  handleMakeSmaller: () => Promise<void>;
+  handleAcceptAction: () => Promise<void>;
+}
+
+export function getAdjacentRoom(rooms: RoomRecord[], activeRoomId: string | null, direction: 'next' | 'previous') {
+  if (rooms.length === 0) return null;
+  const currentIndex = rooms.findIndex((room) => room.id === activeRoomId);
+  const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+  const delta = direction === 'next' ? 1 : -1;
+  const nextIndex = (safeIndex + delta + rooms.length) % rooms.length;
+  return rooms[nextIndex] ?? null;
+}
+
+export function canContinueFromRoomCard(
+  session: AppSession,
+  currentPayload: AiSynthesisResponse | null,
+  currentActionState: Action | null,
+) {
+  return Boolean(
+    session.task &&
+      (
+        session.task.reentryBrief?.topActions[0] ||
+        (
+          hasResumableTask(session.task) &&
+          (session.task.reentryBrief || session.task.lastSynthesis || currentPayload || currentActionState)
+        )
+      ),
+  );
+}
+
+export function canMakeSmallerFromRoomCard(
+  session: AppSession,
+  currentPayload: AiSynthesisResponse | null,
+  currentActionState: Action | null,
+) {
+  return Boolean(
+    session.task &&
+      hasResumableTask(session.task) &&
+      (session.task.lastSynthesis || currentPayload || currentActionState || session.task.currentPlan),
+  );
+}
+
+interface UseRoomActionsOptions {
+  rooms: RoomRecord[];
+  activeRoomId: string | null;
+  session: AppSession | null;
+  currentPayload: AiSynthesisResponse | null;
+  currentActionState: Action | null;
+  demoScenarioId: RoomScenarioType;
+  controller: TaskController;
+  hydrateSessionState: (nextSession: AppSession) => Promise<void>;
+  refreshRooms: () => Promise<unknown>;
+  resetRoomInteractionState: () => void;
+}
+
+export function useRoomActions({
+  rooms,
+  activeRoomId,
+  session,
+  currentPayload,
+  currentActionState,
+  demoScenarioId,
+  controller,
+  hydrateSessionState,
+  refreshRooms,
+  resetRoomInteractionState,
+}: UseRoomActionsOptions) {
+  useEffect(() => {
+    const handleRoomSwitchHotkeys = (event: KeyboardEvent) => {
+      if (!(event.altKey || (event.metaKey && event.shiftKey))) return;
+      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+
+      const nextRoom = getAdjacentRoom(
+        rooms,
+        activeRoomId,
+        event.key === 'ArrowDown' ? 'next' : 'previous',
+      );
+      if (!nextRoom) return;
+
+      event.preventDefault();
+      void (async () => {
+        const nextSession = await activateRoom(nextRoom.id);
+        resetRoomInteractionState();
+        await hydrateSessionState(normalizeSession(nextSession));
+        await refreshRooms();
+      })();
+    };
+
+    window.addEventListener('keydown', handleRoomSwitchHotkeys);
+    return () => window.removeEventListener('keydown', handleRoomSwitchHotkeys);
+  }, [activeRoomId, hydrateSessionState, refreshRooms, resetRoomInteractionState, rooms]);
+
+  const activeRoom = rooms.find((room) => room.id === activeRoomId) ?? null;
+
+  const handleCreateRoom = async () => {
+    const created = await createRoom({
+      title: `Client room ${rooms.length + 1}`,
+      scenarioType: demoScenarioId,
+      makeActive: true,
+    });
+    const nextSession = await activateRoom(created.id);
+    resetRoomInteractionState();
+    await hydrateSessionState(nextSession);
+    await refreshRooms();
+  };
+
+  const handleSelectRoom = async (roomId: string) => {
+    if (roomId === activeRoomId) return;
+    const nextSession = await activateRoom(roomId);
+    resetRoomInteractionState();
+    await hydrateSessionState(normalizeSession(nextSession));
+    await refreshRooms();
+  };
+
+  const handleContinueFromRoomCard = async () => {
+    if (!session) return;
+    if (!session.task) return;
+
+    if (session.task.reentryBrief?.topActions[0]) {
+      await controller.resumeFromSuggestedReentry();
+      return;
+    }
+
+    if (!hasResumableTask(session.task)) return;
+
+    if (
+      (session.uiRoute === 'BOUNCE_BACK' || session.uiRoute === 'MORNING_RITUAL') &&
+      session.task.reentryBrief
+    ) {
+      await controller.resumeFromSuggestedReentry();
+      return;
+    }
+
+    await controller.resumeTaskFromRoute(controller.deriveResumeRoute());
+  };
+
+  const handleMakeSmallerFromRoomCard = async () => {
+    if (!session) return;
+    if (!session.task || !hasResumableTask(session.task)) return;
+
+    if (session.uiRoute === 'SCAFFOLD' && currentPayload) {
+      await controller.handleMakeSmaller();
+      return;
+    }
+
+    if (session.uiRoute === 'ONE_ACTION' && currentPayload) {
+      await controller.handleAcceptAction();
+      await controller.handleMakeSmaller();
+      return;
+    }
+
+    await controller.resumeTaskFromRoute('SCAFFOLD');
+  };
+
+  return {
+    activeRoom,
+    roomCardCanContinue: session ? canContinueFromRoomCard(session, currentPayload, currentActionState) : false,
+    roomCardCanMakeSmaller: session ? canMakeSmallerFromRoomCard(session, currentPayload, currentActionState) : false,
+    handleCreateRoom,
+    handleSelectRoom,
+    handleContinueFromRoomCard,
+    handleMakeSmallerFromRoomCard,
+  };
+}

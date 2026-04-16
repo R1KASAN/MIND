@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import {
+  TASK_SHAPE_DELIVERABLE_TYPES,
+  TASK_SHAPE_IMMEDIATE_NEEDS,
+} from '@/lib/ai/task-shape';
 
 const NullableOptionalString = z.preprocess((value) => {
   if (value === null || value === undefined) return undefined;
@@ -39,6 +43,21 @@ export const AiOperationMetaSchema = z.object({
   repairUsed: z.boolean(),
 });
 
+export const AiTaskShapeSchema = z.object({
+  deliverableType: z.enum(TASK_SHAPE_DELIVERABLE_TYPES),
+  immediateNeed: z.enum(TASK_SHAPE_IMMEDIATE_NEEDS),
+  missingInputs: stringArrayField(),
+  workContext: z.string(),
+  confidence: z.preprocess((value) => {
+    if (value === null || value === undefined || value === '') return undefined;
+    if (typeof value === 'string') {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return value;
+  }, z.number().min(0).max(1).optional()),
+});
+
 export const AiIntakeResponseSchema = z.object({
   workflowType: z.enum(['client_response', 'client_resume']),
   roomDigest: z.string(),
@@ -50,6 +69,7 @@ export const AiIntakeResponseSchema = z.object({
   blockers: stringArrayField(),
   requiresClarification: z.boolean(),
   clarificationQuestion: NullableOptionalString,
+  taskShape: AiTaskShapeSchema,
   candidateActions: z.array(z.object({
     title: z.string(),
     rationale: z.string(),
@@ -132,6 +152,7 @@ export const AiActionNegotiationModeSchema = z.enum([
 export const AiReentryScopeSchema = z.enum(['bounce_back', 'morning_ritual']);
 
 export type AiOperationMeta = z.infer<typeof AiOperationMetaSchema>;
+export type AiTaskShape = z.infer<typeof AiTaskShapeSchema>;
 export type AiIntakeResponse = z.infer<typeof AiIntakeResponseSchema>;
 export type AiActionResponse = z.infer<typeof AiActionResponseSchema>;
 export type AiScaffoldResponse = z.infer<typeof AiScaffoldResponseSchema>;
