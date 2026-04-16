@@ -14,6 +14,8 @@ const RESCUE_BASELINE_LABEL = process.env.MIND_RESCUE_BASELINE_LABEL || 'unspeci
 const FINAL_SCREENSHOT = process.env.MIND_SMOKE_SCREENSHOT || '/tmp/mind-browser-smoke-task-flow.png';
 const FAILURE_SCREENSHOT = process.env.MIND_SMOKE_FAILURE_SCREENSHOT || '/tmp/mind-browser-smoke-task-flow-failure.png';
 const SUMMARY_PATH = process.env.MIND_SMOKE_TASK_FLOW_SUMMARY_PATH;
+const RESPONSE_OBSERVE_TIMEOUT_MS = Number(process.env.MIND_SMOKE_RESPONSE_OBSERVE_TIMEOUT_MS || 10_000);
+const AI_WAIT_TIMEOUT_MS = Number(process.env.MIND_SMOKE_AI_WAIT_TIMEOUT_MS || 210_000) || 210_000;
 const SCAFFOLD_LOADING_COPY = 'MIND กำลังหาวิธีย่อยให้เล็กลงที่ยังมีความหมายอยู่…';
 const DUMP_TEXTBOX_LABEL = 'พิมพ์สภาพงานของคุณ';
 const DUMP_HERO_HEADING = 'พิมพ์สภาพงานมาก่อน แล้วค่อยแนบไฟล์ถ้ามี';
@@ -29,6 +31,8 @@ const ONE_ACTION_SECONDARY_CTA = 'ลองอีกทางจากข้อ�
 const DECISION_BOARD_HEADER = 'โอเค ลองอีกทางจากข้อความเดิมเดียวกัน';
 const DECISION_BOARD_BACK_CTA = 'กลับไปใช้ข้อเสนอแรก';
 const REPLY_PREVIEW_TOGGLE = 'ดูร่างเต็ม';
+const SCAFFOLD_COMPLETE_CTA = 'เสร็จแล้ว';
+const SCAFFOLD_START_NEW_CTA = 'เริ่มงานใหม่';
 
 async function ensureDirectory(filePath: string) {
   await mkdir(dirname(filePath), { recursive: true });
@@ -81,32 +85,83 @@ async function readStoredSession(page: Page) {
   });
 }
 
-async function waitForAiResponse(page: Page, routeFragment: string) {
-  const response = await page.waitForResponse(
-    (candidate) => candidate.url().includes(routeFragment) && candidate.request().method() === 'POST',
-    { timeout: 90000 },
-  );
+function normalizeStepText(value: string | null | undefined) {
+  return (value ?? '').replace(/\s+/g, ' ').trim();
+}
 
-  const body = await response.json().catch(() => null);
-  return { response, body };
+async function readVisibleStepTexts(page: Page) {
+  const stepCards = page.locator('div').filter({ has: page.getByText(/^ขั้นตอน \d+$/) });
+  const count = await stepCards.count();
+  const steps: string[] = [];
+
+  for (let index = 0; index < count; index += 1) {
+    const text = normalizeStepText(await stepCards.nth(index).textContent());
+    if (text) steps.push(text);
+  }
+
+  return steps;
+}
+
+function observeNextAiResponse(page: Page, routeFragment: string, timeoutMs = RESPONSE_OBSERVE_TIMEOUT_MS) {
+  return new Promise<{ response: Response; body: unknown } | null>((resolve) => {
+    const timeoutId = setTimeout(() => {
+      page.off('response', handleResponse);
+      resolve(null);
+    }, timeoutMs);
+
+    const handleResponse = async (candidate: Response) => {
+      if (!candidate.url().includes(routeFragment) || candidate.request().method() !== 'POST') {
+        return;
+      }
+
+      clearTimeout(timeoutId);
+      page.off('response', handleResponse);
+      resolve({
+        response: candidate,
+        body: await candidate.json().catch(() => null),
+      });
+    };
+
+    page.on('response', handleResponse);
+  });
 }
 
 async function settleIntoOneAction(page: Page) {
   const oneActionButton = page.getByRole('button', { name: ONE_ACTION_PRIMARY_CTA });
   const clarificationHeading = page.getByRole('heading', { name: 'ขอข้อมูลเพิ่มนิดเดียว เพื่อสรุปให้ตรง' });
   const firstResolved = await Promise.race([
-    oneActionButton.waitFor({ state: 'visible', timeout: 90000 }).then(() => 'one_action'),
-    clarificationHeading.waitFor({ state: 'visible', timeout: 90000 }).then(() => 'clarification'),
+    oneActionButton.waitFor({ state: 'visible', timeout: AI_WAIT_TIMEOUT_MS }).then(() => 'one_action'),
+    clarificationHeading.waitFor({ state: 'visible', timeout: AI_WAIT_TIMEOUT_MS }).then(() => 'clarification'),
   ]);
 
   if (firstResolved === 'clarification') {
     await page.getByPlaceholder('พิมพ์รายละเอียดที่ยังขาดอยู่ 1 จุด').fill('ขอเริ่มจากการสรุปสถานะล่าสุดและร่างข้อความถามกลับลูกค้าก่อน');
     await page.getByRole('button', { name: 'สรุปต่อเลย' }).click();
-    await oneActionButton.waitFor({ state: 'visible', timeout: 90000 });
+    await oneActionButton.waitFor({ state: 'visible', timeout: AI_WAIT_TIMEOUT_MS });
   }
 
-  await page.getByText(ONE_ACTION_HEADER).waitFor({ state: 'visible', timeout: 30000 });
-  await page.getByRole('button', { name: ONE_ACTION_SECONDARY_CTA }).waitFor({ state: 'visible', timeout: 30000 });
+  await page.getByText(ONE_ACTION_HEADER).waitFor({ state: 'visible', timeout: AI_WAIT_TIMEOUT_MS });
+  await page.getByRole('button', { name: ONE_ACTION_SECONDARY_CTA }).waitFor({ state: 'visible', timeout: AI_WAIT_TIMEOUT_MS });
+}
+
+async function finishScaffoldFlow(page: Page) {
+  const startNewButton = page.getByRole('button', { name: SCAFFOLD_START_NEW_CTA });
+
+  for (let attempts = 0; attempts < 5; attempts += 1) {
+    if (await startNewButton.isVisible().catch(() => false)) {
+      return;
+    }
+
+    const doneButton = page.getByRole('button', { name: SCAFFOLD_COMPLETE_CTA });
+    await doneButton.waitFor({ state: 'visible', timeout: 30000 });
+    await doneButton.click();
+
+    if (await startNewButton.isVisible().catch(() => false)) {
+      return;
+    }
+  }
+
+  throw new Error('scaffold completion summary did not appear after finishing visible steps');
 }
 
 async function readOperationResponse(response: Response, routeFragment: string) {
@@ -125,7 +180,7 @@ async function run() {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext();
   const page = await context.newPage();
-  page.setDefaultTimeout(90000);
+  page.setDefaultTimeout(AI_WAIT_TIMEOUT_MS);
   let stage:
     | 'boot'
     | 'dump'
@@ -150,12 +205,24 @@ async function run() {
     rescuePassType: undefined as string | undefined,
     rescueFailureDetail: undefined as string | undefined,
     rescueFailureField: undefined as string | undefined,
+    scaffoldResponseObserved: false,
+    scaffoldRetryResponseObserved: false,
+    actionReadyMs: undefined as number | undefined,
+    scaffoldRefineMs: undefined as number | undefined,
+    rescueMs: undefined as number | undefined,
+    scaffoldRetryMs: undefined as number | undefined,
+    completionResetMs: undefined as number | undefined,
+    reentryMs: undefined as number | undefined,
+    consoleErrors: [] as string[],
+    pageErrors: [] as string[],
   };
   page.on('pageerror', (error) => {
+    summary.pageErrors.push(error.message);
     console.error('[SMOKE][pageerror]', error.message);
   });
   page.on('console', (message) => {
     if (message.type() === 'error') {
+      summary.consoleErrors.push(message.text());
       console.error('[SMOKE][console-error]', message.text());
     }
   });
@@ -175,7 +242,9 @@ async function run() {
     await page.getByRole('button', { name: 'สรุปให้เลย' }).click();
 
     stage = 'action';
+    const actionStartedAt = Date.now();
     await settleIntoOneAction(page);
+    summary.actionReadyMs = Date.now() - actionStartedAt;
     summary.reachedAction = true;
     stage = 'decision_board';
     await page.getByRole('button', { name: ONE_ACTION_SECONDARY_CTA }).click();
@@ -199,26 +268,37 @@ async function run() {
     await page.getByRole('button', { name: ONE_ACTION_PRIMARY_CTA }).click();
     const smallerButton = page.getByRole('button', { name: 'ย่อยให้เล็กลงอีก' });
     await smallerButton.waitFor({ state: 'visible' });
-    const firstStepCard = page.locator('div').filter({ hasText: 'ขั้นตอน 1' }).first();
-    const firstStepBefore = await firstStepCard.textContent();
+    const visiblePlanBefore = await readVisibleStepTexts(page);
 
-    const scaffoldPromise = waitForAiResponse(page, '/api/ai/scaffold');
+    const scaffoldStartedAt = Date.now();
+    const scaffoldObservation = observeNextAiResponse(page, '/api/ai/scaffold');
     await smallerButton.click();
     await page.getByText(SCAFFOLD_LOADING_COPY).waitFor({ state: 'visible' });
     if (!(await smallerButton.isDisabled())) {
       throw new Error('scaffold refine button should be disabled while loading');
     }
-    const { response: scaffoldResponse } = await scaffoldPromise;
-    const scaffoldResult = await readOperationResponse(scaffoldResponse, '/api/ai/scaffold');
-    summary.scaffoldStatus = scaffoldResult.status;
     await page.getByRole('button', { name: 'ฉันติดอยู่' }).waitFor({ state: 'visible' });
-    summary.reachedScaffold = true;
-    const firstStepAfter = await firstStepCard.textContent();
-    if (firstStepBefore === firstStepAfter) {
-      throw new Error('scaffold refinement did not change the visible first step');
+    summary.scaffoldRefineMs = Date.now() - scaffoldStartedAt;
+    const scaffoldObservationResult = await scaffoldObservation;
+    if (scaffoldObservationResult) {
+      summary.scaffoldResponseObserved = true;
+      const scaffoldResult = await readOperationResponse(scaffoldObservationResult.response, '/api/ai/scaffold');
+      summary.scaffoldStatus = scaffoldResult.status;
+      if (
+        scaffoldResult.ok &&
+        (!Array.isArray((scaffoldResult.body as { steps?: unknown }).steps) ||
+          (scaffoldResult.body as { steps?: unknown[] }).steps!.length < 3)
+      ) {
+        throw new Error('/api/ai/scaffold returned fewer than 3 steps');
+      }
     }
-    if (scaffoldResult.ok && (!Array.isArray((scaffoldResult.body as { steps?: unknown }).steps) || (scaffoldResult.body as { steps?: unknown[] }).steps!.length < 3)) {
-      throw new Error('/api/ai/scaffold returned fewer than 3 steps');
+    summary.reachedScaffold = true;
+    const visiblePlanAfter = await readVisibleStepTexts(page);
+    if (
+      visiblePlanBefore.length === visiblePlanAfter.length &&
+      visiblePlanBefore.every((step, index) => step === visiblePlanAfter[index])
+    ) {
+      throw new Error('scaffold refinement did not change the visible scaffold plan');
     }
     const resumableSession = await readStoredSession(page);
     if (!resumableSession?.task) {
@@ -226,40 +306,52 @@ async function run() {
     }
 
     stage = 'rescue';
-    const rescuePromise = waitForAiResponse(page, '/api/ai/rescue');
+    const rescueStartedAt = Date.now();
+    const rescueObservation = observeNextAiResponse(page, '/api/ai/rescue');
     await page.getByRole('button', { name: 'ฉันติดอยู่' }).click();
-    const { response: rescueResponse } = await rescuePromise;
-    const rescueResult = await readOperationResponse(rescueResponse, '/api/ai/rescue');
-    summary.rescueStatus = rescueResult.status;
-    summary.rescuePassType =
-      (rescueResult.body as { meta?: { passType?: string }; error?: { telemetry?: { passType?: string } } }).meta?.passType ??
-      (rescueResult.body as { error?: { telemetry?: { passType?: string } } }).error?.telemetry?.passType;
-    summary.rescueFailureDetail = (rescueResult.body as { error?: { detail?: string } }).error?.detail;
-    summary.rescueFailureField = extractFailureField(summary.rescueFailureDetail);
+    summary.rescueMs = Date.now() - rescueStartedAt;
     await page.getByText('MIND มองว่าติดตรงนี้').waitFor({ state: 'visible' });
     await page.getByText('ทางออกที่แนะนำตอนนี้').waitFor({ state: 'visible' });
     summary.reachedRescue = true;
-    if (rescueResult.ok && (!Array.isArray((rescueResult.body as { rescuePlan?: { steps?: unknown } }).rescuePlan?.steps) ||
-      (rescueResult.body as { rescuePlan?: { steps?: unknown[] } }).rescuePlan!.steps!.length < 2)) {
-      throw new Error('/api/ai/rescue returned fewer than 2 rescue steps');
+    const rescueObservationResult = await rescueObservation;
+    if (rescueObservationResult) {
+      const rescueResult = await readOperationResponse(rescueObservationResult.response, '/api/ai/rescue');
+      summary.rescueStatus = rescueResult.status;
+      summary.rescuePassType =
+        (rescueResult.body as { meta?: { passType?: string }; error?: { telemetry?: { passType?: string } } }).meta?.passType ??
+        (rescueResult.body as { error?: { telemetry?: { passType?: string } } }).error?.telemetry?.passType;
+      summary.rescueFailureDetail = (rescueResult.body as { error?: { detail?: string } }).error?.detail;
+      summary.rescueFailureField = extractFailureField(summary.rescueFailureDetail);
+      if (rescueResult.ok && (!Array.isArray((rescueResult.body as { rescuePlan?: { steps?: unknown } }).rescuePlan?.steps) ||
+        (rescueResult.body as { rescuePlan?: { steps?: unknown[] } }).rescuePlan!.steps!.length < 2)) {
+        throw new Error('/api/ai/rescue returned fewer than 2 rescue steps');
+      }
     }
 
     stage = 'post_rescue_scaffold';
-    const scaffoldAgainPromise = waitForAiResponse(page, '/api/ai/scaffold');
+    const scaffoldRetryStartedAt = Date.now();
+    const scaffoldAgainObservation = observeNextAiResponse(page, '/api/ai/scaffold');
     await page.getByRole('button', { name: 'ย่อยให้เล็กลงอีก' }).click();
     await page.getByText(SCAFFOLD_LOADING_COPY).waitFor({ state: 'visible' });
-    const { response: scaffoldAgainResponse } = await scaffoldAgainPromise;
-    const scaffoldAgainResult = await readOperationResponse(scaffoldAgainResponse, '/api/ai/scaffold');
     const rescueFailureCopy = page.getByText('รอบนี้ MIND ยังย่อยก้าวนี้ให้เล็กลงแบบมีความหมายไม่ได้ ลองใหม่อีกครั้ง หรือกด “ฉันติดอยู่”');
     const returnedToScaffold = await Promise.race([
       page.getByRole('button', { name: 'ฉันติดอยู่' }).waitFor({ state: 'visible', timeout: 30000 }).then(() => true),
       rescueFailureCopy.waitFor({ state: 'visible', timeout: 30000 }).then(() => false),
     ]);
+    summary.scaffoldRetryMs = Date.now() - scaffoldRetryStartedAt;
+    const scaffoldAgainObservationResult = await scaffoldAgainObservation;
+    let scaffoldAgainStatus: number | undefined;
+    if (scaffoldAgainObservationResult) {
+      summary.scaffoldRetryResponseObserved = true;
+      const scaffoldAgainResult = await readOperationResponse(scaffoldAgainObservationResult.response, '/api/ai/scaffold');
+      scaffoldAgainStatus = scaffoldAgainResult.status;
+    }
     if (returnedToScaffold) {
       await page.getByText('MIND มองว่าติดตรงนี้').waitFor({ state: 'hidden', timeout: 30000 }).catch(() => undefined);
     }
 
     stage = 'dump_reset';
+    const completionResetStartedAt = Date.now();
     await page.evaluate(async (seedSession) => {
       const openRequest = indexedDB.open('keyval-store');
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -278,8 +370,8 @@ async function run() {
     }, resumableSession);
 
     await page.goto(`${BASE_URL}/?walkthrough=off&ritual=off`, { waitUntil: 'domcontentloaded' });
-    await page.getByRole('button', { name: 'เสร็จแล้ว' }).waitFor({ state: 'visible', timeout: 30000 });
-    await page.getByRole('button', { name: 'เสร็จแล้ว' }).click();
+    await finishScaffoldFlow(page);
+    await page.getByRole('button', { name: SCAFFOLD_START_NEW_CTA }).click();
     await page.getByRole('heading', { name: DUMP_HERO_HEADING }).waitFor({ state: 'visible', timeout: 30000 });
     await page.getByText(DUMP_REASSURANCE_COPY).waitFor({ state: 'visible', timeout: 30000 });
     await page.getByLabel(DUMP_TEXTBOX_LABEL).waitFor({ state: 'visible', timeout: 30000 });
@@ -287,9 +379,11 @@ async function run() {
     await page.getByRole('heading', { name: DUMP_HERO_HEADING }).waitFor({ state: 'visible', timeout: 30000 });
     await page.getByText(DUMP_REASSURANCE_COPY).waitFor({ state: 'visible', timeout: 30000 });
     await page.getByLabel(DUMP_TEXTBOX_LABEL).waitFor({ state: 'visible', timeout: 30000 });
+    summary.completionResetMs = Date.now() - completionResetStartedAt;
     summary.reachedCompletionReset = true;
 
     stage = 'reentry';
+    const reentryStartedAt = Date.now();
     await page.evaluate(async (seedSession) => {
       const openRequest = indexedDB.open('keyval-store');
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -425,6 +519,7 @@ async function run() {
       page.getByRole('button', { name: ONE_ACTION_PRIMARY_CTA }).waitFor({ state: 'visible', timeout: 90000 }),
       page.getByLabel(DUMP_TEXTBOX_LABEL).waitFor({ state: 'visible', timeout: 90000 }),
     ]);
+    summary.reentryMs = Date.now() - reentryStartedAt;
     summary.reachedReentry = true;
 
     stage = 'complete';
@@ -438,7 +533,7 @@ async function run() {
       screenshot: FINAL_SCREENSHOT,
       summary: {
         ...summary,
-        scaffoldRetryStatus: scaffoldAgainResult.status,
+        scaffoldRetryStatus: scaffoldAgainStatus,
       },
     };
     await writeSummaryReport(report);

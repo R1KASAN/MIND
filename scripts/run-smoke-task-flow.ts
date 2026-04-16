@@ -1,6 +1,7 @@
 import { access } from 'node:fs/promises';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
+import { openSync } from 'node:fs';
 
 type RescueBaseline = {
   label: string;
@@ -12,6 +13,7 @@ type RescueBaseline = {
 };
 
 const DEFAULT_PORT = Number(process.env.MIND_SMOKE_TASK_FLOW_PORT || 3203) || 3203;
+const BROWSER_TIMEOUT_MS = Number(process.env.MIND_SMOKE_TASK_FLOW_BROWSER_TIMEOUT_MS || 240_000) || 240_000;
 const DEFAULT_BASELINE: RescueBaseline = {
   label: process.env.MIND_RESCUE_BASELINE_LABEL || 'rescue-balanced-repair-160',
   numPredict: Number(process.env.MIND_RESCUE_BASELINE_NUM_PREDICT || 160) || 160,
@@ -55,6 +57,8 @@ async function stopServer(process: ChildProcess) {
 }
 
 function startServer(port: number, baseline: RescueBaseline) {
+  const serverLogPath = process.env.MIND_SMOKE_TASK_FLOW_SERVER_LOG_PATH;
+  const serverLogFd = serverLogPath ? openSync(serverLogPath, 'a') : null;
   return spawn('npm', ['run', 'start', '--', '--hostname', '127.0.0.1', '--port', String(port)], {
     cwd: process.cwd(),
     env: {
@@ -66,7 +70,7 @@ function startServer(port: number, baseline: RescueBaseline) {
       AI_TIMEOUT_RESCUE_REPAIR_MS: String(baseline.repairTimeoutMs),
       AI_OVERALL_TIMEOUT_RESCUE_MS: String(baseline.overallBudgetMs),
     },
-    stdio: ['ignore', 'inherit', 'inherit'],
+    stdio: ['ignore', serverLogFd ?? 'inherit', serverLogFd ?? 'inherit'],
   });
 }
 
@@ -83,8 +87,24 @@ async function runBrowserSmoke(baseUrl: string, baseline: RescueBaseline) {
       stdio: ['ignore', 'inherit', 'inherit'],
     });
 
+    const timeoutId = setTimeout(() => {
+      child.kill('SIGTERM');
+      setTimeout(() => {
+        if (child.exitCode === null) {
+          child.kill('SIGKILL');
+        }
+      }, 5_000).unref();
+    }, BROWSER_TIMEOUT_MS);
+
     child.on('error', reject);
-    child.on('exit', (code) => resolve(code ?? 1));
+    child.on('exit', (code, signal) => {
+      clearTimeout(timeoutId);
+      if (signal === 'SIGTERM' || signal === 'SIGKILL') {
+        resolve(124);
+        return;
+      }
+      resolve(code ?? 1);
+    });
   });
 }
 

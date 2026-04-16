@@ -7,24 +7,23 @@ type GateStep = {
   args: string[];
 };
 
-const STUDIO_SERVER_PORT = Number(process.env.MIND_PHASE5_GATE_PORT || 3201) || 3201;
-const STUDIO_SMOKE_LABELS = new Set(['studio-desktop', 'studio-mobile', 'reentry-mobile']);
+const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://127.0.0.1:11437';
+const OLLAMA_GATE_HOST = new URL(OLLAMA_HOST).origin;
+const OLLAMA_CPU_SAFE_SCRIPT = ['npm', ['run', 'ollama:serve:cpu-safe']] as const;
 
 const steps: GateStep[] = [
+  { label: 'runtime-preflight', cmd: 'npm', args: ['run', 'runtime:ollama:check:gemma'] },
   { label: 'unit-tests', cmd: 'npm', args: ['test'] },
   { label: 'build', cmd: 'npm', args: ['run', 'build'] },
-  { label: 'studio-desktop', cmd: 'npm', args: ['run', 'smoke:studio'] },
-  { label: 'studio-mobile', cmd: 'npm', args: ['run', 'smoke:studio-mobile'] },
-  { label: 'reentry-mobile', cmd: 'npm', args: ['run', 'smoke:reentry-mobile'] },
-  { label: 'task-flow-repeat', cmd: 'npm', args: ['run', 'smoke:task-flow:repeat'] },
-  { label: 'rescue-benchmark', cmd: 'npm', args: ['run', 'benchmark:rescue'] },
+  { label: 'ai-routes-gemma', cmd: 'npm', args: ['run', 'smoke:ai-routes:gemma'] },
+  { label: 'demo-browser', cmd: 'npm', args: ['run', 'smoke:demo-browser'] },
 ];
 
-async function waitForServer(baseUrl: string) {
+async function waitForOllama(baseUrl: string) {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`${baseUrl}/api/ai/health`);
+      const response = await fetch(`${baseUrl}/api/tags`);
       if (response.ok) return;
     } catch {
       // keep polling
@@ -32,7 +31,7 @@ async function waitForServer(baseUrl: string) {
     await delay(500);
   }
 
-  throw new Error(`Timed out waiting for Phase 5 gate server at ${baseUrl}`);
+  throw new Error(`Timed out waiting for Ollama at ${baseUrl}`);
 }
 
 async function stopServer(process: ChildProcess) {
@@ -47,17 +46,6 @@ async function stopServer(process: ChildProcess) {
   if (process.exitCode === null) {
     process.kill('SIGKILL');
   }
-}
-
-function startStudioSmokeServer(port: number) {
-  return spawn('npm', ['run', 'start', '--', '--hostname', '127.0.0.1', '--port', String(port)], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      PORT: String(port),
-    },
-    stdio: 'inherit',
-  });
 }
 
 async function runStep(step: GateStep, extraEnv?: Record<string, string | undefined>) {
@@ -96,44 +84,46 @@ async function main() {
 
   if (dryRun) return;
 
-  const smokeBaseUrl = `http://127.0.0.1:${STUDIO_SERVER_PORT}`;
-  let studioServer: ChildProcess | null = null;
-
+  let ollamaServer: ChildProcess | null = null;
   try {
-    for (const step of steps) {
-      if (step.label === 'studio-desktop') {
-        console.log(`[PHASE5_GATE] starting studio smoke server at ${smokeBaseUrl}`);
-        studioServer = startStudioSmokeServer(STUDIO_SERVER_PORT);
-        await waitForServer(smokeBaseUrl);
+    const ollamaAlreadyReady = await (async () => {
+      try {
+        await waitForOllama(OLLAMA_GATE_HOST);
+        return true;
+      } catch {
+        return false;
       }
+    })();
 
+    if (!ollamaAlreadyReady) {
+      console.log(`[PHASE5_GATE] starting Ollama CPU-safe server at ${OLLAMA_GATE_HOST}`);
+      ollamaServer = spawn(OLLAMA_CPU_SAFE_SCRIPT[0], OLLAMA_CPU_SAFE_SCRIPT[1], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          OLLAMA_HOST: OLLAMA_GATE_HOST,
+        },
+        stdio: 'inherit',
+      });
+      await waitForOllama(OLLAMA_GATE_HOST);
+    }
+
+    for (const step of steps) {
       console.log(`[PHASE5_GATE] starting ${step.label}`);
-      const exitCode = await runStep(
-        step,
-        STUDIO_SMOKE_LABELS.has(step.label)
-          ? {
-              MIND_BASE_URL: smokeBaseUrl,
-            }
-          : undefined,
-      );
+      const exitCode = await runStep(step);
       if (exitCode !== 0) {
         console.error(`[PHASE5_GATE] failed ${step.label} with exit code ${exitCode}`);
         process.exitCode = exitCode;
         return;
       }
       console.log(`[PHASE5_GATE] passed ${step.label}`);
-
-      if (step.label === 'reentry-mobile' && studioServer) {
-        console.log('[PHASE5_GATE] stopping studio smoke server');
-        await stopServer(studioServer);
-        studioServer = null;
-      }
     }
 
     console.log('[PHASE5_GATE] all checks passed');
   } finally {
-    if (studioServer) {
-      await stopServer(studioServer);
+    if (ollamaServer) {
+      console.log('[PHASE5_GATE] stopping Ollama CPU-safe server');
+      await stopServer(ollamaServer);
     }
   }
 }

@@ -15,7 +15,7 @@ async function ensureDirectory(filePath: string) {
 
 async function seedReentrySession(page: Page, uiRoute: 'BOUNCE_BACK' | 'MORNING_RITUAL') {
   await page.goto(`${BASE_URL}/?walkthrough=off&ritual=off`, { waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => document.body.innerText.length > 0, undefined, { timeout: 30000 });
+  await page.waitForLoadState('domcontentloaded');
 
   await page.evaluate(async ({ uiRoute }) => {
     const now = Date.now();
@@ -65,11 +65,26 @@ async function seedReentrySession(page: Page, uiRoute: 'BOUNCE_BACK' | 'MORNING_
       },
     };
 
-    const openRequest = indexedDB.open('keyval-store');
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    let openRequest = indexedDB.open('keyval-store');
+    let db = await new Promise<IDBDatabase>((resolve, reject) => {
       openRequest.onsuccess = () => resolve(openRequest.result);
       openRequest.onerror = () => reject(openRequest.error);
     });
+    if (!db.objectStoreNames.contains('keyval')) {
+      const nextVersion = db.version + 1;
+      db.close();
+      openRequest = indexedDB.open('keyval-store', nextVersion);
+      openRequest.onupgradeneeded = () => {
+        const upgradeDb = openRequest.result;
+        if (!upgradeDb.objectStoreNames.contains('keyval')) {
+          upgradeDb.createObjectStore('keyval');
+        }
+      };
+      db = await new Promise<IDBDatabase>((resolve, reject) => {
+        openRequest.onsuccess = () => resolve(openRequest.result);
+        openRequest.onerror = () => reject(openRequest.error);
+      });
+    }
     const tx = db.transaction('keyval', 'readwrite');
     tx.objectStore('keyval').put(session, 'mind_session');
     await new Promise<void>((resolve, reject) => {

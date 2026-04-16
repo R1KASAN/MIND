@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 
@@ -23,22 +23,63 @@ type SmokeRunSummary = {
     rescueFailureField?: string;
     scaffoldStatus?: number;
     scaffoldRetryStatus?: number;
+    scaffoldResponseObserved?: boolean;
+    scaffoldRetryResponseObserved?: boolean;
+    actionReadyMs?: number;
+    scaffoldRefineMs?: number;
+    rescueMs?: number;
+    scaffoldRetryMs?: number;
+    completionResetMs?: number;
+    reentryMs?: number;
+    consoleErrors?: string[];
+    pageErrors?: string[];
   };
 };
 
 const RUN_COUNT = Number(process.env.MIND_SMOKE_TASK_FLOW_REPEAT_RUNS || 5) || 5;
 const OUTPUT_DIR =
   process.env.MIND_SMOKE_TASK_FLOW_REPEAT_DIR || `/tmp/mind-smoke-task-flow-repeat-${Date.now()}`;
+const START_PORT = Number(process.env.MIND_SMOKE_TASK_FLOW_REPEAT_START_PORT || 3203) || 3203;
+const SMOKE_AI_ENV = {
+  AI_TIMEOUT_QWEN_MS: process.env.AI_TIMEOUT_QWEN_MS || '25000',
+  AI_REPAIR_TIMEOUT_QWEN_MS: process.env.AI_REPAIR_TIMEOUT_QWEN_MS || '15000',
+  AI_TIMEOUT_FALLBACK_MS: process.env.AI_TIMEOUT_FALLBACK_MS || '15000',
+  AI_REPAIR_TIMEOUT_FALLBACK_MS: process.env.AI_REPAIR_TIMEOUT_FALLBACK_MS || '10000',
+  AI_OVERALL_TIMEOUT_MS: process.env.AI_OVERALL_TIMEOUT_MS || '60000',
+  AI_TIMEOUT_ACTION_QWEN_MS: process.env.AI_TIMEOUT_ACTION_QWEN_MS || '15000',
+  AI_REPAIR_TIMEOUT_ACTION_QWEN_MS: process.env.AI_REPAIR_TIMEOUT_ACTION_QWEN_MS || '10000',
+  AI_TIMEOUT_ACTION_FALLBACK_MS: process.env.AI_TIMEOUT_ACTION_FALLBACK_MS || '12000',
+  AI_NUM_PREDICT_ACTION: process.env.AI_NUM_PREDICT_ACTION || '180',
+  AI_NUM_PREDICT_ACTION_REPAIR: process.env.AI_NUM_PREDICT_ACTION_REPAIR || '240',
+  AI_TIMEOUT_RESCUE_MS: process.env.AI_TIMEOUT_RESCUE_MS || '10000',
+  AI_REPAIR_TIMEOUT_RESCUE_MS: process.env.AI_REPAIR_TIMEOUT_RESCUE_MS || '8000',
+  AI_TIMEOUT_RESCUE_FALLBACK_MS: process.env.AI_TIMEOUT_RESCUE_FALLBACK_MS || '8000',
+  AI_OVERALL_TIMEOUT_RESCUE_MS: process.env.AI_OVERALL_TIMEOUT_RESCUE_MS || '25000',
+  AI_TIMEOUT_SCAFFOLD_MS: process.env.AI_TIMEOUT_SCAFFOLD_MS || '12000',
+  AI_REPAIR_TIMEOUT_SCAFFOLD_MS: process.env.AI_REPAIR_TIMEOUT_SCAFFOLD_MS || '10000',
+  AI_TIMEOUT_SCAFFOLD_FALLBACK_MS: process.env.AI_TIMEOUT_SCAFFOLD_FALLBACK_MS || '12000',
+  AI_OVERALL_TIMEOUT_SCAFFOLD_MS: process.env.AI_OVERALL_TIMEOUT_SCAFFOLD_MS || '28000',
+  MIND_SMOKE_AI_WAIT_TIMEOUT_MS: process.env.MIND_SMOKE_AI_WAIT_TIMEOUT_MS || '210000',
+};
 
 async function runOnce(index: number) {
   const summaryPath = join(OUTPUT_DIR, `run-${index + 1}.json`);
+  const screenshotPath = join(OUTPUT_DIR, `run-${index + 1}-pass.png`);
+  const failureScreenshotPath = join(OUTPUT_DIR, `run-${index + 1}-failure.png`);
+  const serverLogPath = join(OUTPUT_DIR, `run-${index + 1}-server.log`);
+  const runPort = START_PORT + index;
 
   const exitCode = await new Promise<number>((resolve, reject) => {
     const child = spawn('npm', ['run', 'smoke:task-flow'], {
       cwd: process.cwd(),
       env: {
         ...process.env,
+        ...SMOKE_AI_ENV,
+        MIND_SMOKE_TASK_FLOW_PORT: String(runPort),
         MIND_SMOKE_TASK_FLOW_SUMMARY_PATH: summaryPath,
+        MIND_SMOKE_SCREENSHOT: screenshotPath,
+        MIND_SMOKE_FAILURE_SCREENSHOT: failureScreenshotPath,
+        MIND_SMOKE_TASK_FLOW_SERVER_LOG_PATH: serverLogPath,
       },
       stdio: ['ignore', 'inherit', 'inherit'],
     });
@@ -47,12 +88,34 @@ async function runOnce(index: number) {
     child.on('exit', (code) => resolve(code ?? 1));
   });
 
-  const contents = await readFile(summaryPath, 'utf8');
-  const report = JSON.parse(contents) as SmokeRunSummary;
+  let report: SmokeRunSummary;
+  try {
+    await access(summaryPath);
+    const contents = await readFile(summaryPath, 'utf8');
+    report = JSON.parse(contents) as SmokeRunSummary;
+  } catch {
+    report = {
+      smoke: 'task-flow',
+      result: 'failed',
+      stage: 'wrapper',
+      error:
+        exitCode === 124
+          ? 'task-flow browser smoke timed out before producing a summary'
+          : 'task-flow wrapper exited before producing a summary',
+    };
+  }
+
   return {
     run: index + 1,
     exitCode,
     report,
+    artifacts: {
+      summaryPath,
+      screenshotPath,
+      failureScreenshotPath,
+      serverLogPath,
+      runPort,
+    },
   };
 }
 
@@ -91,6 +154,20 @@ async function main() {
       rescuePassType: run.report.summary?.rescuePassType,
       rescueFailureField: run.report.summary?.rescueFailureField,
       rescueFailureDetail: run.report.summary?.rescueFailureDetail,
+      scaffoldResponseObserved: run.report.summary?.scaffoldResponseObserved ?? false,
+      scaffoldRetryResponseObserved: run.report.summary?.scaffoldRetryResponseObserved ?? false,
+      actionReadyMs: run.report.summary?.actionReadyMs,
+      scaffoldRefineMs: run.report.summary?.scaffoldRefineMs,
+      rescueMs: run.report.summary?.rescueMs,
+      scaffoldRetryMs: run.report.summary?.scaffoldRetryMs,
+      completionResetMs: run.report.summary?.completionResetMs,
+      reentryMs: run.report.summary?.reentryMs,
+      consoleErrors: run.report.summary?.consoleErrors ?? [],
+      pageErrors: run.report.summary?.pageErrors ?? [],
+      screenshot: run.artifacts.screenshotPath,
+      failureScreenshot: run.artifacts.failureScreenshotPath,
+      serverLog: run.artifacts.serverLogPath,
+      port: run.artifacts.runPort,
     })),
   };
 

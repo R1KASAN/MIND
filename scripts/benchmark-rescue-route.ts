@@ -61,6 +61,7 @@ type RescueSummary = {
   clientOkRate: number;
   retryAttemptRate: number;
   retrySuccessRate: number;
+  retryRecoveryRate: number;
   medianRouteLatencyMs: number;
   medianClientLatencyMs: number;
   routeFailureFields: Record<string, number>;
@@ -399,6 +400,10 @@ function summarize(setting: BenchmarkSetting, routeSamples: RescueRouteSample[],
     clientOkRate: toRate(clientSamples.filter((sample) => sample.ok).length, clientSamples.length),
     retryAttemptRate: toRate(clientSamples.filter((sample) => sample.retryAttempted).length, clientSamples.length),
     retrySuccessRate: toRate(clientSamples.filter((sample) => sample.retrySucceeded).length, clientSamples.length),
+    retryRecoveryRate: toRate(
+      clientSamples.filter((sample) => sample.retrySucceeded).length,
+      clientSamples.filter((sample) => sample.retryAttempted).length,
+    ),
     medianRouteLatencyMs: median(routeSamples.map((sample) => sample.latencyMs)),
     medianClientLatencyMs: median(clientSamples.map((sample) => sample.latencyMs)),
     routeFailureFields,
@@ -727,6 +732,7 @@ function printSummary(summary: RescueSummary) {
         clientOkRate: summary.clientOkRate,
         retryAttemptRate: summary.retryAttemptRate,
         retrySuccessRate: summary.retrySuccessRate,
+        retryRecoveryRate: summary.retryRecoveryRate,
         medianRouteLatencyMs: summary.medianRouteLatencyMs,
         medianClientLatencyMs: summary.medianClientLatencyMs,
         routeFailureFields: summary.routeFailureFields,
@@ -766,6 +772,7 @@ function compareSummaries(summaries: RescueSummary[]) {
     clientOkRate: summary.clientOkRate,
     retryAttemptRate: summary.retryAttemptRate,
     retrySuccessRate: summary.retrySuccessRate,
+    retryRecoveryRate: summary.retryRecoveryRate,
     medianRouteLatencyMs: summary.medianRouteLatencyMs,
     medianClientLatencyMs: summary.medianClientLatencyMs,
     routeFailureFields: summary.routeFailureFields,
@@ -773,7 +780,7 @@ function compareSummaries(summaries: RescueSummary[]) {
   }));
   const sorted = [...rows].sort((left, right) => right.score - left.score);
   const best = summaries.find((summary) => summary.setting.label === sorted[0]?.setting) ?? summaries[0];
-  const baseline = summaries.find((summary) => summary.setting.label === 'rescue-baseline-170') ?? summaries[0];
+  const baseline = summaries.find((summary) => summary.setting.label === 'rescue-balanced-repair-160') ?? summaries[0];
   const keepThisSetting =
     best.routeOkRate >= 0.5 &&
     best.retrySuccessRate >= 0.5 &&
@@ -793,6 +800,7 @@ function compareSummaries(summaries: RescueSummary[]) {
         routeOkRate: Number((best.routeOkRate - baseline.routeOkRate).toFixed(3)),
         route503Rate: Number((best.route503Rate - baseline.route503Rate).toFixed(3)),
         retrySuccessRate: Number((best.retrySuccessRate - baseline.retrySuccessRate).toFixed(3)),
+        retryRecoveryRate: Number((best.retryRecoveryRate - baseline.retryRecoveryRate).toFixed(3)),
         medianRouteLatencyMs: best.medianRouteLatencyMs - baseline.medianRouteLatencyMs,
       },
     },

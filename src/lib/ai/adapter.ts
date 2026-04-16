@@ -1,4 +1,9 @@
-import type { AiHealthResult, AiHealthStatus } from '@/lib/ai/ollama-runtime';
+import {
+  CANONICAL_LOCAL_PRIMARY_MODEL,
+  DEFAULT_AI_START_ACTION,
+  type AiHealthResult,
+  type AiHealthStatus,
+} from '@/lib/ai/ollama-runtime';
 
 // T043: Background health check adapter for local Ollama readiness
 // This is called from the app shell on load — non-blocking (fire-and-forget pattern)
@@ -17,11 +22,12 @@ export async function checkAiHealth(): Promise<HealthCheckResult> {
     if (!res.ok) {
       return {
         status: 'unavailable',
-        model: 'qwen2.5:3b',
+        model: CANONICAL_LOCAL_PRIMARY_MODEL,
+        modelTier: 'unknown',
         reason: 'Ollama ไม่พร้อมใช้งาน',
         detail: `Health check ตอบกลับด้วยสถานะ ${res.status}`,
         retryable: true,
-        actions: ['ollama serve'],
+        actions: [DEFAULT_AI_START_ACTION],
       };
     }
     const data = await res.json() as HealthCheckResult;
@@ -29,11 +35,12 @@ export async function checkAiHealth(): Promise<HealthCheckResult> {
   } catch {
     return {
       status: 'unavailable',
-      model: 'qwen2.5:3b',
+      model: CANONICAL_LOCAL_PRIMARY_MODEL,
+      modelTier: 'unknown',
       reason: 'Ollama ไม่พร้อมใช้งาน',
       detail: 'ไม่สามารถเชื่อมต่อ health endpoint ได้',
       retryable: true,
-      actions: ['ollama serve'],
+      actions: [DEFAULT_AI_START_ACTION],
     };
   }
 }
