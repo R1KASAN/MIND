@@ -25,6 +25,19 @@ test('buildStudioSnapshot prefers reentry summary and current action title', () 
       currentStepIndex: 0,
       currentActionId: 'action-1',
       rescueHistory: [],
+      lastStableSummary: 'สรุปเดิมที่ยังไม่ตอบลูกค้าต่อ',
+      lastSynthesis: {
+        workflow_type: 'client_resume',
+        requires_clarification: false,
+        situation_summary: 'สรุปเดิมจากรอบก่อน',
+        recommended_action: {
+          title: 'สรุปสถานะล่าสุด',
+          rationale: 'เริ่มตรงนี้ก่อน',
+          micro_steps: ['เปิดข้อความลูกค้า'],
+        },
+        alternative_actions: [],
+        detected_blockers: [],
+      },
       currentPlan: {
         actionTitle: 'สรุปสถานะล่าสุด',
         steps: [],
@@ -61,6 +74,39 @@ test('buildStudioSnapshot prefers reentry summary and current action title', () 
   assert.equal(snapshot?.summary.includes('สรุปสถานะล่าสุดก่อน'), true);
   assert.equal(snapshot?.fileCount, 1);
   assert.equal(snapshot?.blockers.length, 2);
+  assert.equal(snapshot?.provenance?.confidence, 'high');
+  assert.equal(snapshot?.provenance?.inputsUsed[0], 'reentry brief');
+  assert.equal(snapshot?.provenance?.inputsUsed.includes('แผนปัจจุบัน'), true);
+  assert.equal(snapshot?.provenance?.inputsUsed.includes('สรุปล่าสุด'), true);
+  assert.equal(snapshot?.provenance?.changesSince.some((item) => item.includes('stable summary')), true);
+  assert.equal(snapshot?.provenance?.changesSince.some((item) => item.includes('synthesis ล่าสุด')), true);
+  assert.equal(snapshot?.provenance?.whyThisNow.includes('reentry brief ล่าสุด'), true);
+});
+
+test('buildStudioSnapshot falls back to source text provenance when structured context is missing', () => {
+  const snapshot = buildStudioSnapshot(
+    {
+      id: 'task-2',
+      workflowType: 'client_resume',
+      sourceText: 'ลูกค้าขออัปเดตสั้น ๆ ก่อนประชุม',
+      sourceFiles: [],
+      extractedText: '',
+      createdAt: 10,
+      pendingInputs: [],
+      blockerSignals: [],
+      lifecycleState: 'dumped',
+      currentStepIndex: 0,
+      currentActionId: null,
+      rescueHistory: [],
+    },
+    null,
+    null,
+  );
+
+  assert.equal(snapshot?.provenance?.confidence, 'low');
+  assert.equal(snapshot?.provenance?.inputsUsed.includes('ข้อความต้นทาง'), true);
+  assert.equal(snapshot?.provenance?.changesSince[0], 'ยังไม่เห็นการเปลี่ยนจากรอบก่อน');
+  assert.equal(snapshot?.provenance?.whyThisNow.includes('ข้อความต้นทาง'), true);
 });
 
 test('getStudioIntents blocks advanced actions without current action context', () => {

@@ -5,11 +5,14 @@ import {
   DUMP_HERO_HEADING,
   DUMP_TEXTBOX_LABEL,
   EDIT_CONTEXT_CTA,
+  STUDIO_PROVENANCE_HEADING,
+  STUDIO_SNAPSHOT_TARGET_SELECTOR,
   seedStudioSession,
   STUDIO_BLOCKED_INTENT,
   STUDIO_BLOCKED_REASON,
   STUDIO_SNAPSHOT_HEADING,
   STUDIO_STATUS_INTENT,
+  waitForAnalyticsEventCount,
 } from './studio-smoke-shared';
 
 const BASE_URL = process.env.MIND_BASE_URL || 'http://127.0.0.1:3000';
@@ -67,23 +70,32 @@ async function run() {
     await studioToggle.click();
     const studioDrawer = page.locator('.mind-room-studio-wrap.is-open');
     await studioDrawer.waitFor({ state: 'visible', timeout: 30000 });
-    const mobileStudio = page.locator('.studio-mobile-intents');
+    const mobileStudio = page.locator('.studio-panel');
     await mobileStudio.waitFor({ state: 'visible', timeout: 30000 });
-    await page.locator('.studio-desktop-stack').waitFor({ state: 'hidden', timeout: 30000 });
+    const snapshotTargets = mobileStudio.locator(STUDIO_SNAPSHOT_TARGET_SELECTOR);
+    const snapshotTargetCount = await snapshotTargets.count();
+    if (snapshotTargetCount !== 1) {
+      throw new Error(`expected one studio snapshot target, received ${snapshotTargetCount}`);
+    }
+    await snapshotTargets.first().waitFor({ state: 'visible', timeout: 30000 });
     await mobileStudio.getByText(STUDIO_SNAPSHOT_HEADING).waitFor({ state: 'visible', timeout: 30000 });
-    await mobileStudio.getByText('สรุปสถานะล่าสุดของ landing page ลูกค้า').waitFor({ state: 'visible', timeout: 30000 });
-    await mobileStudio
-      .getByText('งานนี้ยังขยับได้ ถ้าเริ่มจากการสรุปสถานะล่าสุดก่อน แล้วค่อยตอบลูกค้ากลับจากบริบทเดิม')
-      .waitFor({ state: 'visible', timeout: 30000 });
+    await mobileStudio.getByText(STUDIO_PROVENANCE_HEADING).waitFor({ state: 'visible', timeout: 30000 });
+    await mobileStudio.getByText('มั่นใจสูง').waitFor({ state: 'visible', timeout: 30000 });
+    const provenanceSummary = mobileStudio.locator('.studio-provenance > summary');
+    await provenanceSummary.waitFor({ state: 'visible', timeout: 30000 });
+    await provenanceSummary.click();
+    await mobileStudio.locator('.studio-provenance-body').waitFor({ state: 'visible', timeout: 30000 });
+    await waitForAnalyticsEventCount(page, 'studio_snapshot_viewed', 1);
 
     console.log('[SMOKE] reviewing status on mobile');
     const statusButton = mobileStudio.getByRole('button', { name: STUDIO_STATUS_INTENT });
     await statusButton.waitFor({ state: 'visible', timeout: 30000 });
     await statusButton.click();
-    await mobileStudio.locator('.studio-card-emphasis').waitFor({ state: 'visible', timeout: 30000 });
+    await snapshotTargets.first().locator('.studio-card-emphasis').waitFor({ state: 'visible', timeout: 30000 });
+    await waitForAnalyticsEventCount(page, 'studio_snapshot_viewed', 1);
 
     console.log('[SMOKE] expanding mobile secondary intents');
-    const showMoreButton = mobileStudio.getByRole('button', { name: 'ดูตัวช่วยเพิ่ม' });
+    const showMoreButton = mobileStudio.getByRole('button', { name: 'ดูเพิ่ม' });
     await showMoreButton.waitFor({ state: 'visible', timeout: 30000 });
     await showMoreButton.click();
 

@@ -46,13 +46,12 @@ export function StudioPanel({
   onEditContext,
   mode = 'dump',
 }: Props) {
-  const [showAllMobileIntents, setShowAllMobileIntents] = useState(false);
-  const [showAllDesktopIntents, setShowAllDesktopIntents] = useState(false);
+  const [showAllIntents, setShowAllIntents] = useState(false);
   const [blockedMessage, setBlockedMessage] = useState<string | null>(null);
   const [snapshotEmphasized, setSnapshotEmphasized] = useState(false);
   const primaryIntents = intents.slice(0, 2);
   const extraIntents = intents.slice(2);
-  const snapshotRef = useRef<HTMLDivElement | null>(null);
+  const snapshotTargetRef = useRef<HTMLDivElement | null>(null);
   const copy = PANEL_COPY[mode];
 
   useEffect(() => {
@@ -72,7 +71,7 @@ export function StudioPanel({
     await onIntent(intent);
 
     if (intent.id === 'review_status' && snapshot) {
-      snapshotRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      snapshotTargetRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       setSnapshotEmphasized(true);
     }
   };
@@ -109,75 +108,44 @@ export function StudioPanel({
         </p>
       </div>
 
-      <div className="studio-mobile-intents">
-        {snapshot && (
-          <div ref={snapshotRef}>
+      <div className="studio-panel-grid">
+        <div className="studio-panel-snapshot" ref={snapshotTargetRef} data-studio-snapshot-target>
+          {snapshot ? (
             <ContextSnapshot
               snapshot={snapshot}
               surface="dump_studio"
               onEditContext={onEditContext}
               emphasized={snapshotEmphasized}
             />
-          </div>
-        )}
-        <div className="studio-mobile-chip-row">
-          {primaryIntents.map((intent) => renderIntentButton(intent))}
+          ) : (
+            <section className="studio-card" style={{ gap: '0.6rem' }}>
+              <p className="studio-eyebrow">บริบทที่ MIND ใช้อยู่</p>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', lineHeight: 1.6 }}>
+                ยังไม่มี snapshot ของงานนี้ เพราะ MIND ยังไม่มีข้อความหรือบริบทพอให้สรุป
+              </p>
+            </section>
+          )}
         </div>
-        {blockedMessage && <p className="studio-inline-note">{blockedMessage}</p>}
-        {extraIntents.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-            <button
-              type="button"
-              onClick={() => setShowAllMobileIntents((value) => !value)}
-              className="studio-more-button"
-            >
-              {showAllMobileIntents ? 'ซ่อนตัวช่วยเพิ่ม' : 'ดูตัวช่วยเพิ่ม'}
-            </button>
-            {showAllMobileIntents && (
-              <div className="studio-mobile-more">
-                {extraIntents.map((intent) => renderIntentButton(intent))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
 
-      <div className="studio-desktop-stack">
-        {snapshot ? (
-          <div ref={snapshotRef}>
-            <ContextSnapshot
-              snapshot={snapshot}
-              surface="dump_studio"
-              onEditContext={onEditContext}
-              emphasized={snapshotEmphasized}
-            />
+        <div className="studio-panel-intents">
+          <div className="studio-card studio-intent-rail" style={{ gap: '0.75rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center' }}>
+              <p className="studio-eyebrow">ทำอะไรต่อได้บ้าง</p>
+              {extraIntents.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllIntents((value) => !value)}
+                  className="studio-more-button"
+                >
+                  {showAllIntents ? 'ซ่อนเพิ่ม' : 'ดูเพิ่ม'}
+                </button>
+              )}
+            </div>
+            <div className="studio-intent-list">
+              {(showAllIntents ? intents : primaryIntents).map((intent) => renderIntentButton(intent))}
+            </div>
+            {blockedMessage && <p className="studio-inline-note">{blockedMessage}</p>}
           </div>
-        ) : (
-          <section className="studio-card" style={{ gap: '0.6rem' }}>
-            <p className="studio-eyebrow">บริบทที่ MIND ใช้อยู่</p>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', lineHeight: 1.6 }}>
-              ยังไม่มี snapshot ของงานนี้ เพราะ MIND ยังไม่มีข้อความหรือบริบทพอให้สรุป
-            </p>
-          </section>
-        )}
-
-        <div className="studio-card" style={{ gap: '0.75rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center' }}>
-            <p className="studio-eyebrow">ทำอะไรต่อได้บ้าง</p>
-            {extraIntents.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setShowAllDesktopIntents((value) => !value)}
-                className="studio-more-button"
-              >
-                {showAllDesktopIntents ? 'ซ่อนเพิ่ม' : 'ดูเพิ่ม'}
-              </button>
-            )}
-          </div>
-          <div className="studio-intent-list">
-            {(showAllDesktopIntents ? intents : primaryIntents).map((intent) => renderIntentButton(intent))}
-          </div>
-          {blockedMessage && <p className="studio-inline-note">{blockedMessage}</p>}
         </div>
       </div>
     </aside>

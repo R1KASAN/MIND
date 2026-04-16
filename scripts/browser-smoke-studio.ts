@@ -5,12 +5,15 @@ import {
   DUMP_HERO_HEADING,
   DUMP_TEXTBOX_LABEL,
   EDIT_CONTEXT_CTA,
+  STUDIO_PROVENANCE_HEADING,
+  STUDIO_SNAPSHOT_TARGET_SELECTOR,
   seedStudioSession,
   STUDIO_BLOCKED_INTENT,
   STUDIO_BLOCKED_REASON,
   STUDIO_PANEL_HEADING,
   STUDIO_SNAPSHOT_HEADING,
   STUDIO_STATUS_INTENT,
+  waitForAnalyticsEventCount,
 } from './studio-smoke-shared';
 
 const BASE_URL = process.env.MIND_BASE_URL || 'http://127.0.0.1:3000';
@@ -60,19 +63,25 @@ async function run() {
     await page.getByRole('heading', { name: DUMP_HERO_HEADING }).waitFor({ state: 'visible', timeout: 30000 });
     await page.getByLabel(DUMP_TEXTBOX_LABEL).waitFor({ state: 'visible', timeout: 30000 });
     await page.getByRole('heading', { name: STUDIO_PANEL_HEADING }).waitFor({ state: 'visible', timeout: 30000 });
-    const desktopStudio = page.locator('.studio-desktop-stack');
+    const desktopStudio = page.locator('.studio-panel');
     await desktopStudio.waitFor({ state: 'visible', timeout: 30000 });
+    const snapshotTargets = desktopStudio.locator(STUDIO_SNAPSHOT_TARGET_SELECTOR);
+    const snapshotTargetCount = await snapshotTargets.count();
+    if (snapshotTargetCount !== 1) {
+      throw new Error(`expected one studio snapshot target, received ${snapshotTargetCount}`);
+    }
+    await snapshotTargets.first().waitFor({ state: 'visible', timeout: 30000 });
     await desktopStudio.getByText(STUDIO_SNAPSHOT_HEADING).waitFor({ state: 'visible', timeout: 30000 });
-    await desktopStudio.getByText('สรุปสถานะล่าสุดของ landing page ลูกค้า').waitFor({ state: 'visible', timeout: 30000 });
-    await desktopStudio
-      .getByText('งานนี้ยังขยับได้ ถ้าเริ่มจากการสรุปสถานะล่าสุดก่อน แล้วค่อยตอบลูกค้ากลับจากบริบทเดิม')
-      .waitFor({ state: 'visible', timeout: 30000 });
+    await desktopStudio.getByText(STUDIO_PROVENANCE_HEADING).waitFor({ state: 'visible', timeout: 30000 });
+    await desktopStudio.getByText('มั่นใจสูง').waitFor({ state: 'visible', timeout: 30000 });
+    await waitForAnalyticsEventCount(page, 'studio_snapshot_viewed', 1);
 
     console.log('[SMOKE] reviewing status without live AI');
     const statusButton = desktopStudio.getByRole('button', { name: STUDIO_STATUS_INTENT });
     await statusButton.waitFor({ state: 'visible', timeout: 30000 });
     await statusButton.click();
-    await desktopStudio.locator('.studio-card-emphasis').waitFor({ state: 'visible', timeout: 30000 });
+    await snapshotTargets.first().locator('.studio-card-emphasis').waitFor({ state: 'visible', timeout: 30000 });
+    await waitForAnalyticsEventCount(page, 'studio_snapshot_viewed', 1);
 
     console.log('[SMOKE] checking blocked advanced intent copy');
     const showMoreButton = desktopStudio.getByRole('button', { name: 'ดูเพิ่ม' });
@@ -96,7 +105,7 @@ async function run() {
     console.log('[SMOKE] waiting for edit context CTA');
     await editContextButton.waitFor({ state: 'visible', timeout: 30000 });
     console.log('[SMOKE] clicking edit context CTA');
-    await editContextButton.click();
+    await editContextButton.click({ force: true });
     await page.getByRole('heading', { name: DUMP_HERO_HEADING }).waitFor({ state: 'visible', timeout: 30000 });
     const textarea = page.getByLabel(DUMP_TEXTBOX_LABEL);
     await textarea.waitFor({ state: 'visible', timeout: 30000 });

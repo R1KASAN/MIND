@@ -4,10 +4,53 @@ export const DUMP_HERO_HEADING = 'พิมพ์สภาพงานมาก�
 export const DUMP_TEXTBOX_LABEL = 'พิมพ์สภาพงานของคุณ';
 export const STUDIO_PANEL_HEADING = 'ใช้บริบทของงานนี้ต่อได้เลย โดยไม่ต้องพิมพ์ใหม่';
 export const STUDIO_SNAPSHOT_HEADING = 'บริบทที่ MIND ใช้อยู่';
+export const STUDIO_PROVENANCE_HEADING = 'ทำไม MIND ใช้ชุดนี้';
 export const STUDIO_STATUS_INTENT = 'กลับมาดูสถานะ';
 export const STUDIO_BLOCKED_INTENT = 'ย่อยงานให้เล็ก';
 export const STUDIO_BLOCKED_REASON = 'ต้องมีก้าวปัจจุบันก่อนถึงจะย่อยต่อได้';
 export const EDIT_CONTEXT_CTA = 'แก้บริบทนี้';
+export const STUDIO_SNAPSHOT_TARGET_SELECTOR = '[data-studio-snapshot-target]';
+
+export async function getAnalyticsEventCount(page: Page, eventName: string) {
+  return page.evaluate(async (targetEventName) => {
+    const openRequest = indexedDB.open('keyval-store');
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      openRequest.onsuccess = () => resolve(openRequest.result);
+      openRequest.onerror = () => reject(openRequest.error);
+    });
+
+    const tx = db.transaction('keyval', 'readonly');
+    const store = tx.objectStore('keyval');
+    const value = await new Promise<unknown>((resolve, reject) => {
+      const request = store.get('mind_analytics_events');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+
+    db.close();
+
+    if (!Array.isArray(value)) return 0;
+    return value.filter((event) => event && typeof event === 'object' && 'eventName' in event && (event as { eventName?: unknown }).eventName === targetEventName).length;
+  }, eventName);
+}
+
+export async function waitForAnalyticsEventCount(page: Page, eventName: string, expectedCount: number, timeoutMs = 5000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const count = await getAnalyticsEventCount(page, eventName);
+    if (count === expectedCount) return;
+    await page.waitForTimeout(100);
+  }
+
+  const count = await getAnalyticsEventCount(page, eventName);
+  throw new Error(`expected ${eventName} count to be ${expectedCount}, received ${count}`);
+}
 
 type StudioSmokeSession = {
   lastActive: number;

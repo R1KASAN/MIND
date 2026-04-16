@@ -16,6 +16,15 @@ export interface StudioIntent {
   blockedReason?: string;
 }
 
+export type StudioProvenanceConfidence = 'low' | 'medium' | 'high';
+
+export interface StudioProvenance {
+  inputsUsed: string[];
+  changesSince: string[];
+  whyThisNow: string;
+  confidence: StudioProvenanceConfidence;
+}
+
 export interface StudioSnapshot {
   title: string;
   summary: string;
@@ -24,6 +33,7 @@ export interface StudioSnapshot {
   fileCount: number;
   contextLabel: string;
   lastUpdatedLabel: string;
+  provenance?: StudioProvenance;
 }
 
 function truncateText(value: string, maxLength: number) {
@@ -35,6 +45,66 @@ function fallbackTaskTitle(task: TaskContext) {
   const sourceText = task.sourceText.trim();
   if (!sourceText) return 'งานนี้';
   return truncateText(sourceText.replace(/\s+/g, ' '), 72);
+}
+
+function normalizeCompactText(value?: string | null) {
+  const trimmed = value?.replace(/\s+/g, ' ').trim();
+  return trimmed || '';
+}
+
+function uniqueStrings(values: Array<string | null | undefined>) {
+  return [...new Set(values.filter((value): value is string => Boolean(value && value.trim())))];
+}
+
+function buildStudioProvenance(
+  task: TaskContext,
+  title: string,
+  summary: string,
+): StudioProvenance {
+  const inputsUsed = uniqueStrings([
+    task.reentryBrief?.summary ? 'reentry brief' : undefined,
+    task.currentPlan?.actionTitle ? 'แผนปัจจุบัน' : undefined,
+    task.lastSynthesis?.situation_summary ? 'สรุปล่าสุด' : undefined,
+    task.taskFrame?.objective ? 'เป้าหมายงาน' : undefined,
+    task.sourceFiles.length > 0 ? `${task.sourceFiles.length} ไฟล์` : undefined,
+    !task.reentryBrief?.summary && !task.lastSynthesis?.situation_summary ? 'ข้อความต้นทาง' : undefined,
+  ]);
+
+  const changedSince = uniqueStrings([
+    task.lastStableSummary && normalizeCompactText(task.lastStableSummary) !== normalizeCompactText(summary)
+      ? 'สรุปนี้ต่างจาก stable summary เดิม'
+      : undefined,
+    task.lastSynthesis?.situation_summary &&
+      normalizeCompactText(task.lastSynthesis.situation_summary) !== normalizeCompactText(summary)
+      ? 'สรุปนี้ต่างจาก synthesis ล่าสุด'
+      : undefined,
+    task.currentPlan?.actionTitle && normalizeCompactText(task.currentPlan.actionTitle) !== normalizeCompactText(title)
+      ? 'title นี้ต่างจากแผนปัจจุบัน'
+      : undefined,
+  ]);
+
+  const whyThisNow = task.reentryBrief?.summary
+    ? 'ใช้ reentry brief ล่าสุดเป็นฐาน เพราะเป็น save point ที่ใกล้การกลับเข้าห้องที่สุด'
+    : task.lastSynthesis?.situation_summary
+      ? 'ใช้สรุปล่าสุดเป็นฐาน เพราะยังไม่มี reentry brief'
+      : task.currentPlan?.actionTitle
+        ? 'ใช้แผนปัจจุบันเป็นฐาน เพราะมี next step ที่เริ่มต่อได้'
+        : task.taskFrame?.objective
+          ? 'ใช้เป้าหมายงานเป็นฐาน เพราะยังไม่มี summary ที่ชัดพอ'
+          : 'ยังไม่มี summary ชัดพอ จึงอิงข้อความต้นทาง';
+
+  const confidence: StudioProvenanceConfidence = task.reentryBrief?.summary
+    ? 'high'
+    : task.currentPlan?.actionTitle || task.lastSynthesis?.situation_summary || task.taskFrame?.objective || task.sourceFiles.length > 0
+      ? 'medium'
+      : 'low';
+
+  return {
+    inputsUsed,
+    changesSince: changedSince.length > 0 ? changedSince : ['ยังไม่เห็นการเปลี่ยนจากรอบก่อน'],
+    whyThisNow,
+    confidence,
+  };
 }
 
 export function formatRelativeTimestamp(timestamp?: number, now = Date.now()) {
@@ -99,6 +169,7 @@ export function buildStudioSnapshot(
     fileCount,
     contextLabel: fileCount > 0 ? `${fileCount} ไฟล์ + ข้อความเดิม` : 'ข้อความเดิมของงานนี้',
     lastUpdatedLabel: formatRelativeTimestamp(lastUpdatedAt),
+    provenance: buildStudioProvenance(task, title, summary),
   };
 }
 
