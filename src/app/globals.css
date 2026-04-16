@@ -430,15 +430,15 @@ textarea:focus, input:focus {
 }
 
 .mind-room-shell.rooms-collapsed {
-  grid-template-columns: 78px minmax(0, 1fr) minmax(300px, 352px);
+  grid-template-columns: 70px minmax(0, 1fr) minmax(300px, 352px);
 }
 
 .mind-room-shell.studio-collapsed {
-  grid-template-columns: minmax(268px, 304px) minmax(0, 1fr) 72px;
+  grid-template-columns: minmax(268px, 304px) minmax(0, 1fr) 64px;
 }
 
 .mind-room-shell.rooms-collapsed.studio-collapsed {
-  grid-template-columns: 78px minmax(0, 1fr) 72px;
+  grid-template-columns: 70px minmax(0, 1fr) 64px;
 }
 
 .mind-room-sidebar-wrap,
@@ -467,7 +467,9 @@ textarea:focus, input:focus {
 }
 
 .room-sidebar.is-collapsed .room-sidebar-header {
-  padding-inline: 0.7rem;
+  padding: 0;
+  background: transparent;
+  border: 0;
 }
 
 .room-sidebar-header,
@@ -495,6 +497,10 @@ textarea:focus, input:focus {
   display: flex;
   gap: 0.45rem;
   align-items: center;
+}
+
+.room-sidebar-header-actions.is-collapsed {
+  width: 100%;
 }
 
 .room-add-button {
@@ -726,6 +732,17 @@ textarea:focus, input:focus {
   padding: 0.85rem 0.55rem;
 }
 
+.room-sidebar.is-collapsed .room-sidebar-header-actions {
+  justify-content: center;
+}
+
+.room-sidebar.is-collapsed .room-add-button {
+  width: 100%;
+  min-width: 0;
+  padding-inline: 0;
+  border-radius: 18px;
+}
+
 .room-canvas-header {
   display: flex;
   flex-direction: column;
@@ -893,9 +910,27 @@ textarea:focus, input:focus {
 }
 
 .mind-room-studio-wrap.is-collapsed {
-  align-items: center;
+  align-items: stretch;
   justify-content: flex-start;
-  padding-inline: 0.45rem;
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
+.mind-room-studio-collapsed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+  padding-top: 0.15rem;
+}
+
+.studio-rail-handle {
+  width: 100%;
+  min-width: 0;
+  min-height: 3.1rem;
+  padding-inline: 0;
+  border-radius: 18px;
 }
 
 .mind-room-studio-header {

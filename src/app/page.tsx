@@ -1134,7 +1134,6 @@ export default function StateMachinePage() {
               onSelectRoom={handleSelectRoomFromShell}
               onCreateRoom={handleCreateRoom}
               collapsed={!isCompactViewport && isRoomSidebarCollapsed}
-              onToggleCollapse={isCompactViewport ? undefined : () => setIsRoomSidebarCollapsed((value) => !value)}
             />
           </div>
 
@@ -1186,35 +1185,50 @@ export default function StateMachinePage() {
           </div>
 
           <aside className={`mind-room-studio-wrap ${showMobileStudio ? 'is-open' : ''} ${isStudioCollapsed ? 'is-collapsed' : ''}`}>
-            <div className="mind-room-studio-header">
-              <div>
+            {isStudioCollapsed && !isCompactViewport ? (
+              <div className="mind-room-studio-collapsed">
                 <p className="studio-eyebrow">Studio</p>
-                <h2 className="mind-room-studio-title">ตัวช่วยของห้องนี้</h2>
+                <button
+                  type="button"
+                  className="shell-toggle-button studio-rail-handle"
+                  onClick={() => setIsStudioCollapsed(false)}
+                  aria-label="ขยายตัวช่วยของห้องนี้"
+                  title="ขยายตัวช่วยของห้องนี้"
+                >
+                  ←
+                </button>
               </div>
-              <button
-                type="button"
-                className="shell-toggle-button shell-toggle-button-subtle"
-                onClick={() => {
-                  if (isCompactViewport) {
-                    setShowMobileStudio(false);
-                    return;
-                  }
-                  setIsStudioCollapsed((value) => !value);
-                }}
-                aria-label={isCompactViewport ? 'ปิดตัวช่วย' : isStudioCollapsed ? 'ขยายตัวช่วย' : 'ย่อตัวช่วย'}
-              >
-                {isCompactViewport ? 'ปิด' : isStudioCollapsed ? '←' : '→'}
-              </button>
-            </div>
-            {!isStudioCollapsed && (
-              <StudioPanel
-                snapshot={studioSnapshot}
-                intents={studioIntents}
-                loadingIntentId={activeStudioIntent}
-                onIntent={handleStudioIntent}
-                onEditContext={studioSnapshot ? handleEditCurrentContext : undefined}
-                mode={studioMode}
-              />
+            ) : (
+              <>
+                <div className="mind-room-studio-header">
+                  <div>
+                    <p className="studio-eyebrow">Studio</p>
+                    <h2 className="mind-room-studio-title">ตัวช่วยของห้องนี้</h2>
+                  </div>
+                  <button
+                    type="button"
+                    className="shell-toggle-button shell-toggle-button-subtle"
+                    onClick={() => {
+                      if (isCompactViewport) {
+                        setShowMobileStudio(false);
+                        return;
+                      }
+                      setIsStudioCollapsed((value) => !value);
+                    }}
+                    aria-label={isCompactViewport ? 'ปิดตัวช่วย' : 'ย่อตัวช่วย'}
+                  >
+                    {isCompactViewport ? 'ปิด' : '→'}
+                  </button>
+                </div>
+                <StudioPanel
+                  snapshot={studioSnapshot}
+                  intents={studioIntents}
+                  loadingIntentId={activeStudioIntent}
+                  onIntent={handleStudioIntent}
+                  onEditContext={studioSnapshot ? handleEditCurrentContext : undefined}
+                  mode={studioMode}
+                />
+              </>
             )}
           </aside>
         </div>

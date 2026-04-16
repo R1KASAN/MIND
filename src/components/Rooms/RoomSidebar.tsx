@@ -8,7 +8,6 @@ interface Props {
   onSelectRoom: (roomId: string) => void | Promise<void>;
   onCreateRoom: () => void | Promise<void>;
   collapsed?: boolean;
-  onToggleCollapse?: () => void;
 }
 
 function scenarioLabel(room: RoomRecord) {
@@ -55,35 +54,26 @@ export function RoomSidebar({
   onSelectRoom,
   onCreateRoom,
   collapsed = false,
-  onToggleCollapse,
 }: Props) {
   return (
     <aside className={`room-sidebar ${collapsed ? 'is-collapsed' : ''}`}>
-      <div className="room-sidebar-header">
-        <div className="room-sidebar-header-copy">
-          <p className="studio-eyebrow">Rooms</p>
-          {!collapsed && <h2 style={{ fontSize: '1.02rem', lineHeight: 1.3 }}>ห้องงานลูกค้า</h2>}
-        </div>
-        <div className="room-sidebar-header-actions">
+      <div className={`room-sidebar-header ${collapsed ? 'is-collapsed' : ''}`}>
+        {!collapsed && (
+          <div className="room-sidebar-header-copy">
+            <p className="studio-eyebrow">Rooms</p>
+            <h2 style={{ fontSize: '1.02rem', lineHeight: 1.3 }}>ห้องงานลูกค้า</h2>
+          </div>
+        )}
+        <div className={`room-sidebar-header-actions ${collapsed ? 'is-collapsed' : ''}`}>
           <button
             type="button"
             className="room-add-button"
             onClick={() => void onCreateRoom()}
             aria-label="สร้างห้องใหม่"
+            title="สร้างห้องใหม่"
           >
             {collapsed ? '+' : 'ห้องใหม่'}
           </button>
-          {onToggleCollapse && (
-            <button
-              type="button"
-              className="room-sidebar-toggle"
-              onClick={() => void onToggleCollapse()}
-              aria-label={collapsed ? 'ขยายแถบห้องงาน' : 'ย่อแถบห้องงาน'}
-              title={collapsed ? 'ขยายแถบห้องงาน' : 'ย่อแถบห้องงาน'}
-            >
-              {collapsed ? '→' : '←'}
-            </button>
-          )}
         </div>
       </div>
 
