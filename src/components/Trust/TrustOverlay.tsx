@@ -72,7 +72,8 @@ export function TrustOverlay({ onClose, onDataDeleted }: Props) {
           <div style={{ padding: '1rem', background: 'var(--bg-secondary)', borderRadius: 'var(--radius)' }}>
             <p style={{ margin: '0 0 0.25rem', fontWeight: 600, fontSize: '0.9rem' }}>🤖 AI ในเครื่อง</p>
             <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-              MIND ใช้ <strong>Ollama</strong> ที่รันอยู่ในเครื่องคุณเอง หากต้องการเปิดการสรุปด้วย AI ให้รัน <code>ollama pull qwen2.5:3b</code>
+              MIND ใช้ <strong>Ollama</strong> ที่รันอยู่ในเครื่องคุณเอง ให้ติดตั้งโมเดลด้วย <code>npm run ollama:pull:gemma</code>,
+              เปิด AI ด้วย <code>npm run ollama:serve:cpu-safe</code>, แล้วเริ่มแอปด้วย <code>npm run dev</code>
             </p>
           </div>
 

@@ -1,6 +1,10 @@
+import { appendAnalyticsEvent } from '@/lib/analytics/local-analytics';
+
 export type EventName = 
   | 'app_launch'
   | 'dump_submitted'
+  | 'task_opened'
+  | 'first_action_selected'
   | 'synthesis_started'
   | 'synthesis_completed'
   | 'synthesis_failed'
@@ -12,9 +16,12 @@ export type EventName =
   | 'scaffold_started'
   | 'scaffold_completed'
   | 'rescue_triggered'
+  | 'rescue_resolved'
   | 'bounce_back_opened'
   | 'bounce_back_resumed'
   | 'reentry_suggestion_selected'
+  | 'reentry_started'
+  | 'reentry_understood'
   | 'studio_intent_clicked'
   | 'studio_intent_resolved'
   | 'studio_intent_blocked'
@@ -37,6 +44,7 @@ export type EventName =
   | 'retry_success'
   | 'retry_failed'
   | 'time_to_action_ms'
+  | 'task_completed'
   | 'data_exported'
   | 'data_deleted'
   | 'pinned_item_created'
@@ -53,13 +61,18 @@ export type EventName =
   | 'action_negotiated'
   | 'one_action_accepted_first_try'
   | 'one_action_viewed_alternative'
-  | 'one_action_adjustment_clicked';
+  | 'one_action_adjustment_clicked'
+  | 'metrics_dashboard_opened'
+  | 'value_pulse_shown'
+  | 'value_pulse_submitted'
+  | 'value_pulse_dismissed';
 
 export type EventProperties = Record<string, unknown>;
 
 export function trackEvent(name: EventName, properties?: EventProperties) {
   // In a real beta, this might hit PostHog or a similar lightweight endpoint
   console.log(`[EVENT] ${name}`, properties || {});
+  void appendAnalyticsEvent(name, properties);
 }
 
 // Hook wrapper for React components if needed

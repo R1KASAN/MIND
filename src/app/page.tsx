@@ -1,23 +1,35 @@
 "use client";
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
-  getActions, getSession, AppSession, saveSession,
-  Action, updateAction, createDefaultSession,
-  normalizeSession,
+  getActions, AppSession, saveSession,
+  Action, updateAction, createDefaultSession, type UIRoute,
+  getRoomWorkspace,
+  hydrateRoomSessionFromRecord,
+  type RoomRecord,
 } from '@/lib/store/idb';
 import { processWeeklySweep } from '@/lib/store/memoryRules';
 import { useTrackMountEvent, trackEvent } from '@/lib/instrumentation';
 import { AiSynthesisResponse } from '@/lib/ai/schema';
 import { checkAiHealth, HealthCheckResult } from '@/lib/ai/adapter';
+import { CANONICAL_LOCAL_PRIMARY_MODEL, DEFAULT_AI_START_ACTION } from '@/lib/ai/ollama-runtime';
 import { AiRescueResponse } from '@/lib/ai/operations';
 import type { AiOpsDebugEntry } from '@/lib/ai/ai-ops-debug';
 import {
   buildPayloadFromAction,
   hasResumableTask,
 } from '@/lib/orchestrator/task-machine';
+import {
+  loadBootstrapWorkspace,
+  migrateLegacyActiveDumpContext,
+  parseBootstrapFlags,
+  resolveBootstrapSession,
+  startAiHealthPolling,
+} from '@/lib/orchestrator/app-bootstrap';
 import { createTaskController } from '@/lib/orchestrator/task-controller';
 import type { ScaffoldRefineFeedback } from '@/lib/orchestrator/scaffold-refine';
+import { useRoomActions } from '@/lib/orchestrator/use-room-actions';
 import {
   buildStudioSnapshot,
   getStudioIntents,
@@ -25,6 +37,13 @@ import {
   type StudioIntent,
   type StudioIntentId,
 } from '@/lib/orchestrator/studio';
+import { PRIMARY_ICP } from '@/lib/business/monetization';
+import {
+  buildValuePulseContext,
+  deriveValuePulseMode,
+  hasSeenValuePulse,
+  type ValuePulseContext,
+} from '@/lib/value-pulse';
 
 import { BrainDumpInput } from '@/components/BrainDump/Input';
 import { ManualFallback } from '@/components/BrainDump/Fallback';
@@ -40,15 +59,84 @@ import { TrustOverlay } from '@/components/Trust/TrustOverlay';
 import { MorningRitual } from '@/components/Ritual/MorningRitual';
 import { WalkthroughOverlay } from '@/components/Walkthrough/WalkthroughOverlay';
 import { AiOpsDebugPanel } from '@/components/Debug/AiOpsDebugPanel';
+import { DemoObservationPanel } from '@/components/Debug/DemoObservationPanel';
 import { StudioPanel } from '@/components/Studio/StudioPanel';
+import { ValuePulse } from '@/components/ValuePulse/ValuePulse';
+import { RoomSidebar } from '@/components/Rooms/RoomSidebar';
+import { RoomCanvasHeader } from '@/components/Rooms/RoomCanvasHeader';
 
 const DEFAULT_AI_HEALTH: HealthCheckResult = {
   status: 'checking',
-  model: 'qwen2.5:3b',
+  model: CANONICAL_LOCAL_PRIMARY_MODEL,
+  modelTier: 'unknown',
   reason: 'กำลังโหลดโมเดล...',
   detail: 'กำลังตรวจสอบความพร้อมของ Ollama',
   retryable: true,
 };
+
+function formatModelLabel(model: string) {
+  const lower = model.toLowerCase();
+  if (lower.includes('gemma')) return 'Gemma';
+  if (lower.includes('qwen')) return 'Qwen';
+  if (lower.includes('llama')) return 'Emergency model';
+  return model;
+}
+
+function getHealthRailContent(health: HealthCheckResult) {
+  const modelLabel = formatModelLabel(health.model);
+
+  if (health.status === 'ready' && health.modelTier === 'fallback') {
+    return {
+      badge: 'ใช้โมเดลสำรอง',
+      headline: `${modelLabel} กำลังพยุง loop นี้อยู่`,
+      detail: 'AI ยังใช้งานได้ปกติ แม้โมเดลหลักจะยังไม่พร้อม',
+      tone: 'fallback' as const,
+    };
+  }
+
+  if (health.status === 'ready' && health.modelTier === 'emergency') {
+    return {
+      badge: 'Fallback mode',
+      headline: `${modelLabel} พร้อมใช้งาน`,
+      detail: 'ระบบยังไปต่อได้ แต่คุณภาพอาจต่ำกว่าโมเดลหลัก',
+      tone: 'fallback' as const,
+    };
+  }
+
+  if (health.status === 'ready') {
+    return {
+      badge: 'AI พร้อม',
+      headline: `${modelLabel} พร้อมแล้ว`,
+      detail: 'เปิดห้องแล้วให้ MIND สรุปและพาไปต่อได้ทันที',
+      tone: 'ready' as const,
+    };
+  }
+
+  if (health.status === 'checking') {
+    return {
+      badge: 'กำลังเตรียมโมเดล',
+      headline: `${modelLabel} กำลัง warm up`,
+      detail: health.detail ?? 'MIND จะใช้ cached save point ไปก่อนระหว่างรอ AI',
+      tone: 'checking' as const,
+    };
+  }
+
+  if (health.status === 'model_missing') {
+    return {
+      badge: 'ยังไม่พบโมเดล',
+      headline: 'ติดตั้งโมเดลก่อนเพื่อเปิด AI loop',
+      detail: health.actions?.[0] ?? `ollama pull ${CANONICAL_LOCAL_PRIMARY_MODEL}`,
+      tone: 'missing' as const,
+    };
+  }
+
+  return {
+    badge: 'AI ยังไม่พร้อม',
+    headline: `${modelLabel} ยังใช้งานไม่ได้`,
+    detail: health.actions?.[0] ?? health.detail ?? DEFAULT_AI_START_ACTION,
+    tone: 'unavailable' as const,
+  };
+}
 
 // T028/T029: Local-timezone "today" string for morning ritual day comparison
 function localDateString(): string {
@@ -59,9 +147,14 @@ function localDateString(): string {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function StateMachinePage() {
+  // NOTE: During first external demos, avoid changing route rendering structure or analytics wiring here.
+  // Keep edits scoped to UI clarity, extracted helpers, and narrow interaction fixes.
   useTrackMountEvent('app_launch');
+  const router = useRouter();
 
   const [session, setSession] = useState<AppSession | null>(null);
+  const [rooms, setRooms] = useState<RoomRecord[]>([]);
+  const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
   const sessionRef = useRef<AppSession | null>(null);
   const aiStatusRef = useRef<HealthCheckResult['status']>('checking');
   const [currentPayload, setCurrentPayload] = useState<AiSynthesisResponse | null>(null);
@@ -85,6 +178,8 @@ export default function StateMachinePage() {
   const [aiOpsEntries, setAiOpsEntries] = useState<AiOpsDebugEntry[]>([]);
   const [allowAiDebug, setAllowAiDebug] = useState(process.env.NODE_ENV !== 'production');
   const [showAiOpsDebug, setShowAiOpsDebug] = useState(false);
+  const [allowObservationCapture, setAllowObservationCapture] = useState(false);
+  const [showObservationCapture, setShowObservationCapture] = useState(false);
   const [activeStudioIntent, setActiveStudioIntent] = useState<StudioIntentId | null>(null);
 
   // T046: Background AI status — non-blocking passive indicator
@@ -95,6 +190,14 @@ export default function StateMachinePage() {
 
   // T032: Reset notice
   const [showResetBanner, setShowResetBanner] = useState(false);
+  const [presentationMode, setPresentationMode] = useState(false);
+  const [demoScenarioId, setDemoScenarioId] = useState<'client_project_restart' | 'sales_inquiry_demo_request'>('client_project_restart');
+  const [showSecondaryTools, setShowSecondaryTools] = useState(false);
+  const taskOpenedRef = useRef<string | null>(null);
+  const reentryUnderstoodRef = useRef<string | null>(null);
+  const previousUiRouteRef = useRef<UIRoute | null>(null);
+  const valuePulseAnchorRef = useRef<ValuePulseContext | null>(null);
+  const [activeValuePulseContext, setActiveValuePulseContext] = useState<ValuePulseContext | null>(null);
 
   // T017: Pin cap counter — hoisted before early return to respect hooks order
   const [pinnedCountLocal, setPinnedCountLocal] = useState<number>(0);
@@ -110,113 +213,138 @@ export default function StateMachinePage() {
   }, [session?.uiRoute, currentActionState?.isPinned]);
 
   useEffect(() => {
+    const updateAiHealth = (result: HealthCheckResult) => {
+      if (aiStatusRef.current !== result.status) {
+        if (result.status === 'ready') trackEvent('healthcheck_passed');
+        else if (result.status === 'unavailable') trackEvent('ollama_unavailable');
+        else if (result.status === 'model_missing') trackEvent('model_missing');
+      }
+      aiStatusRef.current = result.status;
+      setAiHealth(result);
+    };
+
+    const refreshAiStatus = async () => {
+      const result = await checkAiHealth();
+      updateAiHealth(result);
+    };
+
+    return startAiHealthPolling(refreshAiStatus);
+  }, []);
+
+  const refreshRooms = useCallback(async () => {
+    const workspace = await getRoomWorkspace();
+    setRooms(workspace.rooms);
+    setActiveRoomId(workspace.activeRoomId);
+    return workspace;
+  }, []);
+
+  const hydrateSessionState = useCallback(async (nextSession: AppSession) => {
+    const actions = await getActions();
+    const hydratedAction = nextSession.currentActionId
+      ? actions.find((action) => action.id === nextSession.currentActionId) || null
+      : null;
+
+    setSession(nextSession);
+    sessionRef.current = nextSession;
+    setCurrentActionState(hydratedAction);
+    setCurrentWhyThisNow(nextSession.task?.actionExplanation ?? '');
+    setCurrentRescueState(null);
+    setClarificationPrompt('');
+    setScaffoldRefineFeedback(null);
+    setIsRescueLoading(false);
+    setIsNegotiatingAction(false);
+    setIsReentryLoading(false);
+    setIsScaffoldRefining(false);
+
+    if (nextSession.currentPayload) {
+      setCurrentPayload(nextSession.currentPayload);
+    } else if (hydratedAction) {
+      setCurrentPayload(buildPayloadFromAction(hydratedAction));
+    } else {
+      setCurrentPayload(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
     async function load() {
-      const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
-      const skipWalkthrough = searchParams?.get('walkthrough') === 'off';
-      const skipMorningRitual = searchParams?.get('ritual') === 'off';
-      const enableAiDebug = searchParams?.get('debug') === 'ai';
-      setAllowAiDebug(process.env.NODE_ENV !== 'production' || enableAiDebug);
-      setShowAiOpsDebug(enableAiDebug);
-      const updateAiHealth = (result: HealthCheckResult) => {
-        // Emit readiness events only on transitions to avoid telemetry spam.
-        if (aiStatusRef.current !== result.status) {
-          if (result.status === 'ready') trackEvent('healthcheck_passed');
-          else if (result.status === 'unavailable') trackEvent('ollama_unavailable');
-          else if (result.status === 'model_missing') trackEvent('model_missing');
-        }
-        aiStatusRef.current = result.status;
-        setAiHealth(result);
-      };
+      const flags = parseBootstrapFlags(
+        typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null,
+      );
 
-      const refreshAiStatus = async () => {
-        const result = await checkAiHealth();
-        updateAiHealth(result);
-      };
-
-      // T043/T049: Non-blocking health check with lightweight background refresh.
-      void refreshAiStatus();
-      const healthInterval = setInterval(() => {
-        void refreshAiStatus();
-      }, 8000);
+      setPresentationMode(flags.isPresentationMode);
+      setDemoScenarioId(flags.scenarioId);
+      setAllowAiDebug(flags.allowAiDebug);
+      setShowAiOpsDebug(flags.showAiOpsDebug);
+      setAllowObservationCapture(flags.allowObservationCapture);
+      setShowObservationCapture(flags.showObservationCapture);
 
       await processWeeklySweep();
-      const stored = await getSession();
-      const actions = await getActions();
-      let nextSession = stored;
+      const { workspace, storedSession } = await loadBootstrapWorkspace({
+        isPresentationMode: flags.isPresentationMode,
+        scenarioId: flags.scenarioId,
+      });
+      if (cancelled) return;
 
-      // T019: Defensive client-side migration shim for older sessions.
-      if (typeof stored.activeDumpContext === 'string') {
-        nextSession = {
-          ...stored,
-          activeDumpContext: {
-            text: stored.activeDumpContext,
-            createdAt: stored.lastActive,
-          },
-        };
+      setRooms(workspace.rooms);
+      setActiveRoomId(workspace.activeRoomId);
+      let nextSession = storedSession;
+      const activeRoomSession = workspace.rooms.find((room) => room.id === workspace.activeRoomId)?.session;
+      if (activeRoomSession && activeRoomSession !== storedSession) {
+        await saveSession(storedSession);
+      }
+      const migratedSession = migrateLegacyActiveDumpContext(storedSession);
+      if (migratedSession) {
+        nextSession = migratedSession;
         await saveSession(nextSession);
       }
 
-      nextSession = normalizeSession(nextSession);
+      const resolvedBootstrap = resolveBootstrapSession(nextSession, {
+        skipWalkthrough: flags.skipWalkthrough,
+        skipMorningRitual: flags.skipMorningRitual,
+        today: localDateString(),
+      });
 
-      // T032: Weekly reset notice
-      if (nextSession.hasSeenResetNotice === false) {
-        setShowResetBanner(true);
-      }
-
-      // Allow QA and verification links to open the dump entry without the onboarding overlay.
-      if (!skipWalkthrough && nextSession.hasSeenWalkthrough !== true && nextSession.uiRoute === 'DUMP_ENTRY') {
-        setShowWalkthrough(true);
-      }
-
-      // T005: BOUNCE_BACK intercept
-      const isStale = Date.now() - nextSession.lastActive > 24 * 60 * 60 * 1000;
-      if (isStale && !['DUMP_ENTRY', 'MORNING_RITUAL'].includes(nextSession.uiRoute)) {
-        nextSession = normalizeSession({ ...nextSession, status: 'BOUNCE_BACK', uiRoute: 'BOUNCE_BACK' });
+      nextSession = resolvedBootstrap.session;
+      if (resolvedBootstrap.interceptRoute) {
         await saveSession(nextSession);
       }
+      if (cancelled) return;
 
-      // T028: Morning ritual intercept — only if not stale and first session of the day
-      const today = localDateString();
-      if (
-        !skipMorningRitual &&
-        !isStale &&
-        nextSession.uiRoute === 'DUMP_ENTRY' &&
-        nextSession.lastMorningShown !== today
-      ) {
-        nextSession = normalizeSession({ ...nextSession, status: 'MORNING_RITUAL', uiRoute: 'MORNING_RITUAL' });
-        await saveSession(nextSession);
-      }
+      setShowResetBanner(resolvedBootstrap.showResetBanner);
+      setShowWalkthrough(resolvedBootstrap.showWalkthrough);
 
-      setSession(nextSession);
-      sessionRef.current = nextSession;
-
-      const hydratedAction = nextSession.currentActionId
-        ? actions.find((a) => a.id === nextSession.currentActionId) || null
-        : null;
-      setCurrentActionState(hydratedAction);
-      setCurrentWhyThisNow(nextSession.task?.actionExplanation ?? '');
-
-      if (nextSession.currentPayload) {
-        setCurrentPayload(nextSession.currentPayload);
-      } else if (hydratedAction) {
-        setCurrentPayload(buildPayloadFromAction(hydratedAction));
-      } else {
-        setCurrentPayload(null);
-      }
-
-      return () => clearInterval(healthInterval);
+      await hydrateSessionState(nextSession);
+      if (cancelled) return;
+      await refreshRooms();
     }
-    const cleanupPromise = load();
+
+    void load();
+
     return () => {
-      void cleanupPromise.then((cleanup) => cleanup?.());
+      cancelled = true;
     };
-  }, []);
+  }, [hydrateSessionState, refreshRooms]);
 
   useEffect(() => {
     if (session?.task?.actionExplanation !== undefined) {
       setCurrentWhyThisNow(session.task.actionExplanation ?? '');
     }
   }, [session?.task?.actionExplanation]);
+
+  useEffect(() => {
+    if (session?.uiRoute !== 'DUMP_ENTRY') {
+      setShowSecondaryTools(false);
+    }
+  }, [session?.uiRoute]);
+
+  const persistSessionWithRooms = useCallback(async (nextSession: AppSession) => {
+    await saveSession(nextSession);
+    const workspace = await refreshRooms();
+    setRooms(workspace.rooms);
+    setActiveRoomId(workspace.activeRoomId);
+  }, [refreshRooms]);
 
   const controller = createTaskController({
     session,
@@ -244,6 +372,11 @@ export default function StateMachinePage() {
     recordAiOpsEntry: (entry) => {
       setAiOpsEntries((current) => [entry, ...current].slice(0, 12));
     },
+    persistSession: persistSessionWithRooms,
+    businessContext: {
+      scenarioId: demoScenarioId,
+      icpTag: PRIMARY_ICP.id,
+    },
   });
 
   useEffect(() => {
@@ -262,10 +395,145 @@ export default function StateMachinePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentActionState, isReentryLoading, session, session?.lastActive, session?.task?.id, session?.task?.reentryBrief?.createdAt, session?.uiRoute]);
 
+  useEffect(() => {
+    if (!session?.task) return;
+    if (!['DUMP_ENTRY', 'BOUNCE_BACK', 'MORNING_RITUAL'].includes(session.uiRoute)) return;
+    const openKey = `${session.uiRoute}:${session.task.id}:${session.task.createdAt}`;
+    if (taskOpenedRef.current === openKey) return;
+
+    taskOpenedRef.current = openKey;
+    trackEvent('task_opened', {
+      room_id: session.roomId,
+      room_title: session.roomTitle,
+      room_scenario_type: session.roomScenarioType,
+      task_id: session.task.id,
+      session_id: String(session.lastActive),
+      ui_route: session.uiRoute,
+      assistant_mode: session.task.assistantMode,
+      scenario_id: demoScenarioId,
+      icp_tag: PRIMARY_ICP.id,
+      source_context_count: session.task.sourceFiles.length + (session.task.sourceText.trim().length > 0 ? 1 : 0),
+    });
+  }, [demoScenarioId, session]);
+
+  useEffect(() => {
+    if (!session?.task?.reentryBrief) return;
+    if (!['BOUNCE_BACK', 'MORNING_RITUAL'].includes(session.uiRoute)) return;
+    const understoodKey = `${session.uiRoute}:${session.task.id}:${session.task.reentryBrief.createdAt}`;
+    if (reentryUnderstoodRef.current === understoodKey) return;
+
+    reentryUnderstoodRef.current = understoodKey;
+    trackEvent('reentry_understood', {
+      room_id: session.roomId,
+      room_title: session.roomTitle,
+      room_scenario_type: session.roomScenarioType,
+      task_id: session.task.id,
+      session_id: String(session.lastActive),
+      ui_route: session.uiRoute,
+      assistant_mode: session.task.assistantMode,
+      scenario_id: demoScenarioId,
+      icp_tag: PRIMARY_ICP.id,
+      source_context_count: session.task.sourceFiles.length + (session.task.sourceText.trim().length > 0 ? 1 : 0),
+      outcome_label: 'reentry_brief_visible',
+    });
+  }, [demoScenarioId, session]);
+
+  useEffect(() => {
+    if (!session?.task) return;
+    const mode = deriveValuePulseMode(session.uiRoute, session.task.workflowType, demoScenarioId);
+    valuePulseAnchorRef.current = buildValuePulseContext({
+      mode,
+      taskId: session.task.id,
+      roomId: session.roomId,
+      roomTitle: session.roomTitle,
+      roomScenarioType: session.roomScenarioType,
+      sessionId: String(session.lastActive),
+      scenarioId: demoScenarioId,
+      icpTag: PRIMARY_ICP.id,
+      route: session.uiRoute,
+    });
+  }, [demoScenarioId, session?.lastActive, session?.roomId, session?.roomScenarioType, session?.roomTitle, session?.task, session?.task?.id, session?.task?.workflowType, session?.uiRoute]);
+
+  useEffect(() => {
+    if (!session) return;
+    const previousRoute = previousUiRouteRef.current;
+    previousUiRouteRef.current = session.uiRoute;
+
+    if (!previousRoute) return;
+    if (presentationMode) return;
+
+    if (session.uiRoute !== 'DUMP_ENTRY' || previousRoute === 'DUMP_ENTRY') {
+      if (session.uiRoute !== 'DUMP_ENTRY') {
+        setActiveValuePulseContext(null);
+      }
+      return;
+    }
+
+    const anchor = valuePulseAnchorRef.current;
+    if (!anchor) return;
+    if (hasSeenValuePulse(anchor.id)) return;
+    setActiveValuePulseContext(anchor);
+  }, [presentationMode, session?.uiRoute, session]);
+
+  useEffect(() => {
+    if (session?.uiRoute === 'DUMP_ENTRY') return;
+    setActiveValuePulseContext(null);
+  }, [session?.uiRoute]);
+
+  const {
+    activeRoom,
+    roomCardCanContinue,
+    roomCardCanMakeSmaller,
+    handleCreateRoom,
+    handleSelectRoom,
+    handleContinueFromRoomCard,
+    handleMakeSmallerFromRoomCard,
+  } = useRoomActions({
+    rooms,
+    activeRoomId,
+    session,
+    currentPayload,
+    currentActionState,
+    demoScenarioId,
+    controller,
+    hydrateSessionState,
+    refreshRooms,
+    resetRoomInteractionState: () => {
+      taskOpenedRef.current = null;
+      reentryUnderstoodRef.current = null;
+      previousUiRouteRef.current = null;
+    },
+  });
+
+  useEffect(() => {
+    if (!session || !activeRoom) return;
+    if (isNegotiatingAction || isReentryLoading || isRescueLoading || isScaffoldRefining) return;
+
+    const recoveredSession = hydrateRoomSessionFromRecord(session, activeRoom);
+    if (recoveredSession === session) return;
+
+    void (async () => {
+      await hydrateSessionState(recoveredSession);
+      await persistSessionWithRooms(recoveredSession);
+    })();
+  }, [
+    activeRoom,
+    hydrateSessionState,
+    isNegotiatingAction,
+    isReentryLoading,
+    isRescueLoading,
+    isScaffoldRefining,
+    persistSessionWithRooms,
+    session,
+  ]);
+
   if (!session) return null;
 
   const studioSnapshot = buildStudioSnapshot(session.task, currentActionState, currentPayload);
   const studioIntents = getStudioIntents(session, currentActionState, currentPayload);
+  const routePrefersCanvasFirst = ['DUMP_ENTRY', 'BOUNCE_BACK', 'MORNING_RITUAL', 'ONE_ACTION'].includes(session.uiRoute);
+  const routeMaxWidth = session.uiRoute === 'DUMP_ENTRY' ? '64rem' : '50rem';
+  const routeUsesReducedChrome = ['BOUNCE_BACK', 'MORNING_RITUAL', 'ONE_ACTION'].includes(session.uiRoute);
 
   const handleEditCurrentContext = async () => {
     await controller.openDumpWithCurrentContext();
@@ -273,6 +541,8 @@ export default function StateMachinePage() {
 
   const handleStudioIntent = async (intent: StudioIntent) => {
     const baseProperties = {
+      roomId: session.roomId,
+      roomTitle: session.roomTitle,
       intent: intent.id,
       uiRoute: session.uiRoute,
       taskPresent: Boolean(session.task),
@@ -405,43 +675,76 @@ export default function StateMachinePage() {
       case 'DUMP_ENTRY':
         return (
           <>
-            {/* T032: Weekly reset dismissal banner */}
-            {showResetBanner && (
-              <div style={{
-                padding: '0.75rem 1rem', background: 'var(--bg-secondary)',
-                borderRadius: 'var(--radius)', marginBottom: '1rem',
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-              }}>
-                <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                  รายการก่อนหน้านี้ยังค้นหาเจอได้อย่างปลอดภัยในคลังเก็บ
-                </p>
-                <button
-                  onClick={async () => {
-                    setShowResetBanner(false);
-                    const updated = { ...session, hasSeenResetNotice: true };
-                    sessionRef.current = updated;
-                    setSession(updated);
-                    await saveSession(updated);
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <BrainDumpInput
+                onNext={controller.handleDump}
+                initialText={session.activeDumpContext?.text}
+                presentationMode={presentationMode}
+                defaultScenarioId={demoScenarioId}
+              />
+              {showResetBanner && (
+                <div
+                  style={{
+                    padding: '0.75rem 0.95rem',
+                    borderRadius: 'calc(var(--radius) + 2px)',
+                    background: 'rgba(255,255,255,0.03)',
+                    border: '1px solid rgba(255,255,255,0.06)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: '0.75rem',
                   }}
-                  style={{ background: 'transparent', fontSize: '0.8rem', padding: '0.2rem 0.4rem' }}
                 >
-                  ✕
-                </button>
-              </div>
-            )}
-            <BrainDumpInput
-              onNext={controller.handleDump}
-              initialText={session.activeDumpContext?.text}
-              studioPanel={(
-                <StudioPanel
-                  snapshot={studioSnapshot}
-                  intents={studioIntents}
-                  loadingIntentId={activeStudioIntent}
-                  onIntent={handleStudioIntent}
-                  onEditContext={studioSnapshot ? handleEditCurrentContext : undefined}
-                />
+                  <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                    รายการก่อนหน้านี้ยังอยู่ในคลังเก็บ เปิดดูเมื่อจำเป็นได้
+                  </p>
+                  <button
+                    onClick={async () => {
+                      setShowResetBanner(false);
+                      const updated = { ...session, hasSeenResetNotice: true };
+                      sessionRef.current = updated;
+                      setSession(updated);
+                      await persistSessionWithRooms(updated);
+                    }}
+                    style={{ background: 'transparent', fontSize: '0.8rem', padding: '0.2rem 0.4rem', color: 'var(--text-secondary)' }}
+                  >
+                    ซ่อน
+                  </button>
+                </div>
               )}
-            />
+              <details
+                style={{
+                  width: '100%',
+                  padding: '0.95rem 1rem',
+                  borderRadius: 'calc(var(--radius) + 4px)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  background: 'rgba(255,255,255,0.03)',
+                }}
+              >
+                <summary
+                  style={{
+                    cursor: 'pointer',
+                    color: 'var(--text-secondary)',
+                    fontSize: '0.92rem',
+                    fontWeight: 600,
+                  }}
+                >
+                  ดูบริบทและตัวช่วยเพิ่มเติม
+                </summary>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', marginTop: '0.9rem' }}>
+                  <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.9rem', lineHeight: 1.6 }}>
+                    เปิดส่วนนี้เมื่อต้องการดูสถานะล่าสุด หา next move จากบริบทเดิม หรือใช้ตัวช่วยรองเพิ่มเติม
+                  </p>
+                  <StudioPanel
+                    snapshot={studioSnapshot}
+                    intents={studioIntents}
+                    loadingIntentId={activeStudioIntent}
+                    onIntent={handleStudioIntent}
+                    onEditContext={studioSnapshot ? handleEditCurrentContext : undefined}
+                  />
+                </div>
+              </details>
+            </div>
           </>
         );
 
@@ -484,12 +787,20 @@ export default function StateMachinePage() {
         return (
           <Scaffold
             action={currentPayload.recommended_action}
+            steps={session.task?.currentPlan?.steps ?? currentPayload.recommended_action.micro_steps.map((step, index) => ({
+              id: `step-${index + 1}`,
+              text: step,
+            }))}
             currentStepIndex={session.task?.currentStepIndex ?? 0}
+            isCompletion={session.task?.assistantMode === 'scaffold_completion'}
+            successSignal={session.task?.currentPlan?.successSignal}
             refineLoading={isScaffoldRefining}
             refineFeedback={scaffoldRefineFeedback}
             onRescue={controller.handleEnterRescue}
             onMakeSmaller={controller.handleMakeSmaller}
             onComplete={controller.handleCompleteScaffold}
+            onBackToSteps={controller.handleReturnToScaffoldSteps}
+            onStartNew={controller.handleStartNewFromCompletedScaffold}
           />
         );
 
@@ -524,7 +835,7 @@ export default function StateMachinePage() {
 
   // ── Pin button state (T017) ──────────────────────────────────────────────
 
-  const aiStatus = aiHealth.status;
+  const healthRail = getHealthRailContent(aiHealth);
   const showPinButton = ['ONE_ACTION', 'SCAFFOLD'].includes(session.uiRoute) && !!currentActionState;
   const isPinned = currentActionState?.isPinned ?? false;
   const pinDisabled = !isPinned && pinnedCountLocal >= 3;
@@ -541,9 +852,12 @@ export default function StateMachinePage() {
           onClose={() => setShowTrust(false)}
           onDataDeleted={async () => {
             setShowTrust(false);
-            const reset = createDefaultSession();
+            const workspace = await getRoomWorkspace();
+            const reset = workspace.rooms.find((room) => room.id === workspace.activeRoomId)?.session ?? createDefaultSession();
             sessionRef.current = reset;
             setSession(reset);
+            setRooms(workspace.rooms);
+            setActiveRoomId(workspace.activeRoomId);
             setCurrentPayload(null);
             setCurrentActionState(null);
             setClarificationPrompt('');
@@ -560,20 +874,21 @@ export default function StateMachinePage() {
       )}
       {showWalkthrough && session && (
         <WalkthroughOverlay
+          autoPlay={presentationMode}
           onClose={async () => {
             setShowWalkthrough(false);
             const base = sessionRef.current ?? session;
             const updated = { ...base, hasSeenWalkthrough: true };
             sessionRef.current = updated;
             setSession(updated);
-            await saveSession(updated);
+            await persistSessionWithRooms(updated);
           }}
           onFinish={async () => {
             const base = sessionRef.current ?? session;
             const updated = { ...base, hasSeenWalkthrough: true };
             sessionRef.current = updated;
             setSession(updated);
-            await saveSession(updated);
+            await persistSessionWithRooms(updated);
           }}
         />
       )}
@@ -582,81 +897,160 @@ export default function StateMachinePage() {
         {/* Header */}
         <div style={{
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          paddingBottom: '1rem', borderBottom: '1px solid var(--bg-secondary)'
+          paddingBottom: routeUsesReducedChrome ? '0.7rem' : '1rem',
+          borderBottom: routeUsesReducedChrome ? '1px solid rgba(255,255,255,0.06)' : '1px solid var(--bg-secondary)'
         }}>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            {/* T047: Passive AI status indicator — non-clickable, awareness only */}
-            <span
-              title={`สถานะ AI ในเครื่อง: ${
-                aiStatus === 'ready'
-                  ? 'พร้อม'
-                  : aiStatus === 'checking'
-                    ? 'กำลังตรวจสอบ'
-                    : aiStatus === 'model_missing'
-                      ? 'ยังไม่พบโมเดล'
-                      : 'ยังไม่พร้อม'
-              }`}
-              style={{
-                width: '8px', height: '8px', borderRadius: '50%', display: 'inline-block',
-                background:
-                  aiStatus === 'ready' ? 'var(--success, #22c55e)' :
-                  aiStatus === 'checking' ? 'var(--text-secondary)' :
-                  '#f59e0b',
-                flexShrink: 0,
-              }}
-              aria-hidden="true"
-            />
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-              {aiStatus === 'ready' ? 'AI ในเครื่องพร้อมแล้ว' :
-               aiStatus === 'checking' ? 'กำลังเตรียม AI ในเครื่อง…' :
-               aiStatus === 'model_missing' ? 'ยังไม่พบโมเดล' : 'AI ในเครื่องยังไม่พร้อม'}
-            </span>
+          <div className={`app-health-rail app-health-rail-${healthRail.tone}`}>
+            <span className="app-health-dot" aria-hidden="true" />
+            <div className="app-health-copy">
+              <div className="app-health-row">
+                <span className="app-health-badge">{healthRail.badge}</span>
+                <span className="app-health-headline">{healthRail.headline}</span>
+              </div>
+              {!routeUsesReducedChrome && <p className="app-health-detail">{healthRail.detail}</p>}
+            </div>
           </div>
 
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            {allowAiDebug && (
-              <button
-                onClick={() => setShowAiOpsDebug((value) => !value)}
-                style={{
-                  background: 'transparent',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  color: 'var(--text-secondary)',
-                  padding: '0.55rem 0.9rem',
-                  fontSize: '0.85rem',
-                }}
-              >
-                AI Ops
-              </button>
+            {session.uiRoute === 'DUMP_ENTRY' ? (
+              <>
+                <button
+                  onClick={() => setShowSecondaryTools((value) => !value)}
+                  style={{
+                    background: 'transparent',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    color: 'var(--text-secondary)',
+                    padding: '0.55rem 0.9rem',
+                    fontSize: '0.85rem',
+                  }}
+                >
+                  {showSecondaryTools ? 'ซ่อนเมนูรอง' : 'เมนูรอง'}
+                </button>
+                {showSecondaryTools && (
+                  <>
+                    <button
+                      onClick={() => setShowWalkthrough(true)}
+                      style={{ background: 'transparent' }}
+                    >
+                      ดูเดโม 30 วินาที
+                    </button>
+                    <button
+                      onClick={() => router.push('/pmf-guide')}
+                      style={{ background: 'transparent' }}
+                    >
+                      PMF guide
+                    </button>
+                    <button
+                      onClick={() => router.push('/business')}
+                      style={{ background: 'transparent' }}
+                    >
+                      Business gates
+                    </button>
+                    <button onClick={() => setShowArchive(true)} style={{ background: 'transparent' }}>คลังเก็บ</button>
+                    <button onClick={() => setShowOverview(true)} style={{ background: 'transparent' }}>ภาพรวม</button>
+                    <button onClick={() => setShowTrust(true)} style={{ background: 'transparent' }}>ความไว้ใจ</button>
+                    {allowAiDebug && (
+                      <button onClick={() => setShowAiOpsDebug((value) => !value)} style={{ background: 'transparent' }}>
+                        AI Ops
+                      </button>
+                    )}
+                  </>
+                )}
+              </>
+            ) : routeUsesReducedChrome ? (
+              <>
+                <button
+                  onClick={() => setShowSecondaryTools((value) => !value)}
+                  style={{
+                    background: 'transparent',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    color: 'var(--text-secondary)',
+                    padding: '0.55rem 0.9rem',
+                    fontSize: '0.85rem',
+                  }}
+                >
+                  {showSecondaryTools ? 'ซ่อนเมนูรอง' : 'เมนูรอง'}
+                </button>
+                {showSecondaryTools && (
+                  <>
+                    <button
+                      onClick={() => setShowWalkthrough(true)}
+                      style={{ background: 'transparent' }}
+                    >
+                      วิธีใช้
+                    </button>
+                    {showPinButton && (
+                      <button
+                        onClick={togglePin}
+                        disabled={pinDisabled}
+                        title={pinDisabled ? 'ปักหมุดได้สูงสุด 3 รายการ' : isPinned ? 'เอาหมุดออก' : 'ปักหมุดก้าวนี้'}
+                        style={{
+                          background: 'transparent',
+                          opacity: pinDisabled ? 0.4 : 1,
+                          cursor: pinDisabled ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        {isPinned ? '📌 เอาหมุดออก' : '📍 ปักหมุด'}
+                      </button>
+                    )}
+                    <button onClick={() => setShowArchive(true)} style={{ background: 'transparent' }}>คลังเก็บ</button>
+                    <button onClick={() => setShowOverview(true)} style={{ background: 'transparent' }}>ภาพรวม</button>
+                    <button onClick={() => setShowTrust(true)} style={{ background: 'transparent' }}>ความไว้ใจ</button>
+                    {allowAiDebug && (
+                      <button onClick={() => setShowAiOpsDebug((value) => !value)} style={{ background: 'transparent' }}>
+                        AI Ops
+                      </button>
+                    )}
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                {allowAiDebug && (
+                  <button
+                    onClick={() => setShowAiOpsDebug((value) => !value)}
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      color: 'var(--text-secondary)',
+                      padding: '0.55rem 0.9rem',
+                      fontSize: '0.85rem',
+                    }}
+                  >
+                    AI Ops
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowWalkthrough(true)}
+                  style={{
+                    background: 'transparent',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    color: 'var(--text-secondary)',
+                    padding: '0.55rem 0.9rem',
+                    fontSize: '0.85rem',
+                  }}
+                >
+                  วิธีใช้
+                </button>
+                {showPinButton && (
+                  <button
+                    onClick={togglePin}
+                    disabled={pinDisabled}
+                    title={pinDisabled ? 'ปักหมุดได้สูงสุด 3 รายการ' : isPinned ? 'เอาหมุดออก' : 'ปักหมุดก้าวนี้'}
+                    style={{
+                      background: 'transparent',
+                      opacity: pinDisabled ? 0.4 : 1,
+                      cursor: pinDisabled ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    {isPinned ? '📌 เอาหมุดออก' : '📍 ปักหมุด'}
+                  </button>
+                )}
+                <button onClick={() => setShowArchive(true)} style={{ background: 'transparent' }}>🔍</button>
+                <button onClick={() => setShowOverview(true)} style={{ background: 'transparent' }}>☰</button>
+                <button onClick={() => setShowTrust(true)} style={{ background: 'transparent' }}>🔒</button>
+              </>
             )}
-            <button
-              onClick={() => setShowWalkthrough(true)}
-              style={{
-                background: 'transparent',
-                border: '1px solid rgba(255,255,255,0.08)',
-                color: 'var(--text-secondary)',
-                padding: '0.55rem 0.9rem',
-                fontSize: '0.85rem',
-              }}
-            >
-              วิธีใช้
-            </button>
-            {showPinButton && (
-              <button
-                onClick={togglePin}
-                disabled={pinDisabled}
-                title={pinDisabled ? 'ปักหมุดได้สูงสุด 3 รายการ' : isPinned ? 'เอาหมุดออก' : 'ปักหมุดก้าวนี้'}
-                style={{
-                  background: 'transparent',
-                  opacity: pinDisabled ? 0.4 : 1,
-                  cursor: pinDisabled ? 'not-allowed' : 'pointer',
-                }}
-              >
-                {isPinned ? '📌 เอาหมุดออก' : '📍 ปักหมุด'}
-              </button>
-            )}
-            <button onClick={() => setShowArchive(true)} style={{ background: 'transparent' }}>🔍</button>
-            <button onClick={() => setShowOverview(true)} style={{ background: 'transparent' }}>☰</button>
-            <button onClick={() => setShowTrust(true)} style={{ background: 'transparent' }}>🔒</button>
           </div>
         </div>
 
@@ -670,21 +1064,80 @@ export default function StateMachinePage() {
           </p>
         )}
 
-        <div
-          style={{
-            width: '100%',
-            maxWidth: session.uiRoute === 'DUMP_ENTRY' ? '100%' : '46rem',
-            margin: '0 auto',
-          }}
-        >
-          {renderState()}
+        <div className="mind-room-shell">
+          <RoomSidebar
+            rooms={rooms}
+            activeRoomId={activeRoomId}
+            onSelectRoom={handleSelectRoom}
+            onCreateRoom={handleCreateRoom}
+          />
+
+          <div className="mind-room-main">
+            {routePrefersCanvasFirst ? (
+              <>
+                <div
+                  style={{
+                    width: '100%',
+                    maxWidth: routeMaxWidth,
+                  }}
+                >
+                  {renderState()}
+                </div>
+                <div
+                  style={{
+                    width: '100%',
+                    maxWidth: routeMaxWidth,
+                  }}
+                >
+                  <RoomCanvasHeader
+                    room={activeRoom}
+                    onContinue={handleContinueFromRoomCard}
+                    onMakeSmaller={handleMakeSmallerFromRoomCard}
+                    continueDisabled={!roomCardCanContinue}
+                    makeSmallerDisabled={!roomCardCanMakeSmaller}
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <RoomCanvasHeader
+                  room={activeRoom}
+                  onContinue={handleContinueFromRoomCard}
+                  onMakeSmaller={handleMakeSmallerFromRoomCard}
+                  continueDisabled={!roomCardCanContinue}
+                  makeSmallerDisabled={!roomCardCanMakeSmaller}
+                />
+                <div
+                  style={{
+                    width: '100%',
+                    maxWidth: routeMaxWidth,
+                  }}
+                >
+                  {renderState()}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
+      {activeValuePulseContext && !presentationMode && !showArchive && !showOverview && !showTrust && !showWalkthrough && !showAiOpsDebug && !showObservationCapture && (
+        <ValuePulse
+          context={activeValuePulseContext}
+          onClose={() => setActiveValuePulseContext(null)}
+        />
+      )}
       {allowAiDebug && (
         <AiOpsDebugPanel
           entries={aiOpsEntries}
           open={showAiOpsDebug}
           onToggle={() => setShowAiOpsDebug((value) => !value)}
+        />
+      )}
+      {allowObservationCapture && (
+        <DemoObservationPanel
+          currentRoute={session?.uiRoute}
+          open={showObservationCapture}
+          onToggle={() => setShowObservationCapture((value) => !value)}
         />
       )}
     </>

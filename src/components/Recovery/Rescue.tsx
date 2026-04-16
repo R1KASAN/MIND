@@ -1,6 +1,5 @@
 "use client";
 
-import { useTrackMountEvent } from '@/lib/instrumentation';
 import type { AiRescueResponse } from '@/lib/ai/operations';
 import {
   SCAFFOLD_REFINE_LOADING_COPY,
@@ -25,8 +24,6 @@ export function Rescue({
   onMakeSmaller,
   onWalkAway,
 }: Props) {
-  useTrackMountEvent('rescue_triggered');
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', paddingTop: '2rem' }}>
       <h2>ชะงักได้ ไม่เป็นไร</h2>
@@ -45,7 +42,7 @@ export function Rescue({
         </div>
       )}
 
-      {!loading && rescueState && (
+      {rescueState && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
           <div style={{
             padding: '1rem',

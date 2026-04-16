@@ -30,8 +30,6 @@ export function OneAction({
   onNegotiate,
 }: Props) {
   useTrackMountEvent('action_shown');
-  const [summaryExpanded, setSummaryExpanded] = useState(false);
-  const [showWhyThisNow, setShowWhyThisNow] = useState(false);
   const [showTunePanel, setShowTunePanel] = useState(false);
   const [replyDraftValue, setReplyDraftValue] = useState(action?.replyDraft || data.reply_draft || '');
   const replyDraftRef = useRef<HTMLTextAreaElement | null>(null);
@@ -47,25 +45,19 @@ export function OneAction({
   const hasConstraintSelection = typeof selectedTimeBudget === 'number' || typeof selectedEnergy === 'string';
   const primaryActionLabel = 'ใช้ก้าวนี้ แล้วแตกเป็นขั้นตอน';
   const secondaryActionLabel = 'ลองอีกทางจากข้อความเดิม';
-  const nextStepHelper =
-    'ถ้าอันนี้ใกล้ที่สุด กดปุ่มสีม่วงได้เลย MIND จะพาไปแตกเป็นขั้นตอนเล็ก ๆ ต่อทันที';
+  const heroReason =
+    whyThisNow
+    || situationSummary
+    || (data.task_shape?.deliverableType === 'proposal'
+      ? 'ก้าวนี้ช่วยล็อก requirement กับ scope ก่อน แล้วค่อยแตกเป็นขั้นตอนเล็ก ๆ ต่อได้'
+      : data.task_shape?.deliverableType === 'reply' && data.task_shape?.immediateNeed === 'send_reply_now' && data.task_shape?.workContext.includes('นัด demo')
+        ? 'ก้าวนี้พาไปตอบลูกค้าและจัดลำดับคุย demo/pilot ก่อน เพื่อให้งานกลับเข้าร่องเร็วที่สุด'
+        : 'ก้าวนี้ใกล้การลงมือที่สุด และแตกเป็นขั้นตอนเล็ก ๆ ต่อได้ทันที');
   const [showReplyDraft, setShowReplyDraft] = useState(false);
-
-  useEffect(() => {
-    setSummaryExpanded(false);
-    const timeoutId = window.setTimeout(() => {
-      setSummaryExpanded(true);
-    }, 2000);
-    return () => window.clearTimeout(timeoutId);
-  }, [situationSummary, data.recommended_action.title]);
 
   useEffect(() => {
     setReplyDraftValue(replyDraft);
   }, [replyDraft]);
-
-  useEffect(() => {
-    setShowWhyThisNow(false);
-  }, [whyThisNow, data.recommended_action.title]);
 
   useEffect(() => {
     setShowTunePanel(false);
@@ -107,22 +99,19 @@ export function OneAction({
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '1.25rem', paddingTop: '3.5rem', alignItems: 'center', textAlign: 'center' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '1rem', paddingTop: '1rem', alignItems: 'center', textAlign: 'center' }}>
       {data.requires_clarification && (
         <div style={{ padding: '1rem', background: 'var(--accent)', borderRadius: 'var(--radius)', width: '100%' }}>
           <strong>ขอข้อมูลเพิ่ม:</strong> {data.clarification_nudge}
         </div>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', alignItems: 'center', maxWidth: '38rem' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', alignItems: 'center', maxWidth: '38rem' }}>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', letterSpacing: '0.14em', textTransform: 'uppercase' }}>
-          หลังจากอ่านข้อความก้อนนี้
+          ก้าวต่อไป
         </p>
         <p style={{ color: 'var(--text-primary)', fontSize: '1.1rem', fontWeight: 600 }}>
-          MIND คิดว่าควรเริ่มจากตรงนี้ก่อน
-        </p>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>
-          {nextStepHelper}
+          เริ่มจากตรงนี้ก่อน
         </p>
       </div>
       {/* HIERARCHY RULE: action card must always render first — do not reorder */}
@@ -134,231 +123,228 @@ export function OneAction({
         <p className="action-hero-rationale">{data.recommended_action.rationale}</p>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', width: '100%' }}>
+      <section className="supporting-panel expanded" style={{ width: '100%', maxWidth: '42rem', textAlign: 'left', padding: '0.95rem 1rem' }}>
+        <p className="supporting-label" style={{ marginBottom: '0.35rem' }}>ทำไมก้าวนี้มาก่อน</p>
+        <p className="supporting-summary" style={{ margin: 0, lineHeight: 1.6 }}>{heroReason}</p>
+      </section>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.7rem', width: '100%', maxWidth: '42rem' }}>
         <button className="primary" onClick={onAccept}>{primaryActionLabel}</button>
-        <button onClick={handleReject}>{secondaryActionLabel}</button>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.84rem' }}>
-          ยังไม่ต้องแตะตัวเลือกด้านล่างก็ได้ แค่เลือกว่าจะใช้ก้าวนี้ต่อหรือดูอีกทางก่อน
+        <button
+          onClick={handleReject}
+          style={{ background: 'transparent', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}
+        >
+          {secondaryActionLabel}
+        </button>
+        <p className="one-action-helper-copy" style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', lineHeight: 1.55 }}>
+          ถ้าก้าวนี้ใกล้ที่สุด กดปุ่มหลักแล้วค่อยให้ MIND แตกงานต่อได้เลย
         </p>
       </div>
 
-      <section className="supporting-panel expanded" style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', textAlign: 'left' }}>
-            <p className="supporting-label">อยากปรับข้อเสนอนี้ให้เข้ากับตอนนี้ไหม</p>
-            <p className="supporting-summary" style={{ margin: 0 }}>
-              ยังไม่ต้องใช้ส่วนนี้ก็ได้ ถ้าก้าวนี้ใกล้เคียงอยู่แล้ว
-            </p>
+      <details
+        className="supporting-panel expanded"
+        open={showTunePanel || negotiationLoading || hasConstraintSelection}
+        style={{ width: '100%', maxWidth: '42rem' }}
+        onToggle={(event) => setShowTunePanel(event.currentTarget.open)}
+      >
+        <summary
+          style={{
+            cursor: 'pointer',
+            color: 'var(--text-secondary)',
+            fontSize: '0.88rem',
+            fontWeight: 600,
+            listStyle: 'none',
+            textAlign: 'left',
+          }}
+          onClick={markAdjustmentIntent}
+        >
+          ปรับก้าวนี้เพิ่มเติม
+        </summary>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', marginTop: '0.85rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+            <p className="supporting-label" style={{ marginBottom: 0 }}>ข้อจำกัดตอนนี้</p>
+            <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+              {[
+                { label: '10 นาที', value: 10 },
+                { label: '25 นาที', value: 25 },
+                { label: '45+ นาที', value: 45 },
+              ].map((item) => {
+                const active = selectedTimeBudget === item.value;
+                return (
+                  <button
+                    key={item.value}
+                    onClick={() => {
+                      markAdjustmentIntent();
+                      onNegotiate({ mode: 'default', constraintPatch: { timeBudgetMin: item.value } });
+                    }}
+                    disabled={negotiationLoading}
+                    style={{
+                      background: active ? 'rgba(94, 106, 210, 0.2)' : 'rgba(255,255,255,0.04)',
+                      border: active ? '1px solid rgba(94,106,210,0.38)' : '1px solid rgba(255,255,255,0.08)',
+                      color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                      padding: '0.45rem 0.75rem',
+                      fontSize: '0.8rem',
+                    }}
+                  >
+                    {item.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+              {[
+                { label: 'พลังงานต่ำ', value: 'low' as const },
+                { label: 'พอไหว', value: 'medium' as const },
+                { label: 'พร้อมลุย', value: 'high' as const },
+              ].map((item) => {
+                const active = selectedEnergy === item.value;
+                return (
+                  <button
+                    key={item.value}
+                    onClick={() => {
+                      markAdjustmentIntent();
+                      onNegotiate({ mode: 'default', constraintPatch: { energyLevel: item.value } });
+                    }}
+                    disabled={negotiationLoading}
+                    style={{
+                      background: active ? 'rgba(94, 106, 210, 0.2)' : 'rgba(255,255,255,0.04)',
+                      border: active ? '1px solid rgba(94,106,210,0.38)' : '1px solid rgba(255,255,255,0.08)',
+                      color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                      padding: '0.45rem 0.75rem',
+                      fontSize: '0.8rem',
+                    }}
+                  >
+                    {item.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          <div style={{ display: 'flex', gap: '0.55rem', flexWrap: 'wrap' }}>
-            <button
-              aria-expanded={showTunePanel}
-              onClick={() => {
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem' }}>
+            <button onClick={() => {
+              markAdjustmentIntent();
+              onNegotiate({ mode: 'smaller' });
+            }} disabled={negotiationLoading}>เล็กลง</button>
+            <button onClick={() => {
+              markAdjustmentIntent();
+              onNegotiate({ mode: 'faster' });
+            }} disabled={negotiationLoading}>เร็วขึ้น</button>
+            <button onClick={() => {
+              markAdjustmentIntent();
+              onNegotiate({ mode: 'safer' });
+            }} disabled={negotiationLoading}>ปลอดภัยขึ้น</button>
+            {workflowType === 'client_response' ? (
+              <button onClick={() => {
                 markAdjustmentIntent();
-                setShowTunePanel((value) => !value);
-              }}
-              style={{ background: 'transparent', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)', padding: '0.45rem 0.7rem', fontSize: '0.8rem' }}
-            >
-              {showTunePanel ? 'ซ่อนตัวเลือกปรับก้าวนี้' : 'ปรับก้าวนี้ให้เข้ากับตอนนี้'}
-            </button>
-            {whyThisNow && (
-              <button
-                onClick={() => setShowWhyThisNow((value) => !value)}
-                style={{ background: 'transparent', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)', padding: '0.45rem 0.7rem', fontSize: '0.8rem' }}
-              >
-                {showWhyThisNow ? 'ซ่อนเหตุผล' : 'ทำไม MIND เลือกอันนี้ก่อน'}
-              </button>
+                onNegotiate({ mode: 'reply_first' });
+              }} disabled={negotiationLoading}>ตอบลูกค้าก่อน</button>
+            ) : (
+              <button onClick={() => {
+                markAdjustmentIntent();
+                onNegotiate({ mode: 'resume_first' });
+              }} disabled={negotiationLoading}>เริ่มงานก่อน</button>
             )}
           </div>
+          {negotiationLoading && (
+            <p aria-live="polite" className="supporting-summary" style={{ color: 'var(--text-secondary)', margin: 0 }}>
+              MIND กำลังปรับก้าวนี้ให้เข้ากับเวลา พลังงาน และบริบทของงานนี้…
+            </p>
+          )}
         </div>
-        {showTunePanel && (
-          <>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
-              <p className="supporting-label" style={{ marginBottom: 0 }}>ข้อจำกัดตอนนี้</p>
-              <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-                {[
-                  { label: '10 นาที', value: 10 },
-                  { label: '25 นาที', value: 25 },
-                  { label: '45+ นาที', value: 45 },
-                ].map((item) => {
-                  const active = selectedTimeBudget === item.value;
-                  return (
-                    <button
-                      key={item.value}
-                      onClick={() => {
-                        markAdjustmentIntent();
-                        onNegotiate({ mode: 'default', constraintPatch: { timeBudgetMin: item.value } });
-                      }}
-                      disabled={negotiationLoading}
-                      style={{
-                        background: active ? 'rgba(94, 106, 210, 0.2)' : 'rgba(255,255,255,0.04)',
-                        border: active ? '1px solid rgba(94,106,210,0.38)' : '1px solid rgba(255,255,255,0.08)',
-                        color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-                        padding: '0.45rem 0.75rem',
-                        fontSize: '0.8rem',
-                      }}
-                    >
-                      {item.label}
-                    </button>
-                  );
-                })}
-              </div>
-              <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-                {[
-                  { label: 'พลังงานต่ำ', value: 'low' as const },
-                  { label: 'พอไหว', value: 'medium' as const },
-                  { label: 'พร้อมลุย', value: 'high' as const },
-                ].map((item) => {
-                  const active = selectedEnergy === item.value;
-                  return (
-                    <button
-                      key={item.value}
-                      onClick={() => {
-                        markAdjustmentIntent();
-                        onNegotiate({ mode: 'default', constraintPatch: { energyLevel: item.value } });
-                      }}
-                      disabled={negotiationLoading}
-                      style={{
-                        background: active ? 'rgba(94, 106, 210, 0.2)' : 'rgba(255,255,255,0.04)',
-                        border: active ? '1px solid rgba(94,106,210,0.38)' : '1px solid rgba(255,255,255,0.08)',
-                        color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-                        padding: '0.45rem 0.75rem',
-                        fontSize: '0.8rem',
-                      }}
-                    >
-                      {item.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem' }}>
-              <button onClick={() => {
-                markAdjustmentIntent();
-                onNegotiate({ mode: 'smaller' });
-              }} disabled={negotiationLoading}>เล็กลง</button>
-              <button onClick={() => {
-                markAdjustmentIntent();
-                onNegotiate({ mode: 'faster' });
-              }} disabled={negotiationLoading}>เร็วขึ้น</button>
-              <button onClick={() => {
-                markAdjustmentIntent();
-                onNegotiate({ mode: 'safer' });
-              }} disabled={negotiationLoading}>ปลอดภัยขึ้น</button>
-              {workflowType === 'client_response' ? (
-                <button onClick={() => {
-                  markAdjustmentIntent();
-                  onNegotiate({ mode: 'reply_first' });
-                }} disabled={negotiationLoading}>ตอบลูกค้าก่อน</button>
-              ) : (
-                <button onClick={() => {
-                  markAdjustmentIntent();
-                  onNegotiate({ mode: 'resume_first' });
-                }} disabled={negotiationLoading}>เริ่มงานก่อน</button>
-              )}
-            </div>
-          </>
-        )}
-        {negotiationLoading && (
-          <p aria-live="polite" className="supporting-summary" style={{ color: 'var(--text-secondary)' }}>
-            MIND กำลังปรับก้าวนี้ให้เข้ากับเวลา พลังงาน และบริบทของงานนี้…
-          </p>
-        )}
-      </section>
+      </details>
 
-      {whyThisNow && showWhyThisNow && (
-        <section className="supporting-panel expanded">
-          <p className="supporting-label">เหตุผลที่ MIND เลือกอันนี้ก่อน</p>
-          <p className="supporting-summary">{whyThisNow}</p>
-        </section>
-      )}
-
-      {situationSummary && (
-        <section className={`supporting-panel ${summaryExpanded ? 'expanded' : 'collapsed'}`}>
-          <p className="supporting-label">MIND อ่านว่าสถานการณ์ตอนนี้คือ</p>
-          <p className="supporting-summary">{situationSummary}</p>
-        </section>
+      {situationSummary && situationSummary !== heroReason && (
+        <details className="supporting-panel expanded" style={{ width: '100%', maxWidth: '42rem' }}>
+          <summary
+            style={{
+              cursor: 'pointer',
+              color: 'var(--text-secondary)',
+              fontSize: '0.88rem',
+              fontWeight: 600,
+              listStyle: 'none',
+              textAlign: 'left',
+            }}
+          >
+            ดูสรุปสถานการณ์เพิ่มเติม
+          </summary>
+          <p className="supporting-summary" style={{ marginTop: '0.85rem' }}>{situationSummary}</p>
+        </details>
       )}
 
       {workflowType === 'client_response' && replyDraft && (
-        <section className="supporting-panel expanded">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-              <p className="supporting-label">ถ้าจะตอบลูกค้าตอนนี้ ลองใช้ร่างนี้ได้</p>
-              <p className="supporting-summary" style={{ margin: 0 }}>
-                ตอนนี้เราโชว์แค่ preview ก่อน เพื่อให้ก้าวแรกยังเด่นที่สุดบนหน้าจอ
-              </p>
-            </div>
-            <button
-              onClick={() => setShowReplyDraft((value) => !value)}
-              style={{
-                background: 'transparent',
-                border: '1px solid rgba(255,255,255,0.08)',
-                color: 'var(--text-secondary)',
-                padding: '0.45rem 0.7rem',
-                fontSize: '0.8rem',
-              }}
-            >
-              {showReplyDraft ? 'ซ่อนร่างเต็ม' : 'ดูร่างเต็ม'}
-            </button>
-          </div>
-          {!showReplyDraft && (
-            <div
-              style={{
-                padding: '1rem',
-                borderRadius: 'var(--radius)',
-                background: 'rgba(255,255,255,0.02)',
-                border: '1px solid rgba(255,255,255,0.06)',
-                textAlign: 'left',
-                whiteSpace: 'pre-wrap',
-                lineHeight: 1.6,
-                maxHeight: '8.8rem',
-                overflow: 'hidden',
-                position: 'relative',
-                color: 'rgba(255,255,255,0.78)',
-              }}
-            >
-              {replyDraftValue}
+        <details className="supporting-panel expanded" style={{ width: '100%', maxWidth: '42rem' }} open={showReplyDraft}>
+          <summary
+            style={{
+              cursor: 'pointer',
+              color: 'var(--text-secondary)',
+              fontSize: '0.88rem',
+              fontWeight: 600,
+              listStyle: 'none',
+              textAlign: 'left',
+            }}
+            onClick={() => setShowReplyDraft((value) => !value)}
+          >
+            ดูร่างตอบลูกค้าเพิ่มเติม
+          </summary>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', marginTop: '0.85rem' }}>
+            {!showReplyDraft && (
               <div
-                aria-hidden="true"
                 style={{
-                  position: 'absolute',
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  height: '3rem',
-                  background: 'linear-gradient(180deg, rgba(18,18,18,0) 0%, rgba(18,18,18,0.92) 100%)',
+                  padding: '1rem',
+                  borderRadius: 'var(--radius)',
+                  background: 'rgba(255,255,255,0.02)',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                  textAlign: 'left',
+                  whiteSpace: 'pre-wrap',
+                  lineHeight: 1.6,
+                  maxHeight: '8.8rem',
+                  overflow: 'hidden',
+                  position: 'relative',
+                  color: 'rgba(255,255,255,0.78)',
                 }}
-              />
-            </div>
-          )}
-          {showReplyDraft && (
-            <>
-              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <button
-                  onClick={handleCopy}
+              >
+                {replyDraftValue}
+                <div
+                  aria-hidden="true"
                   style={{
-                    background: 'transparent',
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    color: 'var(--text-secondary)',
-                    padding: '0.45rem 0.7rem',
-                    fontSize: '0.8rem',
+                    position: 'absolute',
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    height: '3rem',
+                    background: 'linear-gradient(180deg, rgba(18,18,18,0) 0%, rgba(18,18,18,0.92) 100%)',
                   }}
-                >
-                  คัดลอก ↗
-                </button>
+                />
               </div>
-              <textarea
-                ref={replyDraftRef}
-                value={replyDraftValue}
-                onChange={(event) => setReplyDraftValue(event.target.value)}
-                readOnly={false}
-                className="reply-draft-textarea"
-                style={{ minHeight: '180px' }}
-              />
-            </>
-          )}
-        </section>
+            )}
+            {showReplyDraft && (
+              <>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button
+                    onClick={handleCopy}
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      color: 'var(--text-secondary)',
+                      padding: '0.45rem 0.7rem',
+                      fontSize: '0.8rem',
+                    }}
+                  >
+                    คัดลอก ↗
+                  </button>
+                </div>
+                <textarea
+                  ref={replyDraftRef}
+                  value={replyDraftValue}
+                  onChange={(event) => setReplyDraftValue(event.target.value)}
+                  readOnly={false}
+                  className="reply-draft-textarea"
+                  style={{ minHeight: '180px' }}
+                />
+              </>
+            )}
+          </div>
+        </details>
       )}
     </div>
   );

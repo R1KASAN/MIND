@@ -13,45 +13,59 @@ interface Props {
   onNext: (dump: RoomSubmission) => void | Promise<void>;
   initialText?: string;
   studioPanel?: ReactNode;
+  presentationMode?: boolean;
+  defaultScenarioId?: DemoScenarioId;
 }
 
-const INPUT_STEPS = [
-  {
-    title: 'พิมพ์สภาพงานตรง ๆ',
-    detail: 'ไม่มีไฟล์ก็เริ่มได้ แค่เล่าว่าตอนนี้อะไรค้างอยู่ หรือวางข้อความลูกค้ามา',
-  },
-  {
-    title: 'ถ้ามีไฟล์ ค่อยแนบเพิ่ม',
-    detail: 'PDF, screenshot, โน้ต และไฟล์ข้อความเป็น context เสริม ไม่ใช่เงื่อนไขเริ่มต้น',
-  },
-  {
-    title: 'กดเอา next move ออกมา',
-    detail: 'MIND จะสรุปสถานการณ์ ร่างคำตอบ และบอกก้าวแรกที่เริ่มได้ทันที',
-  },
-];
+type DemoScenarioId = 'client_project_restart' | 'sales_inquiry_demo_request';
 
-const INPUT_EXAMPLES = [
-  {
-    label: 'ตัวอย่าง: ตอบลูกค้า',
-    value: 'ลูกค้าส่ง feedback ยาว 4 จุด บอกให้เปลี่ยน headline, ปรับ CTA และถามเรื่อง mobile layout แต่ผมยังไม่แน่ใจว่าควรตอบกลับยังไงก่อนดี',
-  },
-  {
-    label: 'ตัวอย่าง: รีสตาร์ทงานค้าง',
-    value: 'โปรเจกต์ลูกค้าค้างมาสองสัปดาห์ มีโน้ตกับข้อความเก่าเยอะมาก แต่ตอนนี้ไม่แน่ใจว่างานคืบถึงไหนแล้วและอะไรยังค้างอยู่บ้าง',
-  },
-  {
-    label: 'ตัวอย่าง: ยังติดทางไหน',
-    value: 'งานนี้ติดเพราะรอไฟล์จากลูกค้า และผมไม่แน่ใจว่าควร follow up ยังไงให้ไม่เสียจังหวะ',
-  },
-];
+interface DemoScenario {
+  id: DemoScenarioId;
+  label: string;
+  title: string;
+  detail: string;
+  value: string;
+  eyebrow: string;
+}
 
-export function BrainDumpInput({ onNext, initialText, studioPanel }: Props) {
+const FEATURED_SCENARIO: DemoScenario = {
+  id: 'client_project_restart',
+  label: 'Client project restart',
+  title: 'งานลูกค้าค้าง แล้วต้องหาก้าวแรกใหม่',
+  detail: 'เหมาะกับตอนที่งานหยุดไปหลายวันและต้องกลับเข้า context ให้เร็ว โดยไม่ต้องอ่านทุกอย่างใหม่ตั้งแต่ต้น',
+  value: 'โปรเจกต์ลูกค้าค้างมาสองสัปดาห์ มี feedback กับข้อความเก่าอยู่หลายที่ ตอนนี้อยากรู้ว่างานอยู่ตรงไหนแล้ว และควรเริ่มจากอะไรให้กลับเข้าร่องได้เร็วที่สุด',
+  eyebrow: 'ค่าเริ่มต้นของเดโม',
+};
+
+const ADVANCED_SCENARIO: DemoScenario = {
+  id: 'sales_inquiry_demo_request',
+  label: 'Sales inquiry / demo request',
+  title: 'ข้อความลูกค้าหนัก ๆ แต่ต้องตอบให้ไว',
+  detail: 'เหมาะกับตอนที่อยากสรุปดีล, ร่างคำตอบ, หรือหา next move ก่อนประชุมต่อ',
+  value: 'ลูกค้าส่งข้อความถามเรื่อง demo และต้องการภาพรวมสั้น ๆ ว่าสัปดาห์นี้ควรโฟกัสดีลไหนก่อน แต่ข้อมูลกระจัดกระจายหลายช่องทาง',
+  eyebrow: 'ตัวอย่างอื่น',
+};
+
+export function BrainDumpInput({
+  onNext,
+  initialText,
+  studioPanel,
+  presentationMode = false,
+  defaultScenarioId = 'client_project_restart',
+}: Props) {
   const [val, setVal] = useState(() => initialText ?? '');
   const [files, setFiles] = useState<File[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [showAdvancedScenario, setShowAdvancedScenario] = useState(false);
+  const [activeScenarioId, setActiveScenarioId] = useState<DemoScenarioId>(
+    defaultScenarioId === ADVANCED_SCENARIO.id ? ADVANCED_SCENARIO.id : FEATURED_SCENARIO.id,
+  );
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const selectedScenario: DemoScenario = activeScenarioId === ADVANCED_SCENARIO.id
+    ? ADVANCED_SCENARIO
+    : FEATURED_SCENARIO;
 
   const acceptedFileTypes = useMemo(
     () => 'application/pdf,image/*,.txt,.md,.markdown,.csv,.tsv,.json,.yaml,.yml',
@@ -62,6 +76,16 @@ export function BrainDumpInput({ onNext, initialText, studioPanel }: Props) {
     if (!initialText) return;
     setVal((current) => (current.trim().length === 0 ? initialText : current));
   }, [initialText]);
+
+  useEffect(() => {
+    setActiveScenarioId(defaultScenarioId === ADVANCED_SCENARIO.id ? ADVANCED_SCENARIO.id : FEATURED_SCENARIO.id);
+  }, [defaultScenarioId]);
+
+  useEffect(() => {
+    if (!presentationMode) return;
+    setShowAdvancedScenario(false);
+    setVal((current) => (current.trim().length === 0 ? selectedScenario.value : current));
+  }, [presentationMode, selectedScenario.value]);
 
   const formatBytes = (size: number) => {
     if (size < 1024) return `${size} B`;
@@ -91,6 +115,12 @@ export function BrainDumpInput({ onNext, initialText, studioPanel }: Props) {
 
   const hasFiles = files.length > 0;
   const canSubmit = !isSubmitting && (val.trim().length > 0 || hasFiles);
+
+  const applyScenario = (scenario: DemoScenario) => {
+    setActiveScenarioId(scenario.id);
+    setVal(scenario.value);
+    setShowAdvancedScenario(false);
+  };
 
   const buildFallbackSubmission = (): RoomSubmission => {
     const sourceFiles: RoomSourceFile[] = files.map((file) => ({
@@ -198,97 +228,16 @@ export function BrainDumpInput({ onNext, initialText, studioPanel }: Props) {
       }}
     >
       <div className="dump-stage-main">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', letterSpacing: '0.18em', textTransform: 'uppercase' }}>
-            MIND
+            {presentationMode ? '30-second story' : 'MIND'}
           </p>
           <h1 style={{ fontSize: '2rem', fontWeight: 650, lineHeight: 1.08 }}>
-            พิมพ์สภาพงานมาก่อน แล้วค่อยแนบไฟล์ถ้ามี
+            วางสภาพงานก่อน แล้วค่อยไปต่อ
           </h1>
           <p style={{ color: 'var(--text-secondary)', maxWidth: '36rem' }}>
-            ไม่มีไฟล์ก็เริ่มได้ วางอีเมลลูกค้า แชต feedback หรือโน้ตสั้น ๆ ลงมาก่อน แล้วค่อยใช้ไฟล์เป็น context เสริมถ้ามี
+            พิมพ์สิ่งที่ค้างอยู่ตรง ๆ ได้เลย ไม่มีไฟล์ก็เริ่มได้
           </p>
-          <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', paddingTop: '0.25rem' }}>
-            {['ไม่มีไฟล์ก็เริ่มได้', 'Text-first', 'Files optional'].map((badge) => (
-              <span
-                key={badge}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  padding: '0.35rem 0.65rem',
-                  borderRadius: '999px',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  background: 'rgba(255,255,255,0.04)',
-                  color: 'var(--text-secondary)',
-                  fontSize: '0.78rem',
-                  letterSpacing: '0.02em',
-                }}
-              >
-                {badge}
-              </span>
-            ))}
-          </div>
-        </div>
-
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '0.7rem',
-          padding: 'clamp(0.6rem, 1.7vw, 0.9rem) 0',
-          borderTop: '1px solid rgba(255,255,255,0.08)',
-          borderBottom: '1px solid rgba(255,255,255,0.08)',
-          }}>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
-            เริ่มได้ใน 3 จังหวะ ไม่ต้องมีไฟล์ก็ได้
-          </p>
-          {INPUT_STEPS.map((step, index) => (
-            <div key={step.title} style={{ display: 'flex', gap: '0.9rem', alignItems: 'flex-start' }}>
-              <div style={{
-                width: '1.65rem',
-                height: '1.65rem',
-                borderRadius: '999px',
-                background: 'rgba(255,255,255,0.08)',
-                color: 'var(--text-primary)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-                fontSize: '0.85rem',
-                marginTop: '0.12rem',
-              }}>
-                {index + 1}
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                <p style={{ fontWeight: 600, fontSize: '0.98rem' }}>{step.title}</p>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem' }}>{step.detail}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
-            แตะตัวอย่างเพื่อเริ่มเร็วขึ้น
-          </p>
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            {INPUT_EXAMPLES.map((example) => (
-              <button
-                key={example.label}
-                type="button"
-                onClick={() => setVal(example.value)}
-                style={{
-                  background: 'rgba(255,255,255,0.05)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  color: 'var(--text-primary)',
-                  padding: '0.55rem 0.8rem',
-                  fontSize: '0.82rem',
-                  borderRadius: '999px',
-                }}
-              >
-                {example.label}
-              </button>
-            ))}
-          </div>
         </div>
 
         <div style={{
@@ -306,9 +255,9 @@ export function BrainDumpInput({ onNext, initialText, studioPanel }: Props) {
         }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
-            <p style={{ margin: 0, fontWeight: 600 }}>ไม่มีไฟล์ก็เริ่มได้</p>
+            <p style={{ margin: 0, fontWeight: 600 }}>พิมพ์ก่อน แล้วค่อยแนบถ้าจำเป็น</p>
             <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.86rem' }}>
-              วางข้อความ พิมพ์โน้ต หรือแนบ PDF, screenshot, และไฟล์ข้อความเป็น context เสริมถ้ามี
+              วางอีเมล, feedback, หรือโน้ตลงมาก่อน แล้วค่อยใช้ไฟล์เป็น context เสริม
             </p>
           </div>
           <button
@@ -345,7 +294,7 @@ export function BrainDumpInput({ onNext, initialText, studioPanel }: Props) {
           fontSize: '0.84rem',
         }}>
           <span>ลากไฟล์มาวางในกล่องนี้ได้เลย ถ้ามี</span>
-          <span>{hasFiles ? `${files.length} ไฟล์ใน room นี้` : 'ไม่มีไฟล์ก็เริ่มได้ · แนบเพิ่มได้: PDF, ภาพ, text, CSV'}</span>
+          <span>{hasFiles ? `${files.length} ไฟล์พร้อมใช้ใน room นี้` : 'ไฟล์เป็น optional context เท่านั้น'}</span>
         </div>
 
         <textarea
@@ -355,7 +304,7 @@ export function BrainDumpInput({ onNext, initialText, studioPanel }: Props) {
           aria-label="พิมพ์สภาพงานของคุณ"
           style={{
             flex: 1,
-            minHeight: 'clamp(220px, 34vh, 280px)',
+            minHeight: 'clamp(180px, 30vh, 260px)',
             borderRadius: '18px',
             border: '1px solid rgba(255,255,255,0.08)',
             background: 'rgba(13,13,18,0.42)',
@@ -404,16 +353,74 @@ export function BrainDumpInput({ onNext, initialText, studioPanel }: Props) {
         )}
         </div>
 
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem' }}>
-          ไม่มีไฟล์ก็เริ่มได้ MIND จะใช้ข้อความที่คุณพิมพ์ก่อน แล้วค่อยอ่านไฟล์เป็น context เสริมถ้ามี
-        </p>
-
-        <button className="primary" onClick={submit} disabled={!canSubmit}>
-          {isSubmitting ? 'กำลังสรุป...' : 'สรุปให้เลย'}
+        <button className="primary" onClick={submit} disabled={!canSubmit} style={{ width: '100%' }}>
+          {isSubmitting ? 'กำลังสรุป...' : 'ไปต่อเลย'}
         </button>
+
+        <details
+          open={showAdvancedScenario}
+          onToggle={(event) => setShowAdvancedScenario(event.currentTarget.open)}
+          style={{
+            padding: '0.95rem 1rem',
+            borderRadius: '18px',
+            border: '1px solid rgba(255,255,255,0.08)',
+            background: 'rgba(255,255,255,0.03)',
+          }}
+        >
+          <summary style={{
+            cursor: 'pointer',
+            listStyle: 'none',
+            color: 'var(--text-secondary)',
+            fontSize: '0.84rem',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '0.35rem',
+          }}>
+            ดูตัวอย่างเพิ่มเติม
+          </summary>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.9rem', marginTop: '0.85rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+              <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.8rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                {selectedScenario.eyebrow}
+              </p>
+              <strong style={{ fontSize: '0.98rem' }}>{selectedScenario.title}</strong>
+              <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.9rem', lineHeight: 1.55 }}>
+                {selectedScenario.detail}
+              </p>
+              <div style={{ display: 'flex', gap: '0.55rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                <button type="button" onClick={() => applyScenario(selectedScenario)} style={{ alignSelf: 'flex-start' }}>
+                  ใช้ตัวอย่างนี้
+                </button>
+                <button type="button" onClick={() => applyScenario(ADVANCED_SCENARIO)} style={{ alignSelf: 'flex-start' }}>
+                  ใช้ตัวอย่างอีกแบบ
+                </button>
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+              <p style={{ margin: 0, fontWeight: 600, fontSize: '0.94rem' }}>ใช้ MIND แบบเร็วที่สุด</p>
+              <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.88rem', lineHeight: 1.6 }}>
+                1. วางสิ่งที่ค้างอยู่ลงมา 2. แนบไฟล์ถ้ามี 3. กดไปต่อเพื่อให้ MIND สรุปและหา next move
+              </p>
+            </div>
+          </div>
+        </details>
       </div>
 
-      {studioPanel}
+      {studioPanel && (
+        <section style={{
+          marginTop: '0.25rem',
+          paddingTop: '1rem',
+          borderTop: '1px solid rgba(255,255,255,0.08)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '0.65rem',
+        }}>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', lineHeight: 1.55, maxWidth: '42rem' }}>
+            ภาพรวม, คลังเก็บ, และความไว้ใจเป็นตัวช่วยเสริมสำหรับตอนที่อยากดูบริบทลึกขึ้น ไม่จำเป็นต้องเปิดก่อน
+          </p>
+          {studioPanel}
+        </section>
+      )}
     </div>
   );
 }

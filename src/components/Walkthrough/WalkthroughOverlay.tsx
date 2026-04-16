@@ -13,45 +13,48 @@ interface Step {
 interface Props {
   onClose: () => void;
   onFinish: () => void;
+  autoPlay?: boolean;
 }
 
 const steps: Step[] = [
   {
-    label: 'หน้าจอ 1',
-    title: 'พิมพ์สภาพงานตรง ๆ ได้เลย',
-    body: 'ไม่มีไฟล์ก็เริ่มได้ แค่เล่าว่าตอนนี้งานค้างตรงไหน ถ้ามีไฟล์ค่อยแนบเพิ่มทีหลัง',
-    action: 'พิมพ์สถานการณ์หรือวางข้อความลูกค้า แล้วกด "สรุปให้เลย"',
+    label: 'วางข้อความ',
+    title: 'เริ่มจากความวุ่นวายของลูกค้า',
+    body: 'พิมพ์ข้อความลูกค้า โน้ตสั้น ๆ หรือสภาพงานที่ค้างไว้ MIND จะอ่านข้อความก่อนเสมอ',
+    action: 'พิมพ์สภาพงานแล้วกด "สรุปให้เลย"',
   },
   {
-    label: 'หน้าจอ 2',
-    title: 'ดูสรุปสถานการณ์ + คำตอบ + ก้าวแรก',
-    body: 'MIND จะสรุปสิ่งที่เกิดขึ้นจากข้อความก่อน แล้วค่อยอ่านไฟล์ถ้ามี ร่างข้อความตอบกลับถ้าเป็นงานลูกค้า และบอกก้าวแรกที่เริ่มได้ทันที',
-    action: 'อ่านผลลัพธ์บนการ์ดหลักก่อน แล้วค่อยเลือกไปต่อ',
+    label: 'เห็น next move',
+    title: 'MIND สรุปให้เหลือก้าวแรกที่เริ่มได้',
+    body: 'จากบริบทเดิม MIND จะคัดสิ่งสำคัญ ร่างคำตอบถ้าเป็นงานลูกค้า และบอกว่าควรเริ่มจากอะไร',
+    action: 'อ่านการ์ดหลักแล้วเลือกใช้ก้าวนี้',
   },
   {
-    label: 'หน้าจอ 3',
-    title: 'ทำทีละ micro-step ที่เริ่มได้จริง',
-    body: 'ถ้ากดเริ่มแล้ว คุณจะเห็น 3 ขั้นสั้น ๆ ที่ทำได้จริง หน้าจอนี้ไว้ช่วยโฟกัส ไม่ใช่ช่วยจับเวลา',
-    action: 'ทำทีละข้อ แล้วกด "เสร็จแล้ว" เมื่อจบแต่ละรอบ',
+    label: 'ย่อยงาน',
+    title: 'ถ้างานใหญ่ไปก็แตกเป็น step',
+    body: 'MIND จะทำให้ก้าวแรกเล็กลงพอเริ่มได้จริง โดยไม่หลุดเป้าหมายของงาน',
+    action: 'กดแบ่งเป็นขั้นตอน แล้วทำทีละข้อ',
   },
   {
-    label: 'หน้าจอ 4',
-    title: 'ถ้าติดหรือ AI ไม่พร้อม',
-    body: 'ถ้าวันนั้น AI ยังไม่พร้อม หรือข้อมูลยังไม่พอ MIND จะพาไปทางสำรองแบบไม่ต้องเริ่มใหม่ทั้งหมด',
-    action: 'กด "ฉันติดอยู่" เพื่อย่อยงาน หรือพิมพ์ก้าวเล็กที่สุดเองใน Manual Fallback',
+    label: 'ช่วยตอนติด',
+    title: 'ถ้าชะงัก MIND จะพาไป rescue',
+    body: 'เมื่อข้อมูลยังไม่พอหรือทางตัน MIND จะอธิบายว่าติดตรงไหน และเสนอทางออกที่เหมาะ',
+    action: 'กด "ฉันติดอยู่" เมื่ออยากให้ช่วยวินิจฉัย',
   },
   {
-    label: 'หน้าจอ 5',
-    title: 'กลับมาเมื่อไรก็ได้ โดยไม่เสียจังหวะ',
-    body: 'หายไปนานแล้วกลับมา ระบบจะพาเข้าหน้ากลับมาต่อ และยังมีภาพรวม คลังเก็บ กับข้อมูลความไว้ใจให้เปิดดูเมื่อจำเป็น',
-    action: 'ใช้ "ไปต่อ" หรือ "เริ่มใหม่" แล้วค่อยเปิดภาพรวม คลังเก็บ หรือข้อมูลเมื่อจำเป็น',
+    label: 'กลับมาทำต่อ',
+    title: 'หายไปแล้วกลับมาได้โดยไม่เริ่มจากศูนย์',
+    body: 'reentry brief จะช่วยเล่าว่าอะไรสำคัญ และตอนนี้ควรกลับไปทำจุดไหนต่อ',
+    action: 'กลับเข้าหน้างาน แล้วเลือกไปต่อ',
   },
 ];
 
-export function WalkthroughOverlay({ onClose, onFinish }: Props) {
+export function WalkthroughOverlay({ onClose, onFinish, autoPlay = false }: Props) {
   useTrackMountEvent('walkthrough_opened');
   const [index, setIndex] = useState(0);
   const [isCompact, setIsCompact] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(autoPlay);
+  const isAutoAdvancing = isPlaying && index < steps.length - 1;
   const current = steps[index];
 
   useEffect(() => {
@@ -70,6 +73,14 @@ export function WalkthroughOverlay({ onClose, onFinish }: Props) {
     window.addEventListener('resize', syncLayout);
     return () => window.removeEventListener('resize', syncLayout);
   }, []);
+
+  useEffect(() => {
+    if (!isAutoAdvancing) return;
+    const timeoutId = window.setTimeout(() => {
+      setIndex((value) => Math.min(value + 1, steps.length - 1));
+    }, 3600);
+    return () => window.clearTimeout(timeoutId);
+  }, [index, isAutoAdvancing]);
 
   const finish = () => {
     onFinish();
@@ -108,7 +119,7 @@ export function WalkthroughOverlay({ onClose, onFinish }: Props) {
               วิธีใช้ MIND
             </p>
             <h2 style={{ fontSize: isCompact ? '1.25rem' : '1.6rem', fontWeight: 650, marginTop: '0.35rem', lineHeight: 1.15 }}>
-              พิมพ์สภาพงานก่อน ไฟล์เป็นแค่ตัวช่วยเสริม
+              เล่าเรื่องงานค้างให้ดูใน 30 วินาที
             </h2>
             <p style={{ color: 'var(--text-secondary)', marginTop: '0.4rem', maxWidth: '42rem', fontSize: isCompact ? '0.9rem' : '1rem' }}>
               ถ้ายังไม่แน่ใจว่าจะพิมพ์อะไร ให้เริ่มจากข้อความล้วนได้เลย MIND จะอ่านข้อความก่อน แล้วค่อยอ่านไฟล์ถ้ามี เพื่อสรุปสถานการณ์ ร่างคำตอบ และบอกก้าวแรกให้โดยไม่ต้องไล่อ่านใหม่ทั้งหมด
@@ -220,6 +231,12 @@ export function WalkthroughOverlay({ onClose, onFinish }: Props) {
             </div>
 
             <div style={{ marginTop: 'auto', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => setIsPlaying((value) => !value)}
+                style={{ minWidth: '110px', background: 'transparent', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-secondary)' }}
+              >
+                {isAutoAdvancing ? 'หยุดเล่า' : 'เล่นต่อ'}
+              </button>
               <button
                 onClick={() => setIndex((value) => Math.max(0, value - 1))}
                 disabled={index === 0}

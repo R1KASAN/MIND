@@ -20,6 +20,7 @@ export function StudioPanel({
   onEditContext,
 }: Props) {
   const [showAllMobileIntents, setShowAllMobileIntents] = useState(false);
+  const [showAllDesktopIntents, setShowAllDesktopIntents] = useState(false);
   const [blockedMessage, setBlockedMessage] = useState<string | null>(null);
   const [snapshotEmphasized, setSnapshotEmphasized] = useState(false);
   const primaryIntents = intents.slice(0, 2);
@@ -129,8 +130,23 @@ export function StudioPanel({
 
       <div className="studio-desktop-stack">
         <div className="studio-intent-list">
-          {intents.map((intent) => renderIntentButton(intent))}
+          {(showAllDesktopIntents ? intents : primaryIntents).map((intent) => renderIntentButton(intent))}
         </div>
+        {extraIntents.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowAllDesktopIntents((value) => !value)}
+            style={{
+              background: 'transparent',
+              border: '1px solid rgba(255,255,255,0.08)',
+              color: 'var(--text-secondary)',
+              padding: '0.65rem 0.85rem',
+              fontSize: '0.84rem',
+            }}
+          >
+            {showAllDesktopIntents ? 'ซ่อนตัวช่วยเพิ่ม' : 'ดูตัวช่วยเพิ่ม'}
+          </button>
+        )}
         {blockedMessage && (
           <p className="studio-inline-note">{blockedMessage}</p>
         )}

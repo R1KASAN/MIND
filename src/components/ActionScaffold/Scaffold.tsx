@@ -2,6 +2,7 @@
 
 import { useTrackMountEvent, trackEvent } from '@/lib/instrumentation';
 import { AiSynthesisResponse } from '@/lib/ai/schema';
+import type { CurrentPlanStep } from '@/lib/store/idb';
 import {
   SCAFFOLD_REFINE_LOADING_COPY,
   type ScaffoldRefineFeedback,
@@ -9,37 +10,106 @@ import {
 
 interface Props {
   action: AiSynthesisResponse['recommended_action'];
+  steps: CurrentPlanStep[];
   currentStepIndex: number;
+  isCompletion?: boolean;
+  successSignal?: string;
   refineLoading?: boolean;
   refineFeedback?: ScaffoldRefineFeedback | null;
   onRescue: () => void;
   onMakeSmaller: () => void;
   onComplete: () => void;
+  onBackToSteps: () => void;
+  onStartNew: () => void;
 }
 
 export function Scaffold({
   action,
+  steps,
   currentStepIndex,
+  isCompletion = false,
+  successSignal,
   refineLoading = false,
   refineFeedback,
   onRescue,
   onMakeSmaller,
   onComplete,
+  onBackToSteps,
+  onStartNew,
 }: Props) {
   useTrackMountEvent('scaffold_started');
-  const activeStepIndex = Math.min(currentStepIndex, Math.max(action.micro_steps.length - 1, 0));
+  const visibleSteps = steps.length > 0
+    ? steps
+    : action.micro_steps.map((step, index) => ({ id: `step-${index + 1}`, text: step }));
+  const activeStepIndex = Math.min(currentStepIndex, Math.max(visibleSteps.length - 1, 0));
+
+  if (isCompletion) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '1rem', paddingTop: '2rem' }}>
+        <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>{action.title}</h2>
+        <div
+          style={{
+            padding: '1.15rem',
+            borderRadius: 'var(--radius-lg)',
+            background: 'rgba(94, 106, 210, 0.12)',
+            border: '1px solid rgba(94, 106, 210, 0.28)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.75rem',
+          }}
+        >
+          <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+            จบชุดขั้นตอนนี้แล้ว
+          </span>
+          <strong style={{ fontSize: '1.05rem' }}>
+            คุณทำครบ {visibleSteps.length} ขั้นตอนของงานรอบนี้แล้ว
+          </strong>
+          <p style={{ margin: 0, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            {successSignal ?? 'ตอนนี้งานรอบนี้ขยับจนจบชุดขั้นตอนแล้ว ถ้าพร้อมค่อยเริ่มงานใหม่ หรือย้อนกลับไปดู step ล่าสุดได้'}
+          </p>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
+          {visibleSteps.map((step, idx) => (
+            <div
+              key={step.id}
+              style={{
+                padding: '0.95rem 1rem',
+                background: 'var(--bg-secondary)',
+                borderRadius: 'var(--radius)',
+                border: '1px solid rgba(255,255,255,0.05)',
+                opacity: 0.82,
+              }}
+            >
+              <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
+                ขั้นตอน {idx + 1}
+              </span>
+              <span>{step.text}</span>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <button className="primary" onClick={onStartNew}>
+            เริ่มงานใหม่
+          </button>
+          <button onClick={onBackToSteps}>กลับไปดูขั้นตอน</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '1rem', paddingTop: '2rem' }}>
       <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>{action.title}</h2>
       <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '-0.35rem' }}>
-        ตอนนี้อยู่ที่ขั้นตอน {action.micro_steps.length === 0 ? '0' : `${activeStepIndex + 1} / ${action.micro_steps.length}`}
+        ตอนนี้อยู่ที่ขั้นตอน {visibleSteps.length === 0 ? '0' : `${activeStepIndex + 1} / ${visibleSteps.length}`}
       </p>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '1rem' }}>
-        {action.micro_steps.map((step, idx) => (
+        {visibleSteps.map((step, idx) => (
           <div
-            key={idx}
+            key={step.id}
             style={{
               padding: '1rem',
               background: idx === activeStepIndex ? 'rgba(94, 106, 210, 0.14)' : 'var(--bg-secondary)',
@@ -51,7 +121,7 @@ export function Scaffold({
             <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
               ขั้นตอน {idx + 1}
             </span>
-            <span>{step}</span>
+            <span>{step.text}</span>
           </div>
         ))}
       </div>
