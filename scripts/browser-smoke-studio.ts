@@ -5,13 +5,11 @@ import {
   DUMP_HERO_HEADING,
   DUMP_TEXTBOX_LABEL,
   EDIT_CONTEXT_CTA,
-  STUDIO_PROVENANCE_HEADING,
   STUDIO_SNAPSHOT_TARGET_SELECTOR,
   seedStudioSession,
   STUDIO_BLOCKED_INTENT,
   STUDIO_BLOCKED_REASON,
   STUDIO_PANEL_HEADING,
-  STUDIO_SNAPSHOT_HEADING,
   STUDIO_STATUS_INTENT,
   waitForAnalyticsEventCount,
 } from './studio-smoke-shared';
@@ -71,16 +69,16 @@ async function run() {
       throw new Error(`expected one studio snapshot target, received ${snapshotTargetCount}`);
     }
     await snapshotTargets.first().waitFor({ state: 'visible', timeout: 30000 });
-    await desktopStudio.getByText(STUDIO_SNAPSHOT_HEADING).waitFor({ state: 'visible', timeout: 30000 });
-    await desktopStudio.getByText(STUDIO_PROVENANCE_HEADING).waitFor({ state: 'visible', timeout: 30000 });
-    await desktopStudio.getByText('มั่นใจสูง').waitFor({ state: 'visible', timeout: 30000 });
+    const provenanceSummary = desktopStudio.locator('.studio-desktop-stack .studio-provenance > summary').first();
+    await provenanceSummary.waitFor({ state: 'visible', timeout: 30000 });
+    await provenanceSummary.click();
+    await desktopStudio.locator('.studio-desktop-stack .studio-provenance-body').first().waitFor({ state: 'visible', timeout: 30000 });
     await waitForAnalyticsEventCount(page, 'studio_snapshot_viewed', 1);
 
     console.log('[SMOKE] reviewing status without live AI');
     const statusButton = desktopStudio.getByRole('button', { name: STUDIO_STATUS_INTENT });
     await statusButton.waitFor({ state: 'visible', timeout: 30000 });
     await statusButton.click();
-    await snapshotTargets.first().locator('.studio-card-emphasis').waitFor({ state: 'visible', timeout: 30000 });
     await waitForAnalyticsEventCount(page, 'studio_snapshot_viewed', 1);
 
     console.log('[SMOKE] checking blocked advanced intent copy');
@@ -93,7 +91,10 @@ async function run() {
     console.log('[SMOKE] clicking blocked intent button');
     await blockedIntent.click({ force: true });
     console.log('[SMOKE] waiting for blocked intent explanation');
-    const blockedNote = desktopStudio.locator('.studio-inline-note');
+    const blockedNote = desktopStudio
+      .locator('.studio-desktop-stack .studio-inline-note')
+      .filter({ hasText: STUDIO_BLOCKED_REASON })
+      .first();
     await blockedNote.waitFor({ state: 'visible', timeout: 30000 });
     const blockedNoteText = (await blockedNote.textContent())?.trim() ?? '';
     if (!blockedNoteText.includes(STUDIO_BLOCKED_REASON)) {

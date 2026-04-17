@@ -43,8 +43,8 @@ export function OneAction({
   const selectedTimeBudget = constraints?.timeBudgetMin;
   const selectedEnergy = constraints?.energyLevel;
   const hasConstraintSelection = typeof selectedTimeBudget === 'number' || typeof selectedEnergy === 'string';
-  const primaryActionLabel = 'ใช้ก้าวนี้ แล้วแตกเป็นขั้นตอน';
-  const secondaryActionLabel = 'ลองอีกทางจากข้อความเดิม';
+  const primaryActionLabel = 'ใช้ก้าวนี้';
+  const secondaryActionLabel = 'ลองอีกทาง';
   const heroReason =
     whyThisNow
     || situationSummary
@@ -99,22 +99,13 @@ export function OneAction({
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '1rem', paddingTop: '1rem', alignItems: 'center', textAlign: 'center' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '1rem', paddingTop: '0.25rem', alignItems: 'stretch', textAlign: 'left' }}>
       {data.requires_clarification && (
         <div style={{ padding: '1rem', background: 'var(--accent)', borderRadius: 'var(--radius)', width: '100%' }}>
           <strong>ขอข้อมูลเพิ่ม:</strong> {data.clarification_nudge}
         </div>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', alignItems: 'center', maxWidth: '38rem' }}>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', letterSpacing: '0.14em', textTransform: 'uppercase' }}>
-          ก้าวต่อไป
-        </p>
-        <p style={{ color: 'var(--text-primary)', fontSize: '1.1rem', fontWeight: 600 }}>
-          เริ่มจากตรงนี้ก่อน
-        </p>
-      </div>
-      {/* HIERARCHY RULE: action card must always render first — do not reorder */}
       <div className="action-hero-card">
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
           เริ่มจาก
@@ -122,11 +113,6 @@ export function OneAction({
         <h1 className="action-hero-title">{data.recommended_action.title}</h1>
         <p className="action-hero-rationale">{data.recommended_action.rationale}</p>
       </div>
-
-      <section className="supporting-panel expanded" style={{ width: '100%', maxWidth: '42rem', textAlign: 'left', padding: '0.95rem 1rem' }}>
-        <p className="supporting-label" style={{ marginBottom: '0.35rem' }}>ทำไมก้าวนี้มาก่อน</p>
-        <p className="supporting-summary" style={{ margin: 0, lineHeight: 1.6 }}>{heroReason}</p>
-      </section>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.7rem', width: '100%', maxWidth: '42rem' }}>
         <button className="primary" onClick={onAccept}>{primaryActionLabel}</button>
@@ -136,10 +122,23 @@ export function OneAction({
         >
           {secondaryActionLabel}
         </button>
-        <p className="one-action-helper-copy" style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', lineHeight: 1.55 }}>
-          ถ้าก้าวนี้ใกล้ที่สุด กดปุ่มหลักแล้วค่อยให้ MIND แตกงานต่อได้เลย
-        </p>
       </div>
+
+      <details className="supporting-panel" style={{ width: '100%', maxWidth: '42rem' }}>
+        <summary
+          style={{
+            cursor: 'pointer',
+            color: 'var(--text-secondary)',
+            fontSize: '0.88rem',
+            fontWeight: 600,
+            listStyle: 'none',
+            textAlign: 'left',
+          }}
+        >
+          ทำไมก้าวนี้มาก่อน
+        </summary>
+        <p className="supporting-summary" style={{ marginTop: '0.85rem', lineHeight: 1.6 }}>{heroReason}</p>
+      </details>
 
       <details
         className="supporting-panel expanded"

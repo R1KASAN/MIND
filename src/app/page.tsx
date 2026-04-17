@@ -147,72 +147,71 @@ function localDateString(): string {
 function getRouteShellMeta(
   route: UIRoute,
   roomTitle?: string | null,
-  actionTitle?: string | null,
 ) {
   switch (route) {
     case 'DUMP_ENTRY':
       return {
-        kicker: 'Room workspace',
-        title: roomTitle || 'เริ่มจากงานนี้',
-        detail: 'วาง chaos ของงานนี้ลงก่อน แล้วค่อยให้ MIND หา next move',
+        kicker: 'เริ่ม',
+        title: roomTitle || 'งานนี้',
+        detail: 'วางสิ่งที่ค้างไว้ แล้วให้ MIND ช่วยสรุป',
       };
     case 'SYNTHESIZING':
       return {
-        kicker: 'กำลังสรุป',
-        title: roomTitle || 'MIND กำลังจัดบริบท',
-        detail: 'รอให้ MIND สรุปและจัดก้าวถัดไปของห้องนี้ก่อน',
+        kicker: 'กำลังดูอยู่',
+        title: roomTitle || 'กำลังสรุป',
+        detail: 'รอผลสรุปสั้น ๆ ก่อน',
       };
     case 'ONE_ACTION':
       return {
-        kicker: 'Next move',
-        title: actionTitle || roomTitle || 'ก้าวถัดไปของห้องนี้',
-        detail: 'โฟกัสที่ก้าวเดียวที่ควรเริ่มตอนนี้',
+        kicker: 'ก้าวถัดไป',
+        title: 'ก้าวถัดไป',
+        detail: 'เลือกใช้ก้าวนี้หรือขออีกทาง',
       };
     case 'SCAFFOLD':
       return {
-        kicker: 'Scaffold',
-        title: actionTitle || roomTitle || 'ย่อยงานนี้ให้เริ่มได้',
-        detail: 'แตกก้าวนี้ให้อยู่ในขนาดที่ลงมือได้จริง',
+        kicker: 'ทำทีละขั้น',
+        title: 'ทำต่อทีละขั้น',
+        detail: 'โฟกัสแค่ขั้นที่อยู่ตรงหน้า',
       };
     case 'RESCUE':
       return {
-        kicker: 'Rescue',
-        title: actionTitle || roomTitle || 'ช่วยตอนติด',
-        detail: 'ดูว่าติดตรงไหนแล้วหา way out จากบริบทเดิม',
+        kicker: 'ช่วยตอนติด',
+        title: 'ช่วยตอนติด',
+        detail: 'ดูทางออกที่เบาสุดก่อน',
       };
     case 'BOUNCE_BACK':
       return {
-        kicker: 'Reentry',
+        kicker: 'กลับมาทำต่อ',
         title: roomTitle || 'กลับเข้าห้องเดิม',
-        detail: 'ตัด noise ออก แล้วพากลับไปยังจุดที่ควรเริ่ม',
+        detail: 'ดูว่าค้างตรงไหน แล้วไปต่อ',
       };
     case 'MORNING_RITUAL':
       return {
-        kicker: 'Morning ritual',
+        kicker: 'เริ่มวันนี้',
         title: roomTitle || 'เริ่มวันจากห้องนี้',
-        detail: 'ดู reentry brief ก่อนเลือกห้องหรือก้าวที่คุ้มสุด',
+        detail: 'เลือกงานที่คุ้มสุดแล้วเริ่ม',
       };
     case 'CLARIFICATION':
       return {
-        kicker: 'Clarify',
-        title: roomTitle || 'ขอข้อมูลเพิ่ม',
-        detail: 'ตอบคำถามสั้น ๆ เพื่อให้ MIND พา flow ไปต่อได้',
+        kicker: 'ต้องรู้อีกนิด',
+        title: 'ขอข้อมูลเพิ่ม',
+        detail: 'ตอบสั้น ๆ แล้วไปต่อ',
       };
     case 'MANUAL_FALLBACK':
       return {
-        kicker: 'Manual fallback',
-        title: roomTitle || 'AI ยังไม่พร้อม',
-        detail: 'ใช้ทางลัดนี้ไปก่อน แล้วค่อยกลับเข้า AI loop เมื่อพร้อม',
+        kicker: 'ไปต่อแบบง่าย',
+        title: 'ไปต่อแบบง่าย',
+        detail: 'ใช้ทางลัดนี้ไปก่อน',
       };
     case 'DECISION_BOARD':
       return {
-        kicker: 'ทางเลือก',
-        title: actionTitle || roomTitle || 'เลือกทางที่ใช่',
-        detail: 'เทียบตัวเลือกก่อนกลับไป focus ที่ก้าวหลัก',
+        kicker: 'เลือกทาง',
+        title: 'เลือกทางถัดไป',
+        detail: 'เทียบสั้น ๆ แล้วเลือกต่อ',
       };
     default:
       return {
-        kicker: 'Workspace',
+        kicker: 'งานนี้',
         title: roomTitle || 'งานนี้',
         detail: 'ทำงานต่อจากบริบทของห้องนี้',
       };
@@ -232,6 +231,38 @@ function getStudioMode(route: UIRoute): 'dump' | 'action' | 'scaffold' | 'rescue
       return 'reentry';
     default:
       return 'dump';
+  }
+}
+
+function getMainFlowSurface(route: UIRoute) {
+  switch (route) {
+    case 'DUMP_ENTRY':
+    case 'SYNTHESIZING':
+      return {
+        tone: 'start' as const,
+        maxWidth: '42rem',
+        showRoomHeader: false,
+      };
+    case 'BOUNCE_BACK':
+    case 'MORNING_RITUAL':
+      return {
+        tone: 'reentry' as const,
+        maxWidth: '42rem',
+        showRoomHeader: true,
+      };
+    case 'ONE_ACTION':
+    case 'SCAFFOLD':
+      return {
+        tone: 'action' as const,
+        maxWidth: '44rem',
+        showRoomHeader: false,
+      };
+    default:
+      return {
+        tone: 'recovery' as const,
+        maxWidth: '42rem',
+        showRoomHeader: false,
+      };
   }
 }
 
@@ -602,9 +633,6 @@ export default function StateMachinePage() {
     roomCardCanMakeSmaller,
     handleCreateRoom,
     handleSelectRoom,
-    handleRenameRoom,
-    handleTrashRoom,
-    handleRestoreRoom,
     handleContinueFromRoomCard,
     handleMakeSmallerFromRoomCard,
   } = useRoomActions({
@@ -650,13 +678,11 @@ export default function StateMachinePage() {
 
   const studioSnapshot = buildStudioSnapshot(session.task, currentActionState, currentPayload);
   const studioIntents = getStudioIntents(session, currentActionState, currentPayload);
-  const routePrefersCanvasFirst = ['DUMP_ENTRY', 'BOUNCE_BACK', 'MORNING_RITUAL', 'ONE_ACTION'].includes(session.uiRoute);
-  const routeMaxWidth = session.uiRoute === 'DUMP_ENTRY' ? '64rem' : '50rem';
-  const routeUsesReducedChrome = ['BOUNCE_BACK', 'MORNING_RITUAL', 'ONE_ACTION'].includes(session.uiRoute);
+  const mainFlowSurface = getMainFlowSurface(session.uiRoute);
+  const routeUsesReducedChrome = ['BOUNCE_BACK', 'MORNING_RITUAL', 'ONE_ACTION', 'SCAFFOLD', 'RESCUE', 'CLARIFICATION', 'DECISION_BOARD', 'MANUAL_FALLBACK'].includes(session.uiRoute);
   const routeMeta = getRouteShellMeta(
     session.uiRoute,
     activeRoom?.title ?? session.roomTitle,
-    currentActionState?.title ?? currentPayload?.recommended_action.title ?? null,
   );
   const studioMode = getStudioMode(session.uiRoute);
   const utilitySections = [
@@ -1136,41 +1162,14 @@ export default function StateMachinePage() {
               activeRoomId={activeRoomId}
               onSelectRoom={handleSelectRoomFromShell}
               onCreateRoom={handleCreateRoom}
-              onRenameRoom={handleRenameRoom}
-              onTrashRoom={handleTrashRoom}
-              onRestoreRoom={handleRestoreRoom}
               collapsed={!isCompactViewport && isRoomSidebarCollapsed}
+              onToggleCollapse={isCompactViewport ? undefined : () => setIsRoomSidebarCollapsed((value) => !value)}
             />
           </div>
 
           <div className="mind-room-main">
-            {routePrefersCanvasFirst ? (
-              <>
-                <div
-                  style={{
-                    width: '100%',
-                    maxWidth: routeMaxWidth,
-                  }}
-                >
-                  {renderState()}
-                </div>
-                <div
-                  style={{
-                    width: '100%',
-                    maxWidth: routeMaxWidth,
-                  }}
-                >
-                  <RoomCanvasHeader
-                    room={activeRoom}
-                    onContinue={handleContinueFromRoomCard}
-                    onMakeSmaller={handleMakeSmallerFromRoomCard}
-                    continueDisabled={!roomCardCanContinue}
-                    makeSmallerDisabled={!roomCardCanMakeSmaller}
-                  />
-                </div>
-              </>
-            ) : (
-              <>
+            <section className={`mind-room-main-stage mind-room-main-stage-${mainFlowSurface.tone}`}>
+              {mainFlowSurface.showRoomHeader && (
                 <RoomCanvasHeader
                   room={activeRoom}
                   onContinue={handleContinueFromRoomCard}
@@ -1178,63 +1177,49 @@ export default function StateMachinePage() {
                   continueDisabled={!roomCardCanContinue}
                   makeSmallerDisabled={!roomCardCanMakeSmaller}
                 />
-                <div
-                  style={{
-                    width: '100%',
-                    maxWidth: routeMaxWidth,
-                  }}
-                >
-                  {renderState()}
-                </div>
-              </>
-            )}
+              )}
+              <div
+                className="mind-room-main-stage-content"
+                style={{
+                  maxWidth: mainFlowSurface.maxWidth,
+                }}
+              >
+                {renderState()}
+              </div>
+            </section>
           </div>
 
           <aside className={`mind-room-studio-wrap ${showMobileStudio ? 'is-open' : ''} ${isStudioCollapsed ? 'is-collapsed' : ''}`}>
-            {isStudioCollapsed && !isCompactViewport ? (
-              <div className="mind-room-studio-collapsed">
+            <div className="mind-room-studio-header">
+              <div>
                 <p className="studio-eyebrow">Studio</p>
-                <button
-                  type="button"
-                  className="shell-toggle-button studio-rail-handle"
-                  onClick={() => setIsStudioCollapsed(false)}
-                  aria-label="ขยายตัวช่วยของห้องนี้"
-                  title="ขยายตัวช่วยของห้องนี้"
-                >
-                  ←
-                </button>
+                <h2 className="mind-room-studio-title">ตัวช่วย</h2>
               </div>
-            ) : (
-              <>
-                <div className="mind-room-studio-header">
-                  <div>
-                    <p className="studio-eyebrow">Studio</p>
-                    <h2 className="mind-room-studio-title">ตัวช่วยของห้องนี้</h2>
-                  </div>
-                  <button
-                    type="button"
-                    className="shell-toggle-button shell-toggle-button-subtle"
-                    onClick={() => {
-                      if (isCompactViewport) {
-                        setShowMobileStudio(false);
-                        return;
-                      }
-                      setIsStudioCollapsed((value) => !value);
-                    }}
-                    aria-label={isCompactViewport ? 'ปิดตัวช่วย' : 'ย่อตัวช่วย'}
-                  >
-                    {isCompactViewport ? 'ปิด' : '→'}
-                  </button>
-                </div>
-                <StudioPanel
-                  snapshot={studioSnapshot}
-                  intents={studioIntents}
-                  loadingIntentId={activeStudioIntent}
-                  onIntent={handleStudioIntent}
-                  onEditContext={studioSnapshot ? handleEditCurrentContext : undefined}
-                  mode={studioMode}
-                />
-              </>
+              <button
+                type="button"
+                className="shell-toggle-button shell-toggle-button-subtle"
+                onClick={() => {
+                  if (isCompactViewport) {
+                    setShowMobileStudio(false);
+                    return;
+                  }
+                  setIsStudioCollapsed((value) => !value);
+                }}
+                aria-label={isCompactViewport ? 'ปิดตัวช่วย' : isStudioCollapsed ? 'ขยายตัวช่วย' : 'ย่อตัวช่วย'}
+              >
+                {isCompactViewport ? 'ปิด' : isStudioCollapsed ? '←' : '→'}
+              </button>
+            </div>
+            {!isStudioCollapsed && (
+              <StudioPanel
+                snapshot={studioSnapshot}
+                intents={studioIntents}
+                loadingIntentId={activeStudioIntent}
+                onIntent={handleStudioIntent}
+                onEditContext={studioSnapshot ? handleEditCurrentContext : undefined}
+                mode={studioMode}
+                isCompactViewport={isCompactViewport}
+              />
             )}
           </aside>
         </div>

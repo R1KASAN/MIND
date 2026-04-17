@@ -15,7 +15,7 @@ function scenarioCopy(room: RoomRecord) {
     return 'โฟกัสตอบลูกค้าให้ทัน โดยไม่หลุดบริบทของดีล';
   }
   if (room.scenarioType === 'client_project_restart') {
-    return 'โฟกัสกลับเข้างานเดิมให้เร็ว แล้วหา next move ที่เริ่มได้จริง';
+    return 'โฟกัสกลับเข้างานเดิมให้เร็ว แล้วเริ่มจากจุดที่เบาสุด';
   }
   return 'ห้องนี้เก็บบริบทของงานนี้ไว้ให้กลับมาต่อได้ง่าย';
 }
@@ -24,23 +24,23 @@ function getFreshnessState(room: RoomRecord) {
   if (room.aiFreshness === 'fallback') {
     return {
       tone: 'fallback',
-      title: 'ใช้ brief ล่าสุด',
-      detail: 'MIND กำลังยึด save point ล่าสุดที่เชื่อถือได้ไว้ก่อน',
+      title: 'ใช้จุดล่าสุด',
+      detail: 'MIND ใช้สรุปล่าสุดที่เชื่อถือได้ไว้ก่อน',
     };
   }
 
   if (room.aiFreshness === 'stale') {
     return {
       tone: 'stale',
-      title: 'ยังไม่ refresh',
-      detail: 'เปิดห้องแล้วเริ่มต่อได้เลย แม้ AI ยังไม่ได้สรุปรอบใหม่',
+      title: 'ยังไม่อัปเดต',
+      detail: 'เปิดห้องแล้วเริ่มต่อได้เลย แม้ยังไม่ได้สรุปรอบใหม่',
     };
   }
 
   return {
     tone: 'fresh',
-    title: 'AI สด',
-    detail: 'save point นี้เพิ่งอัปเดตและพร้อมใช้ต่อทันที',
+    title: 'พร้อมใช้',
+    detail: 'จุดล่าสุดนี้เพิ่งอัปเดตและพร้อมใช้ต่อทันที',
   };
 }
 
@@ -66,9 +66,12 @@ export function RoomCanvasHeader({
   const roomIdentity = room.contextSummary.trim() && room.contextSummary.trim() !== brief
     ? room.contextSummary.trim()
     : scenarioCopy(room);
+  const briefSummary = brief || roomIdentity;
   const updatedAt = formatUpdatedAt(room.lastKnownGoodAt ?? room.lastUpdatedAt);
   const hasSavePoint = brief.length > 0 || nextMoves.length > 0;
   const primaryNextMove = nextMoves[0];
+  const extraNextMoves = nextMoves.slice(1);
+  const showMore = extraNextMoves.length > 0 || freshness.detail.length > 0;
 
   return (
     <section className="room-canvas-header">
@@ -109,43 +112,42 @@ export function RoomCanvasHeader({
 
       {!hasSavePoint ? (
         <div className="room-reentry-empty">
-          <p className="room-reentry-empty-title">ห้องนี้ยังไม่มี save point</p>
+          <p className="room-reentry-empty-title">ห้องนี้ยังไม่มีจุดล่าสุด</p>
           <p className="room-reentry-empty-copy">
-            วาง chaos ของงานนี้ก่อน แล้วให้ MIND สร้างจุดล่าสุดกับ next move แรกให้ห้องนี้
+            วางงานนี้ก่อน แล้วให้ MIND ช่วยสรุปจุดค้างกับทางเริ่ม
           </p>
         </div>
       ) : (
-        <div className="room-reentry-grid room-reentry-grid-slim">
-          <article className="room-reentry-block">
-            <p className="room-reentry-label">ค้างตรงนี้</p>
-            <p className="room-reentry-copy">{brief}</p>
-          </article>
+        <article className="room-reentry-summary">
+          <p className="room-reentry-label">ค้างตรงนี้</p>
+          <p className="room-reentry-copy">{briefSummary}</p>
+          <p className="room-reentry-next-inline">
+            <span className="room-reentry-next-inline-label">เริ่มตรงนี้</span>
+            <span>
+              {primaryNextMove ?? 'กดต่อจากจุดนี้เพื่อให้ MIND พากลับเข้าจังหวะเดิมก่อน'}
+            </span>
+          </p>
+        </article>
+      )}
 
-          <article className="room-reentry-block">
-            <p className="room-reentry-label">เริ่มตรงนี้</p>
-            {primaryNextMove ? (
-              <p className="room-reentry-copy">{primaryNextMove}</p>
-            ) : (
-              <p className="room-reentry-copy room-reentry-copy-muted">
-                ยังไม่มี next move ที่ชัดพอ กดต่อจากจุดนี้เพื่อให้ MIND พากลับเข้า flow เดิมก่อน
-              </p>
+      {showMore && (
+        <details className="room-reentry-more">
+          <summary>ดูเพิ่ม</summary>
+          <div className="room-reentry-more-body">
+            {extraNextMoves.length > 0 && (
+              <div className="room-next-moves">
+                {extraNextMoves.map((item) => (
+                  <span key={item} className="room-next-move-chip">{item}</span>
+                ))}
+              </div>
             )}
-          </article>
-        </div>
+            <p className="room-canvas-ai-note">
+              <span className="room-canvas-ai-note-label">MIND ใช้อะไร</span>
+              <span>{freshness.detail}</span>
+            </p>
+          </div>
+        </details>
       )}
-
-      {nextMoves.length > 1 && (
-        <div className="room-next-moves">
-          {nextMoves.slice(1).map((item) => (
-            <span key={item} className="room-next-move-chip">{item}</span>
-          ))}
-        </div>
-      )}
-
-      <p className="room-canvas-ai-note">
-        <span className="room-canvas-ai-note-label">AI ใช้ข้อมูลอะไร</span>
-        <span>{freshness.detail}</span>
-      </p>
     </section>
   );
 }

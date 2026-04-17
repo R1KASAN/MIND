@@ -5,12 +5,10 @@ import {
   DUMP_HERO_HEADING,
   DUMP_TEXTBOX_LABEL,
   EDIT_CONTEXT_CTA,
-  STUDIO_PROVENANCE_HEADING,
   STUDIO_SNAPSHOT_TARGET_SELECTOR,
   seedStudioSession,
   STUDIO_BLOCKED_INTENT,
   STUDIO_BLOCKED_REASON,
-  STUDIO_SNAPSHOT_HEADING,
   STUDIO_STATUS_INTENT,
   waitForAnalyticsEventCount,
 } from './studio-smoke-shared';
@@ -78,32 +76,33 @@ async function run() {
       throw new Error(`expected one studio snapshot target, received ${snapshotTargetCount}`);
     }
     await snapshotTargets.first().waitFor({ state: 'visible', timeout: 30000 });
-    await mobileStudio.getByText(STUDIO_SNAPSHOT_HEADING).waitFor({ state: 'visible', timeout: 30000 });
-    await mobileStudio.getByText(STUDIO_PROVENANCE_HEADING).waitFor({ state: 'visible', timeout: 30000 });
-    await mobileStudio.getByText('มั่นใจสูง').waitFor({ state: 'visible', timeout: 30000 });
-    const provenanceSummary = mobileStudio.locator('.studio-provenance > summary');
+    const provenanceSummary = mobileStudio.locator('.studio-mobile-intents .studio-provenance > summary').first();
     await provenanceSummary.waitFor({ state: 'visible', timeout: 30000 });
     await provenanceSummary.click();
-    await mobileStudio.locator('.studio-provenance-body').waitFor({ state: 'visible', timeout: 30000 });
+    await mobileStudio.locator('.studio-mobile-intents .studio-provenance-body').first().waitFor({ state: 'visible', timeout: 30000 });
     await waitForAnalyticsEventCount(page, 'studio_snapshot_viewed', 1);
 
     console.log('[SMOKE] reviewing status on mobile');
     const statusButton = mobileStudio.getByRole('button', { name: STUDIO_STATUS_INTENT });
     await statusButton.waitFor({ state: 'visible', timeout: 30000 });
     await statusButton.click();
-    await snapshotTargets.first().locator('.studio-card-emphasis').waitFor({ state: 'visible', timeout: 30000 });
     await waitForAnalyticsEventCount(page, 'studio_snapshot_viewed', 1);
 
     console.log('[SMOKE] expanding mobile secondary intents');
-    const showMoreButton = mobileStudio.getByRole('button', { name: 'ดูเพิ่ม' });
-    await showMoreButton.waitFor({ state: 'visible', timeout: 30000 });
-    await showMoreButton.click();
+    const showMoreButton = mobileStudio.getByRole('button', { name: 'ดูตัวช่วยเพิ่ม' });
+    if (await showMoreButton.count()) {
+      await showMoreButton.first().waitFor({ state: 'visible', timeout: 30000 });
+      await showMoreButton.first().click();
+    }
 
     console.log('[SMOKE] checking blocked advanced intent copy on mobile');
     const blockedIntent = mobileStudio.getByRole('button', { name: STUDIO_BLOCKED_INTENT });
     await blockedIntent.waitFor({ state: 'visible', timeout: 30000 });
     await blockedIntent.click({ force: true });
-    const blockedNote = mobileStudio.locator('.studio-inline-note');
+    const blockedNote = mobileStudio
+      .locator('.studio-mobile-intents .studio-inline-note')
+      .filter({ hasText: STUDIO_BLOCKED_REASON })
+      .first();
     await blockedNote.waitFor({ state: 'visible', timeout: 30000 });
     const blockedNoteText = (await blockedNote.textContent())?.trim() ?? '';
     if (!blockedNoteText.includes(STUDIO_BLOCKED_REASON)) {

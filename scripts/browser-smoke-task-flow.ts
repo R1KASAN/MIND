@@ -18,9 +18,9 @@ const RESPONSE_OBSERVE_TIMEOUT_MS = Number(process.env.MIND_SMOKE_RESPONSE_OBSER
 const AI_WAIT_TIMEOUT_MS = Number(process.env.MIND_SMOKE_AI_WAIT_TIMEOUT_MS || 210_000) || 210_000;
 const SCAFFOLD_LOADING_COPY = 'MIND กำลังหาวิธีย่อยให้เล็กลงที่ยังมีความหมายอยู่…';
 const DUMP_TEXTBOX_LABEL = 'พิมพ์สภาพงานของคุณ';
-const DUMP_HERO_HEADING = 'พิมพ์สภาพงานมาก่อน แล้วค่อยแนบไฟล์ถ้ามี';
-const DUMP_REASSURANCE_COPY = 'ไม่มีไฟล์ก็เริ่มได้ MIND จะใช้ข้อความที่คุณพิมพ์ก่อน แล้วค่อยอ่านไฟล์เป็น context เสริมถ้ามี';
-const STUDIO_EMPTY_PANEL_HEADING = 'เริ่มจากข้อความก่อน แล้วค่อยใช้ Studio ต่อ';
+const DUMP_HERO_HEADING = 'พิมพ์งานก่อน แล้วค่อยแนบไฟล์ถ้ามี';
+const DUMP_REASSURANCE_COPY = 'ไม่มีไฟล์ก็เริ่มได้ MIND จะใช้ข้อความที่คุณพิมพ์ก่อน แล้วค่อยอ่านไฟล์เป็นบริบทเสริมถ้ามี';
+const STUDIO_EMPTY_PANEL_HEADING = 'ดูบริบทเดิมแล้วค่อยไปต่อ';
 const STUDIO_STATUS_INTENT = 'กลับมาดูสถานะ';
 const STUDIO_EMPTY_SNAPSHOT = 'ยังไม่มี snapshot ของงานนี้ เพราะ MIND ยังไม่มีข้อความหรือบริบทพอให้สรุป';
 const STUDIO_SNAPSHOT_HEADING = 'บริบทที่ MIND ใช้อยู่';
@@ -239,7 +239,7 @@ async function run() {
     await page.getByLabel(DUMP_TEXTBOX_LABEL).fill(
       'ลูกค้าส่ง feedback ยาวหลายข้อเกี่ยวกับ landing page และผมต้องตอบลูกค้ากลับวันนี้ ช่วยสรุปสถานการณ์ ร่างข้อความตอบกลับ แล้วบอกก้าวแรกที่ควรทำต่อทันที',
     );
-    await page.getByRole('button', { name: 'สรุปให้เลย' }).click();
+    await page.getByRole('button', { name: 'ไปต่อ' }).click();
 
     stage = 'action';
     const actionStartedAt = Date.now();

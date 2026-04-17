@@ -27,7 +27,7 @@ async function run() {
 
   try {
     const initialUrl = `${BASE_URL}/?demo=presentation&scenario=restart&walkthrough=off&ritual=off`;
-    const cardLoadStartedAt = Date.now();
+    const shellLoadStartedAt = Date.now();
     await page.goto(initialUrl, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => document.body.innerText.length > 0, undefined, { timeout: UI_TIMEOUT_MS });
 
@@ -36,99 +36,49 @@ async function run() {
       await walkthroughCloseButton.click();
     }
 
+    const startHeading = page.getByRole('heading', { name: 'พิมพ์งานก่อน แล้วค่อยแนบไฟล์ถ้ามี' });
     const roomCanvasHeader = page.locator('.room-canvas-header');
-    const reentrySummaryBlock = page.locator('.room-canvas-header .room-reentry-block').filter({
-      has: page.locator('.room-reentry-label', { hasText: 'ค้างตรงนี้' }),
-    });
-    const reentryNextMoveBlock = page.locator('.room-canvas-header .room-reentry-block').filter({
-      has: page.locator('.room-reentry-label', { hasText: 'เริ่มตรงนี้' }),
-    });
-    const primaryRoomHeading = page.getByRole('heading', { name: 'ACME - Website revamp' });
+    const routeTitle = page.locator('.mind-shell-route-title');
     const healthBadge = page.locator('.app-health-badge');
     const healthHeadline = page.locator('.app-health-headline');
-    const continueButton = page.getByRole('button', { name: 'ต่อจากจุดนี้' });
-    const makeSmallerButton = page.getByRole('button', { name: 'ทำให้เริ่มง่ายขึ้น' });
+    const activeRoomLabel = page.locator('.room-sidebar-item.is-active strong');
 
-    await roomCanvasHeader.waitFor({ state: 'visible' });
-    await primaryRoomHeading.waitFor({ state: 'visible' });
-    const cardVisibleMs = Date.now() - cardLoadStartedAt;
-    const cachedSummaryBeforeRefresh = (await reentrySummaryBlock.innerText()).replace(/\s+/g, ' ').trim();
-    const cachedNextMoveBlockText = (await reentryNextMoveBlock.innerText()).replace(/\s+/g, ' ').trim();
-    const cachedNextMoveBeforeRefresh = cachedNextMoveBlockText.replace(/^เริ่มตรงนี้\s*/, '').trim();
-    if (cachedNextMoveBeforeRefresh.length < 1) {
-      throw new Error('Reentry card did not show next moves before refresh wait');
+    await startHeading.waitFor({ state: 'visible' });
+    const shellVisibleMs = Date.now() - shellLoadStartedAt;
+    const initialHeaderCount = await roomCanvasHeader.count();
+    if (initialHeaderCount !== 0) {
+      throw new Error(`Expected start flow to hide reentry header, found ${initialHeaderCount}`);
     }
-
-    await page.waitForTimeout(3000);
-
-    await page.getByText('ค้างตรงนี้').waitFor({ state: 'visible' });
-    await page.getByText('เริ่มตรงนี้').waitFor({ state: 'visible' });
-    await page.getByText('AI ใช้ข้อมูลอะไร').waitFor({ state: 'visible' });
-    await continueButton.waitFor({ state: 'visible' });
-    await makeSmallerButton.waitFor({ state: 'visible' });
 
     await healthHeadline.filter({ hasText: 'Gemma' }).waitFor({ state: 'visible' });
     const healthBadgeText = ((await healthBadge.textContent()) ?? '').trim();
     const healthHeadlineText = ((await healthHeadline.textContent()) ?? '').trim();
 
-    const freshIndicators = page.getByText('AI สด');
-    const freshCount = await freshIndicators.count();
-    if (freshCount < 2) {
-      throw new Error(`Expected both sidebar and reentry card to show AI สด, found ${freshCount}`);
-    }
-
-    const initialSummary = (
-      await reentrySummaryBlock.innerText()
-    ).replace(/\s+/g, ' ').trim();
-
-    const urgentRoomButton = page.locator('.room-sidebar-item').filter({
-      has: page.locator('strong', { hasText: 'Northstar - Demo reply' }),
-    });
-    await urgentRoomButton.evaluate((element) => {
-      (element as HTMLButtonElement).click();
-    });
-    const urgentRoomHeading = page.getByRole('heading', { name: 'Northstar - Demo reply' });
-    await urgentRoomHeading.waitFor({ state: 'visible' });
-    await urgentRoomButton.getByText('Urgent reply').first().waitFor({ state: 'visible' });
-    const urgentNextMoveText = (
-      await reentryNextMoveBlock.innerText()
-    ).replace(/\s+/g, ' ').trim().replace(/^เริ่มตรงนี้\s*/, '').trim();
-    if (urgentNextMoveText.length < 1) {
-      throw new Error('Urgent room did not show any next moves in the reentry card');
-    }
-    const urgentContinueButton = page.getByRole('button', { name: 'ต่อจากจุดนี้' });
-    if (!(await urgentContinueButton.isEnabled())) {
-      throw new Error('Urgent room continue CTA is disabled');
-    }
-    const urgentSummary = (
-      await reentrySummaryBlock.innerText()
-    ).replace(/\s+/g, ' ').trim();
+    const startPrimaryButton = page.getByRole('button', { name: 'ไปต่อ' });
+    await startPrimaryButton.waitFor({ state: 'visible' });
 
     const restartRoomButton = page.locator('.room-sidebar-item').filter({
       has: page.locator('strong', { hasText: 'ACME - Website revamp' }),
     });
-    await restartRoomButton.evaluate((element) => {
-      (element as HTMLButtonElement).click();
-    });
-    await primaryRoomHeading.waitFor({ state: 'visible' });
-    const restoredRestartSummary = (
-      await reentrySummaryBlock.innerText()
-    ).replace(/\s+/g, ' ').trim();
-    if (initialSummary !== restoredRestartSummary) {
-      throw new Error('Restart room summary changed after switching away and back');
-    }
-    await urgentRoomButton.evaluate((element) => {
-      (element as HTMLButtonElement).click();
-    });
-    await urgentRoomHeading.waitFor({ state: 'visible' });
+    await restartRoomButton.click();
+    await routeTitle.filter({ hasText: 'ACME - Website revamp' }).waitFor({ state: 'visible' });
+    await activeRoomLabel.filter({ hasText: 'ACME - Website revamp' }).waitFor({ state: 'visible' });
+    const acmeStudioSnapshot = page.locator('.studio-desktop-stack .studio-card').filter({ hasText: 'ACME' }).first();
+    await acmeStudioSnapshot.waitFor({ state: 'visible' });
 
-    const restoredUrgentSummary = (
-      await reentrySummaryBlock.innerText()
-    ).replace(/\s+/g, ' ').trim();
+    const urgentRoomButton = page.locator('.room-sidebar-item').filter({
+      has: page.locator('strong', { hasText: 'Northstar - Demo reply' }),
+    });
+    await urgentRoomButton.click();
+    await routeTitle.filter({ hasText: 'Northstar - Demo reply' }).waitFor({ state: 'visible' });
+    await activeRoomLabel.filter({ hasText: 'Northstar - Demo reply' }).waitFor({ state: 'visible' });
+    const northstarStudioSnapshot = page.locator('.studio-desktop-stack .studio-card').filter({ hasText: 'Northstar' }).first();
+    await northstarStudioSnapshot.waitFor({ state: 'visible' });
 
-    if (urgentSummary !== restoredUrgentSummary) {
-      throw new Error('Urgent room summary changed after switching away and back');
-    }
+    await restartRoomButton.click();
+    await routeTitle.filter({ hasText: 'ACME - Website revamp' }).waitFor({ state: 'visible' });
+    await activeRoomLabel.filter({ hasText: 'ACME - Website revamp' }).waitFor({ state: 'visible' });
+    await acmeStudioSnapshot.waitFor({ state: 'visible' });
 
     const hasErrorSplash =
       (await page.getByText('ติดตั้งโมเดลก่อนเพื่อเปิด AI loop').count()) > 0 ||
@@ -143,17 +93,14 @@ async function run() {
     const summary = {
       ok: true,
       baseUrl: BASE_URL,
-      cardVisibleMs,
-      cachedCardVisibleBeforeRefresh: cachedSummaryBeforeRefresh.length > 0 && cachedNextMoveBeforeRefresh.length > 0,
-      cachedNextMoveCountBeforeRefresh: cachedNextMoveBeforeRefresh.length > 0 ? 1 : 0,
+      shellVisibleMs,
+      initialStartHeadingVisible: true,
+      startFlowStaysVisibleOnRoomSelect: true,
       healthBadge: healthBadgeText,
       healthHeadline: healthHeadlineText,
-      freshCount,
-      restoredSummaryMatches: initialSummary === restoredRestartSummary,
-      urgentNextMoveCount: urgentNextMoveText.length > 0 ? 1 : 0,
-      urgentContinueEnabled: await urgentContinueButton.isEnabled(),
-      urgentSummaryPreserved: urgentSummary === restoredUrgentSummary,
-      cachedSummaryPreview: cachedSummaryBeforeRefresh,
+      roomSwitchReflectedInChrome: true,
+      roomSwitchReflectedInStudio: true,
+      startHeaderCount: initialHeaderCount,
       consoleErrors,
       screenshotPath: SCREENSHOT_PATH,
     };

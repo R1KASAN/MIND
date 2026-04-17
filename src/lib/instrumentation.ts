@@ -78,9 +78,10 @@ export function trackEvent(name: EventName, properties?: EventProperties) {
 // Hook wrapper for React components if needed
 import { useEffect } from 'react';
 
-export function useTrackMountEvent(name: EventName, properties?: EventProperties) {
+export function useTrackMountEvent(name: EventName, properties?: EventProperties, enabled = true) {
   useEffect(() => {
+    if (!enabled) return;
     trackEvent(name, properties);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [enabled]);
 }

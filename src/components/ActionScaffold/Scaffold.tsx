@@ -45,7 +45,7 @@ export function Scaffold({
 
   if (isCompletion) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '1rem', paddingTop: '2rem' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', maxWidth: '44rem', margin: '0 auto', gap: '1rem', paddingTop: '2rem' }}>
         <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>{action.title}</h2>
         <div
           style={{
@@ -100,7 +100,7 @@ export function Scaffold({
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '1rem', paddingTop: '2rem' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', maxWidth: '44rem', margin: '0 auto', gap: '1rem', paddingTop: '2rem' }}>
       <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>{action.title}</h2>
       <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '-0.35rem' }}>
         ตอนนี้อยู่ที่ขั้นตอน {visibleSteps.length === 0 ? '0' : `${activeStepIndex + 1} / ${visibleSteps.length}`}

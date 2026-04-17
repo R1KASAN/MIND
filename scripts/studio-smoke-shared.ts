@@ -1,15 +1,15 @@
 import type { Page } from '@playwright/test';
 
-export const DUMP_HERO_HEADING = 'พิมพ์สภาพงานมาก่อน แล้วค่อยแนบไฟล์ถ้ามี';
+export const DUMP_HERO_HEADING = 'พิมพ์งานก่อน แล้วค่อยแนบไฟล์ถ้ามี';
 export const DUMP_TEXTBOX_LABEL = 'พิมพ์สภาพงานของคุณ';
-export const STUDIO_PANEL_HEADING = 'ใช้บริบทของงานนี้ต่อได้เลย โดยไม่ต้องพิมพ์ใหม่';
+export const STUDIO_PANEL_HEADING = 'ดูบริบทเดิมแล้วค่อยไปต่อ';
 export const STUDIO_SNAPSHOT_HEADING = 'บริบทที่ MIND ใช้อยู่';
 export const STUDIO_PROVENANCE_HEADING = 'ทำไม MIND ใช้ชุดนี้';
 export const STUDIO_STATUS_INTENT = 'กลับมาดูสถานะ';
 export const STUDIO_BLOCKED_INTENT = 'ย่อยงานให้เล็ก';
 export const STUDIO_BLOCKED_REASON = 'ต้องมีก้าวปัจจุบันก่อนถึงจะย่อยต่อได้';
 export const EDIT_CONTEXT_CTA = 'แก้บริบทนี้';
-export const STUDIO_SNAPSHOT_TARGET_SELECTOR = '[data-studio-snapshot-target]';
+export const STUDIO_SNAPSHOT_TARGET_SELECTOR = '[data-studio-snapshot-target]:visible';
 
 export async function getAnalyticsEventCount(page: Page, eventName: string) {
   return page.evaluate(async (targetEventName) => {

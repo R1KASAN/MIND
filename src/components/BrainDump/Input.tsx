@@ -233,10 +233,10 @@ export function BrainDumpInput({
             {presentationMode ? '30-second story' : 'เริ่มงานนี้'}
           </p>
           <h1 style={{ fontSize: '2rem', fontWeight: 650, lineHeight: 1.08 }}>
-            พิมพ์สภาพงานมาก่อน แล้วค่อยแนบไฟล์ถ้ามี
+            พิมพ์งานก่อน แล้วค่อยแนบไฟล์ถ้ามี
           </h1>
           <p style={{ color: 'var(--text-secondary)', maxWidth: '36rem' }}>
-            พิมพ์สิ่งที่ค้างอยู่ตรง ๆ ได้เลย ไม่มีไฟล์ก็เริ่มได้ แล้วค่อยให้ MIND หา next move
+            พิมพ์สิ่งที่ค้างอยู่ตรง ๆ แล้วกดไปต่อได้เลย ถ้ามีไฟล์ค่อยแนบเพิ่มทีหลัง
           </p>
         </div>
 
@@ -255,9 +255,9 @@ export function BrainDumpInput({
         }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
-            <p style={{ margin: 0, fontWeight: 600 }}>พิมพ์ก่อน แล้วค่อยแนบถ้าจำเป็น</p>
+            <p style={{ margin: 0, fontWeight: 600 }}>วางงานตรงนี้ก่อน</p>
             <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.86rem' }}>
-              วางอีเมล, feedback, หรือโน้ตลงมาก่อน แล้วค่อยใช้ไฟล์เป็น context เสริม
+              ไฟล์เป็นบริบทเสริม ไม่จำเป็นต้องมีตั้งแต่รอบแรก
             </p>
           </div>
           <button
@@ -293,8 +293,8 @@ export function BrainDumpInput({
           color: 'var(--text-secondary)',
           fontSize: '0.84rem',
         }}>
-          <span>ลากไฟล์มาวางในกล่องนี้ได้เลย ถ้ามี</span>
-          <span>{hasFiles ? `${files.length} ไฟล์พร้อมใช้ใน room นี้` : 'ไฟล์เป็น optional context เท่านั้น'}</span>
+          <span>ลากไฟล์มาวางในกล่องนี้ได้ ถ้าต้องใช้</span>
+          <span>{hasFiles ? `${files.length} ไฟล์พร้อมใช้` : 'ไฟล์เป็นบริบทเสริมเท่านั้น'}</span>
         </div>
 
         <textarea
@@ -354,7 +354,7 @@ export function BrainDumpInput({
         </div>
 
         <button className="primary" onClick={submit} disabled={!canSubmit} style={{ width: '100%' }}>
-          {isSubmitting ? 'กำลังสรุป...' : 'ไปต่อเลย'}
+          {isSubmitting ? 'กำลังสรุป...' : 'ไปต่อ'}
         </button>
 
         <details
@@ -376,7 +376,7 @@ export function BrainDumpInput({
             alignItems: 'center',
             gap: '0.35rem',
           }}>
-            ดูตัวอย่างเพิ่มเติม
+            ดูตัวอย่างและวิธีใช้เร็ว
           </summary>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.9rem', marginTop: '0.85rem' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
@@ -397,9 +397,9 @@ export function BrainDumpInput({
               </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-              <p style={{ margin: 0, fontWeight: 600, fontSize: '0.94rem' }}>ใช้ MIND แบบเร็วที่สุด</p>
+              <p style={{ margin: 0, fontWeight: 600, fontSize: '0.94rem' }}>เริ่มเร็วที่สุด</p>
               <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.88rem', lineHeight: 1.6 }}>
-                1. วางสิ่งที่ค้างอยู่ลงมา 2. แนบไฟล์ถ้ามี 3. กดไปต่อเพื่อให้ MIND สรุปและหา next move
+                1. วางสิ่งที่ค้างอยู่ 2. แนบไฟล์ถ้ามี 3. กดไปต่อ
               </p>
             </div>
           </div>
