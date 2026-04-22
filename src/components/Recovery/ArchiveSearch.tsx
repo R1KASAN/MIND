@@ -32,6 +32,8 @@ export function ArchiveSearch({ onClose }: { onClose: () => void }) {
       </div>
 
       <input 
+        id="archive-search-query"
+        name="archiveSearchQuery"
         type="text" 
         placeholder="พิมพ์เพื่อค้นหาก้าวก่อนหน้า..." 
         value={query} 

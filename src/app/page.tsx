@@ -7,6 +7,8 @@ import {
   Action, updateAction, createDefaultSession, type UIRoute,
   getRoomWorkspace,
   hydrateRoomSessionFromRecord,
+  loadRoomFileBlob,
+  normalizeSession,
   type RoomRecord,
 } from '@/lib/store/idb';
 import { processWeeklySweep } from '@/lib/store/memoryRules';
@@ -18,8 +20,16 @@ import { AiRescueResponse } from '@/lib/ai/operations';
 import type { AiOpsDebugEntry } from '@/lib/ai/ai-ops-debug';
 import {
   buildPayloadFromAction,
+  deriveRoomBlockers,
   hasResumableTask,
 } from '@/lib/orchestrator/task-machine';
+import {
+  buildPreferredRoomSourceContext,
+  createAutoRoomSourcePreference,
+  getRoomSourceIdForFile,
+  stripRoomFileContext,
+  type RoomSourceFile,
+} from '@/lib/room';
 import {
   loadBootstrapWorkspace,
   migrateLegacyActiveDumpContext,
@@ -61,6 +71,7 @@ import { WalkthroughOverlay } from '@/components/Walkthrough/WalkthroughOverlay'
 import { AiOpsDebugPanel } from '@/components/Debug/AiOpsDebugPanel';
 import { DemoObservationPanel } from '@/components/Debug/DemoObservationPanel';
 import { StudioPanel } from '@/components/Studio/StudioPanel';
+import { DataReviewPanel } from '@/components/Studio/DataReviewPanel';
 import { ValuePulse } from '@/components/ValuePulse/ValuePulse';
 import { RoomSidebar } from '@/components/Rooms/RoomSidebar';
 import { RoomCanvasHeader } from '@/components/Rooms/RoomCanvasHeader';
@@ -248,7 +259,7 @@ function getMainFlowSurface(route: UIRoute) {
       return {
         tone: 'reentry' as const,
         maxWidth: '42rem',
-        showRoomHeader: true,
+        showRoomHeader: false,
       };
     case 'ONE_ACTION':
     case 'SCAFFOLD':
@@ -297,12 +308,14 @@ export default function StateMachinePage() {
   const [showOverview, setShowOverview] = useState(false);
   const [showTrust, setShowTrust] = useState(false);
   const [showWalkthrough, setShowWalkthrough] = useState(false);
+  const [showDataReview, setShowDataReview] = useState<'manage' | 'review' | null>(null);
   const [aiOpsEntries, setAiOpsEntries] = useState<AiOpsDebugEntry[]>([]);
   const [allowAiDebug, setAllowAiDebug] = useState(process.env.NODE_ENV !== 'production');
   const [showAiOpsDebug, setShowAiOpsDebug] = useState(false);
   const [allowObservationCapture, setAllowObservationCapture] = useState(false);
   const [showObservationCapture, setShowObservationCapture] = useState(false);
   const [activeStudioIntent, setActiveStudioIntent] = useState<StudioIntentId | null>(null);
+  const [retryingFileId, setRetryingFileId] = useState<string | null>(null);
 
   // T046: Background AI status — non-blocking passive indicator
   const [aiHealth, setAiHealth] = useState<HealthCheckResult>(DEFAULT_AI_HEALTH);
@@ -320,7 +333,7 @@ export default function StateMachinePage() {
   const [showMobileStudio, setShowMobileStudio] = useState(false);
   const [isRoomSidebarCollapsed, setIsRoomSidebarCollapsed] = useState(false);
   const [isStudioCollapsed, setIsStudioCollapsed] = useState(false);
-  const taskOpenedRef = useRef<string | null>(null);
+  const [uiViewMode, setUiViewMode] = useState<'FOCUS' | 'POWER'>('FOCUS');
   const reentryUnderstoodRef = useRef<string | null>(null);
   const previousUiRouteRef = useRef<UIRoute | null>(null);
   const valuePulseAnchorRef = useRef<ValuePulseContext | null>(null);
@@ -543,27 +556,6 @@ export default function StateMachinePage() {
   }, [currentActionState, isReentryLoading, session, session?.lastActive, session?.task?.id, session?.task?.reentryBrief?.createdAt, session?.uiRoute]);
 
   useEffect(() => {
-    if (!session?.task) return;
-    if (!['DUMP_ENTRY', 'BOUNCE_BACK', 'MORNING_RITUAL'].includes(session.uiRoute)) return;
-    const openKey = `${session.uiRoute}:${session.task.id}:${session.task.createdAt}`;
-    if (taskOpenedRef.current === openKey) return;
-
-    taskOpenedRef.current = openKey;
-    trackEvent('task_opened', {
-      room_id: session.roomId,
-      room_title: session.roomTitle,
-      room_scenario_type: session.roomScenarioType,
-      task_id: session.task.id,
-      session_id: String(session.lastActive),
-      ui_route: session.uiRoute,
-      assistant_mode: session.task.assistantMode,
-      scenario_id: demoScenarioId,
-      icp_tag: PRIMARY_ICP.id,
-      source_context_count: session.task.sourceFiles.length + (session.task.sourceText.trim().length > 0 ? 1 : 0),
-    });
-  }, [demoScenarioId, session]);
-
-  useEffect(() => {
     if (!session?.task?.reentryBrief) return;
     if (!['BOUNCE_BACK', 'MORNING_RITUAL'].includes(session.uiRoute)) return;
     const understoodKey = `${session.uiRoute}:${session.task.id}:${session.task.reentryBrief.createdAt}`;
@@ -646,7 +638,6 @@ export default function StateMachinePage() {
     hydrateSessionState,
     refreshRooms,
     resetRoomInteractionState: () => {
-      taskOpenedRef.current = null;
       reentryUnderstoodRef.current = null;
       previousUiRouteRef.current = null;
     },
@@ -678,8 +669,9 @@ export default function StateMachinePage() {
 
   const studioSnapshot = buildStudioSnapshot(session.task, currentActionState, currentPayload);
   const studioIntents = getStudioIntents(session, currentActionState, currentPayload);
+  const isFocusMode = uiViewMode === 'FOCUS';
   const mainFlowSurface = getMainFlowSurface(session.uiRoute);
-  const routeUsesReducedChrome = ['BOUNCE_BACK', 'MORNING_RITUAL', 'ONE_ACTION', 'SCAFFOLD', 'RESCUE', 'CLARIFICATION', 'DECISION_BOARD', 'MANUAL_FALLBACK'].includes(session.uiRoute);
+  const routeUsesReducedChrome = isFocusMode;
   const routeMeta = getRouteShellMeta(
     session.uiRoute,
     activeRoom?.title ?? session.roomTitle,
@@ -689,6 +681,12 @@ export default function StateMachinePage() {
     {
       title: 'ดูบริบท',
       items: [
+        ...(session.task
+          ? [
+              { key: 'manage-data', label: 'Manage Data', onClick: () => setShowDataReview('manage' as const) },
+              { key: 'review-room', label: 'Review Room', onClick: () => setShowDataReview('review' as const) },
+            ]
+          : []),
         { key: 'archive', label: 'Archive', onClick: () => setShowArchive(true) },
         { key: 'overview', label: 'Overview', onClick: () => setShowOverview(true) },
         { key: 'trust', label: 'Why this / ความไว้ใจ', onClick: () => setShowTrust(true) },
@@ -721,6 +719,54 @@ export default function StateMachinePage() {
 
   const handleEditCurrentContext = async () => {
     await controller.openDumpWithCurrentContext();
+  };
+
+  const handleDeleteRoomSources = async (deleteTokens: string[]) => {
+    const baseSession = sessionRef.current ?? session;
+    if (!baseSession.task) return;
+    const tokenSet = new Set(deleteTokens);
+    const removeManualText = tokenSet.has(`manual:${baseSession.task.id}`);
+    const nextPendingInputs = baseSession.task.pendingInputs.filter((item, index) => (
+      !tokenSet.has(`pending:${item.kind}:${index}`)
+    ));
+    const nextSourceFiles = baseSession.task.sourceFiles.filter((file) => !tokenSet.has(`file:${file.id}`));
+    const baseText = removeManualText ? '' : stripRoomFileContext(baseSession.task.sourceText);
+    const removedPrimarySource = baseSession.task.sourcePreference?.primarySourceId
+      ? tokenSet.has(baseSession.task.sourcePreference.primarySourceId)
+      : false;
+    const sourcePreference = removedPrimarySource
+      ? createAutoRoomSourcePreference(nextSourceFiles, Date.now())
+      : baseSession.task.sourcePreference;
+    const preferredContext = buildPreferredRoomSourceContext(baseText, nextSourceFiles, sourcePreference);
+    const taskWithContext = {
+      ...baseSession.task,
+      sourceFiles: nextSourceFiles,
+      sourcePreference,
+      extractedText: preferredContext.extractedText,
+      sourceText: preferredContext.sourceText,
+      pendingInputs: nextPendingInputs,
+      blockerSignals: baseSession.task.blockerSignals.filter((blocker) => blocker !== 'missing_file_or_context'),
+      lastAttemptAt: Date.now(),
+    };
+    const nextTask = {
+      ...taskWithContext,
+      blockerSignals: deriveRoomBlockers(taskWithContext),
+    };
+    const nextSession = normalizeSession({
+      ...baseSession,
+      task: nextTask,
+      activeDumpContext: preferredContext.sourceText
+        ? {
+            text: preferredContext.sourceText,
+            createdAt: baseSession.task.createdAt,
+            lastAttemptAt: nextTask.lastAttemptAt,
+            lastFailureReason: baseSession.task.lastFailureReason,
+          }
+        : undefined,
+    });
+    sessionRef.current = nextSession;
+    setSession(nextSession);
+    await persistSessionWithRooms(nextSession);
   };
 
   const handleStudioIntent = async (intent: StudioIntent) => {
@@ -776,6 +822,249 @@ export default function StateMachinePage() {
     }
   };
 
+  const updateSourceFileAfterRetryFailure = async (
+    fileId: string,
+    failureDetail: string,
+    failureReason?: string,
+  ) => {
+    const baseSession = sessionRef.current ?? session;
+    if (!baseSession.task) return;
+    const now = Date.now();
+    const nextSourceFiles = baseSession.task.sourceFiles.map((file) => (
+      file.id === fileId
+        ? {
+            ...file,
+            status: 'failed' as const,
+            failureReason: failureReason ?? file.failureReason ?? 'file_extraction_unavailable',
+            failureDetail,
+            failureStage: file.failureStage ?? 'unknown',
+            lastExtractAttemptAt: now,
+            extractAttemptCount: (file.extractAttemptCount ?? 0) + 1,
+          }
+        : file
+    ));
+    const preferredContext = buildPreferredRoomSourceContext(
+      stripRoomFileContext(baseSession.task.sourceText),
+      nextSourceFiles,
+      baseSession.task.sourcePreference,
+    );
+    const taskWithContext = {
+      ...baseSession.task,
+      sourceFiles: nextSourceFiles,
+      extractedText: preferredContext.extractedText,
+      sourceText: preferredContext.sourceText,
+      lastAttemptAt: now,
+      blockerSignals: baseSession.task.blockerSignals.filter((blocker) => blocker !== 'missing_file_or_context'),
+    };
+    const nextTask = {
+      ...taskWithContext,
+      blockerSignals: deriveRoomBlockers(taskWithContext),
+    };
+    const nextSession = normalizeSession({
+      ...baseSession,
+      task: nextTask,
+      activeDumpContext: {
+        text: preferredContext.sourceText,
+        createdAt: baseSession.task.createdAt,
+        lastAttemptAt: now,
+        lastFailureReason: baseSession.task.lastFailureReason,
+      },
+    });
+    sessionRef.current = nextSession;
+    setSession(nextSession);
+    await persistSessionWithRooms(nextSession);
+  };
+
+  const handleRetrySourceFile = async (fileId: string) => {
+    const baseSession = sessionRef.current ?? session;
+    const targetFile = baseSession.task?.sourceFiles.find((file) => file.id === fileId);
+    if (!baseSession.task || !targetFile) return;
+
+    setRetryingFileId(fileId);
+    trackEvent('room_file_retry_started', {
+      roomId: baseSession.roomId,
+      fileName: targetFile.name,
+      failureReason: targetFile.failureReason,
+      failureStage: targetFile.failureStage,
+    });
+
+    try {
+      if (!targetFile.storageKey) {
+        await updateSourceFileAfterRetryFailure(fileId, 'missing_local_blob_storage_key');
+        return;
+      }
+
+      const file = await loadRoomFileBlob(targetFile.storageKey);
+      if (!file) {
+        await updateSourceFileAfterRetryFailure(fileId, 'local_blob_not_found');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('text', '');
+      formData.append('files', file, file.name);
+
+      const response = await fetch('/api/file-room/extract', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.ok) {
+        throw new Error(data?.error?.message || `extract_failed_${response.status}`);
+      }
+
+      const extractedFile = Array.isArray(data.sourceFiles) ? data.sourceFiles[0] as Partial<RoomSourceFile> | undefined : undefined;
+      if (!extractedFile) {
+        throw new Error('extract_response_missing_source_file');
+      }
+
+      const latestSession = sessionRef.current ?? baseSession;
+      if (!latestSession.task) return;
+      const now = Date.now();
+      const nextSourceFiles: RoomSourceFile[] = latestSession.task.sourceFiles.map((fileItem) => {
+        if (fileItem.id !== fileId) return fileItem;
+        const nextStatus = extractedFile.status ?? 'failed';
+        return {
+          ...fileItem,
+          ...extractedFile,
+          id: fileItem.id,
+          name: extractedFile.name || fileItem.name,
+          kind: extractedFile.kind || fileItem.kind,
+          mimeType: extractedFile.mimeType || fileItem.mimeType,
+          size: typeof extractedFile.size === 'number' ? extractedFile.size : fileItem.size,
+          status: nextStatus,
+          createdAt: fileItem.createdAt,
+          storageKey: fileItem.storageKey,
+          extractedText: nextStatus === 'ready' ? extractedFile.extractedText : undefined,
+          failureReason: nextStatus === 'ready' ? undefined : extractedFile.failureReason ?? fileItem.failureReason,
+          failureDetail: nextStatus === 'ready' ? undefined : extractedFile.failureDetail ?? fileItem.failureDetail,
+          failureStage: nextStatus === 'ready' ? undefined : extractedFile.failureStage ?? fileItem.failureStage,
+          lastExtractAttemptAt: now,
+          extractAttemptCount: (fileItem.extractAttemptCount ?? 0) + 1,
+        };
+      });
+      const sourcePreference = latestSession.task.sourcePreference
+        ?? createAutoRoomSourcePreference(nextSourceFiles, now);
+      const preferredContext = buildPreferredRoomSourceContext(
+        stripRoomFileContext(latestSession.task.sourceText),
+        nextSourceFiles,
+        sourcePreference,
+      );
+      const taskWithContext = {
+        ...latestSession.task,
+        sourceFiles: nextSourceFiles,
+        sourcePreference,
+        extractedText: preferredContext.extractedText,
+        sourceText: preferredContext.sourceText,
+        lastAttemptAt: now,
+        blockerSignals: latestSession.task.blockerSignals.filter((blocker) => blocker !== 'missing_file_or_context'),
+      };
+      const nextTask = {
+        ...taskWithContext,
+        blockerSignals: deriveRoomBlockers(taskWithContext),
+      };
+      const nextSession = normalizeSession({
+        ...latestSession,
+        task: nextTask,
+        activeDumpContext: {
+          text: preferredContext.sourceText,
+          createdAt: latestSession.task.createdAt,
+          lastAttemptAt: now,
+          lastFailureReason: latestSession.task.lastFailureReason,
+        },
+      });
+
+      sessionRef.current = nextSession;
+      setSession(nextSession);
+      await persistSessionWithRooms(nextSession);
+      const updatedFile = nextSourceFiles.find((file) => file.id === fileId);
+      if (updatedFile) {
+        trackEvent('ocr_extract_finished', {
+          roomId: nextSession.roomId,
+          file_name: updatedFile.name,
+          file_kind: updatedFile.kind,
+          file_status: updatedFile.status,
+          failure_reason: updatedFile.failureReason,
+          ocr_engine: updatedFile.ocrEngine,
+          raw_text_length: updatedFile.ocrMetrics?.rawTextLength,
+          normalized_text_length: updatedFile.ocrMetrics?.normalizedTextLength,
+          fragmented_run_count: updatedFile.ocrMetrics?.fragmentedRunCount,
+          space_density: updatedFile.ocrMetrics?.spaceDensity,
+          normal_word_ratio: updatedFile.ocrMetrics?.normalWordRatio,
+          page_count_processed: updatedFile.ocrMetrics?.pageCountProcessed,
+          duration_ms: updatedFile.ocrMetrics?.durationMs,
+        });
+      }
+      trackEvent('room_file_retry_finished', {
+        roomId: nextSession.roomId,
+        fileName: targetFile.name,
+        status: extractedFile.status ?? 'failed',
+        failureReason: extractedFile.failureReason,
+      });
+    } catch (error) {
+      const failureDetail = error instanceof Error ? error.message : 'retry_extract_failed';
+      await updateSourceFileAfterRetryFailure(fileId, failureDetail);
+      trackEvent('room_file_retry_failed', {
+        roomId: baseSession.roomId,
+        fileName: targetFile.name,
+        failureDetail,
+      });
+    } finally {
+      setRetryingFileId(null);
+    }
+  };
+
+  const handleSelectPrimarySourceFile = async (fileId: string) => {
+    const baseSession = sessionRef.current ?? session;
+    if (!baseSession.task) return;
+    const targetFile = baseSession.task.sourceFiles.find((file) => file.id === fileId);
+    if (!targetFile || targetFile.status !== 'ready') return;
+
+    const now = Date.now();
+    const sourcePreference = {
+      primarySourceId: getRoomSourceIdForFile(targetFile),
+      selectedAt: now,
+      selectedBy: 'user' as const,
+    };
+    const preferredContext = buildPreferredRoomSourceContext(
+      stripRoomFileContext(baseSession.task.sourceText),
+      baseSession.task.sourceFiles,
+      sourcePreference,
+    );
+    const taskWithContext = {
+      ...baseSession.task,
+      sourcePreference,
+      extractedText: preferredContext.extractedText,
+      sourceText: preferredContext.sourceText,
+      lastAttemptAt: now,
+      blockerSignals: baseSession.task.blockerSignals.filter((blocker) => blocker !== 'missing_file_or_context'),
+    };
+    const nextTask = {
+      ...taskWithContext,
+      blockerSignals: deriveRoomBlockers(taskWithContext),
+    };
+    const nextSession = normalizeSession({
+      ...baseSession,
+      task: nextTask,
+      activeDumpContext: {
+        text: preferredContext.sourceText,
+        createdAt: baseSession.task.createdAt,
+        lastAttemptAt: now,
+        lastFailureReason: baseSession.task.lastFailureReason,
+      },
+    });
+
+    sessionRef.current = nextSession;
+    setSession(nextSession);
+    trackEvent('primary_source_selected', {
+      roomId: nextSession.roomId,
+      fileId,
+      fileName: targetFile.name,
+      readyFileCount: nextTask.sourceFiles.filter((file) => file.status === 'ready').length,
+    });
+    await persistSessionWithRooms(nextSession);
+  };
+
   // ── Pin/Unpin with hard UI cap ─────────────────────────────────────────────
 
   const getPinnedCount = async (): Promise<number> => {
@@ -826,6 +1115,7 @@ export default function StateMachinePage() {
               await controller.updateStatus('DUMP_ENTRY', { lastMorningShown: today });
             }}
             onEditContext={studioSnapshot ? handleEditCurrentContext : undefined}
+            focusMode={isFocusMode}
           />
         );
 
@@ -845,6 +1135,7 @@ export default function StateMachinePage() {
               await controller.resumeTaskFromRoute('DUMP_ENTRY');
             }}
             onEditContext={studioSnapshot ? handleEditCurrentContext : undefined}
+            focusMode={isFocusMode}
           />
         );
 
@@ -853,6 +1144,7 @@ export default function StateMachinePage() {
           <Clarification
             prompt={clarificationPrompt || 'ตอนนี้ควรตอบลูกค้าหรือเริ่มงานค้างส่วนไหนก่อน'}
             onSubmit={controller.handleClarificationSubmit}
+            focusMode={isFocusMode}
           />
         );
 
@@ -864,6 +1156,8 @@ export default function StateMachinePage() {
               initialText={session.activeDumpContext?.text}
               presentationMode={presentationMode}
               defaultScenarioId={demoScenarioId}
+              focusMode={isFocusMode}
+              roomId={session.roomId}
             />
             {showResetBanner && (
               <div
@@ -905,11 +1199,14 @@ export default function StateMachinePage() {
             action={currentActionState}
             whyThisNow={currentWhyThisNow}
             constraints={session.task?.constraints}
+            plan={session.task?.currentPlan}
             negotiationLoading={isNegotiatingAction}
             onMarkAdjusted={controller.handleOneActionAdjustmentTouched}
             onNegotiate={controller.handleActionNegotiation}
             onAccept={controller.handleAcceptAction}
             onReject={controller.handleRejectAction}
+            onNotLikeThis={controller.handleEnterRescue}
+            focusMode={isFocusMode}
           />
         );
 
@@ -940,8 +1237,10 @@ export default function StateMachinePage() {
             onRescue={controller.handleEnterRescue}
             onMakeSmaller={controller.handleMakeSmaller}
             onComplete={controller.handleCompleteScaffold}
+            onEditStep={controller.handleEditCurrentPlanStep}
             onBackToSteps={controller.handleReturnToScaffoldSteps}
             onStartNew={controller.handleStartNewFromCompletedScaffold}
+            focusMode={isFocusMode}
           />
         );
 
@@ -954,6 +1253,7 @@ export default function StateMachinePage() {
             refineFeedback={scaffoldRefineFeedback}
             onMakeSmaller={controller.handleMakeSmaller}
             onWalkAway={controller.handleWalkAwayFromRescue}
+            focusMode={isFocusMode}
           />
         );
 
@@ -966,6 +1266,7 @@ export default function StateMachinePage() {
             lastFailureReason={session.task?.lastFailureReason ?? session.lastFailureReason}
             suggestedActions={manualFallbackSuggestedActions.length > 0 ? manualFallbackSuggestedActions : aiHealth.actions}
             retryable={manualFallbackRetryable}
+            focusMode={isFocusMode}
           />
         );
 
@@ -996,6 +1297,15 @@ export default function StateMachinePage() {
     <>
       {/* Overlays */}
       {showArchive && <ArchiveSearch onClose={() => setShowArchive(false)} />}
+      {showDataReview && session.task && (
+        <DataReviewPanel
+          task={session.task}
+          initialMode={showDataReview}
+          onClose={() => setShowDataReview(null)}
+          onDeleteSources={handleDeleteRoomSources}
+          onSelectPrimarySource={handleSelectPrimarySourceFile}
+        />
+      )}
       {showOverview && session && (
         <OverviewOverlay session={session} onClose={() => setShowOverview(false)} />
       )}
@@ -1045,7 +1355,7 @@ export default function StateMachinePage() {
         />
       )}
 
-      <div className="mind-shell-layout">
+      <div className={`mind-shell-layout ${isFocusMode ? 'is-focus-mode' : 'is-power-mode'}`}>
         <header className={`mind-shell-topbar ${routeUsesReducedChrome ? 'is-reduced' : ''}`}>
           <div className="mind-shell-topbar-left">
             <button
@@ -1082,6 +1392,14 @@ export default function StateMachinePage() {
           </div>
 
           <div className="mind-shell-topbar-right">
+            <button
+              type="button"
+              className="shell-secondary-button mind-shell-mode-toggle"
+              onClick={() => setUiViewMode((value) => (value === 'FOCUS' ? 'POWER' : 'FOCUS'))}
+              title={isFocusMode ? 'เปิดโหมดละเอียด' : 'กลับโหมดโฟกัส'}
+            >
+              {isFocusMode ? 'โหมดละเอียด' : 'โหมดโฟกัส'}
+            </button>
             {showPinButton && (
               <button
                 type="button"
@@ -1154,7 +1472,7 @@ export default function StateMachinePage() {
         )}
 
         <div
-          className={`mind-room-shell ${isRoomSidebarCollapsed ? 'rooms-collapsed' : ''} ${isStudioCollapsed ? 'studio-collapsed' : ''}`}
+          className={`mind-room-shell ${isRoomSidebarCollapsed ? 'rooms-collapsed' : ''} ${isStudioCollapsed ? 'studio-collapsed' : ''} ${isFocusMode ? 'is-focus-mode' : 'is-power-mode'}`}
         >
           <div className={`mind-room-sidebar-wrap ${showMobileRooms ? 'is-open' : ''}`}>
             <RoomSidebar
@@ -1164,6 +1482,7 @@ export default function StateMachinePage() {
               onCreateRoom={handleCreateRoom}
               collapsed={!isCompactViewport && isRoomSidebarCollapsed}
               onToggleCollapse={isCompactViewport ? undefined : () => setIsRoomSidebarCollapsed((value) => !value)}
+              focusMode={isFocusMode}
             />
           </div>
 
@@ -1176,6 +1495,7 @@ export default function StateMachinePage() {
                   onMakeSmaller={handleMakeSmallerFromRoomCard}
                   continueDisabled={!roomCardCanContinue}
                   makeSmallerDisabled={!roomCardCanMakeSmaller}
+                  focusMode={isFocusMode}
                 />
               )}
               <div
@@ -1190,41 +1510,65 @@ export default function StateMachinePage() {
           </div>
 
           <aside className={`mind-room-studio-wrap ${showMobileStudio ? 'is-open' : ''} ${isStudioCollapsed ? 'is-collapsed' : ''}`}>
-            <div className="mind-room-studio-header">
-              <div>
-                <p className="studio-eyebrow">Studio</p>
-                <h2 className="mind-room-studio-title">ตัวช่วย</h2>
-              </div>
+            {isStudioCollapsed ? (
               <button
                 type="button"
-                className="shell-toggle-button shell-toggle-button-subtle"
+                className="mind-room-studio-collapsed-toggle"
                 onClick={() => {
                   if (isCompactViewport) {
                     setShowMobileStudio(false);
                     return;
                   }
-                  setIsStudioCollapsed((value) => !value);
+                  setIsStudioCollapsed(false);
                 }}
-                aria-label={isCompactViewport ? 'ปิดตัวช่วย' : isStudioCollapsed ? 'ขยายตัวช่วย' : 'ย่อตัวช่วย'}
+                aria-label={isCompactViewport ? 'ปิดตัวช่วย' : 'ขยายตัวช่วย'}
+                title={isCompactViewport ? 'ปิดตัวช่วย' : 'ขยายตัวช่วย'}
               >
-                {isCompactViewport ? 'ปิด' : isStudioCollapsed ? '←' : '→'}
+                <span className="studio-eyebrow">Studio</span>
+                <span className="mind-room-studio-collapsed-label">ตัวช่วย</span>
+                <span className="mind-room-studio-collapsed-arrow">←</span>
               </button>
-            </div>
-            {!isStudioCollapsed && (
-              <StudioPanel
-                snapshot={studioSnapshot}
-                intents={studioIntents}
-                loadingIntentId={activeStudioIntent}
-                onIntent={handleStudioIntent}
-                onEditContext={studioSnapshot ? handleEditCurrentContext : undefined}
-                mode={studioMode}
-                isCompactViewport={isCompactViewport}
-              />
+            ) : (
+              <>
+                <div className="mind-room-studio-header">
+                  <div>
+                    <p className="studio-eyebrow">Studio</p>
+                    <h2 className="mind-room-studio-title">ตัวช่วย</h2>
+                  </div>
+                  <button
+                    type="button"
+                    className="shell-toggle-button shell-toggle-button-subtle"
+                    onClick={() => {
+                      if (isCompactViewport) {
+                        setShowMobileStudio(false);
+                        return;
+                      }
+                      setIsStudioCollapsed((value) => !value);
+                    }}
+                    aria-label={isCompactViewport ? 'ปิดตัวช่วย' : isStudioCollapsed ? 'ขยายตัวช่วย' : 'ย่อตัวช่วย'}
+                  >
+                    {isCompactViewport ? 'ปิด' : '→'}
+                  </button>
+                </div>
+                <StudioPanel
+                  snapshot={studioSnapshot}
+                  intents={studioIntents}
+                  loadingIntentId={activeStudioIntent}
+                  onIntent={handleStudioIntent}
+                  onEditContext={studioSnapshot ? handleEditCurrentContext : undefined}
+                  onRetryFile={handleRetrySourceFile}
+                  onSelectPrimaryFile={handleSelectPrimarySourceFile}
+                  retryingFileId={retryingFileId}
+                  mode={studioMode}
+                  isCompactViewport={isCompactViewport}
+                  focusMode={isFocusMode}
+                />
+              </>
             )}
           </aside>
         </div>
       </div>
-      {activeValuePulseContext && !presentationMode && !showArchive && !showOverview && !showTrust && !showWalkthrough && !showAiOpsDebug && !showObservationCapture && (
+      {activeValuePulseContext && !presentationMode && !showArchive && !showDataReview && !showOverview && !showTrust && !showWalkthrough && !showAiOpsDebug && !showObservationCapture && (
         <ValuePulse
           context={activeValuePulseContext}
           onClose={() => setActiveValuePulseContext(null)}

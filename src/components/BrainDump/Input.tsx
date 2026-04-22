@@ -4,10 +4,12 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { trackEvent } from '@/lib/instrumentation';
 import {
   composeRoomSourceText,
+  getRoomFileUxCopy,
   inferRoomFileKind,
   type RoomSubmission,
   type RoomSourceFile,
 } from '@/lib/room';
+import { createRoomFileStorageKey, saveRoomFileBlob } from '@/lib/store/idb';
 
 interface Props {
   onNext: (dump: RoomSubmission) => void | Promise<void>;
@@ -15,6 +17,8 @@ interface Props {
   studioPanel?: ReactNode;
   presentationMode?: boolean;
   defaultScenarioId?: DemoScenarioId;
+  focusMode?: boolean;
+  roomId?: string;
 }
 
 type DemoScenarioId = 'client_project_restart' | 'sales_inquiry_demo_request';
@@ -52,6 +56,8 @@ export function BrainDumpInput({
   studioPanel,
   presentationMode = false,
   defaultScenarioId = 'client_project_restart',
+  focusMode = true,
+  roomId,
 }: Props) {
   const [val, setVal] = useState(() => initialText ?? '');
   const [files, setFiles] = useState<File[]>([]);
@@ -63,6 +69,7 @@ export function BrainDumpInput({
     defaultScenarioId === ADVANCED_SCENARIO.id ? ADVANCED_SCENARIO.id : FEATURED_SCENARIO.id,
   );
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const submitLockRef = useRef(false);
   const selectedScenario: DemoScenario = activeScenarioId === ADVANCED_SCENARIO.id
     ? ADVANCED_SCENARIO
     : FEATURED_SCENARIO;
@@ -122,16 +129,25 @@ export function BrainDumpInput({
     setShowAdvancedScenario(false);
   };
 
-  const buildFallbackSubmission = (): RoomSubmission => {
-    const sourceFiles: RoomSourceFile[] = files.map((file) => ({
+  const buildFallbackSubmission = (
+    storageKeys: Array<string | undefined> = [],
+    failureDetail?: string,
+  ): RoomSubmission => {
+    const now = Date.now();
+    const sourceFiles: RoomSourceFile[] = files.map((file, index) => ({
       id: `${Date.now()}-${file.name}`,
       name: file.name,
       kind: inferRoomFileKind(file.name, file.type),
       mimeType: file.type || 'application/octet-stream',
       size: file.size,
       status: 'failed',
-      createdAt: Date.now(),
+      createdAt: now,
       failureReason: 'file_extraction_unavailable',
+      failureDetail,
+      failureStage: 'unknown',
+      storageKey: storageKeys[index],
+      lastExtractAttemptAt: now,
+      extractAttemptCount: 1,
     }));
     const extractedText = '';
     const sourceText = composeRoomSourceText(val, extractedText, sourceFiles);
@@ -143,15 +159,90 @@ export function BrainDumpInput({
     };
   };
 
+  const buildExtractionWarning = (sourceFiles: RoomSourceFile[]) => {
+    const failedFiles = sourceFiles.filter((file) => file.status === 'failed');
+    if (failedFiles.length === 0) return null;
+    if (failedFiles.length === 1) {
+      const file = failedFiles[0];
+      const copy = getRoomFileUxCopy(file);
+      return `แนบ ${file.name} แล้ว แต่ ${copy.body} จะใช้ข้อความที่พิมพ์หรือบริบทที่ยังอ่านได้ต่อให้ก่อน`;
+    }
+    return 'มีบางไฟล์ที่ MIND อ่านได้ไม่ชัด จะใช้ข้อความที่พิมพ์หรือบริบทที่ยังอ่านได้ต่อให้ก่อน';
+  };
+
+  const trackSourceFileExtracts = (sourceFiles: RoomSourceFile[]) => {
+    for (const file of sourceFiles) {
+      trackEvent('ocr_extract_finished', {
+        roomId,
+        file_name: file.name,
+        file_kind: file.kind,
+        file_status: file.status,
+        failure_reason: file.failureReason,
+        ocr_engine: file.ocrEngine,
+        raw_text_length: file.ocrMetrics?.rawTextLength,
+        normalized_text_length: file.ocrMetrics?.normalizedTextLength,
+        fragmented_run_count: file.ocrMetrics?.fragmentedRunCount,
+        space_density: file.ocrMetrics?.spaceDensity,
+        normal_word_ratio: file.ocrMetrics?.normalWordRatio,
+        page_count_processed: file.ocrMetrics?.pageCountProcessed,
+        duration_ms: file.ocrMetrics?.durationMs,
+      });
+    }
+  };
+
+  const saveFilesForRetry = async () => {
+    const storageKeys = await Promise.all(files.map(async (file) => {
+      const storageKey = createRoomFileStorageKey(file, roomId);
+      try {
+        return await saveRoomFileBlob(file, storageKey);
+      } catch (error) {
+        console.warn('[MIND] failed to save room file blob for retry', error);
+        return undefined;
+      }
+    }));
+    return storageKeys;
+  };
+
+  const attachRetryMetadata = (
+    extractedFiles: unknown[],
+    storageKeys: Array<string | undefined>,
+  ): RoomSourceFile[] => {
+    const now = Date.now();
+    return files.map((file, index) => {
+      const extracted = extractedFiles[index] as Partial<RoomSourceFile> | undefined;
+      return {
+        id: extracted?.id || `${now}-${file.name}`,
+        name: extracted?.name || file.name,
+        kind: extracted?.kind || inferRoomFileKind(file.name, file.type),
+        mimeType: extracted?.mimeType || file.type || 'application/octet-stream',
+        size: typeof extracted?.size === 'number' ? extracted.size : file.size,
+        status: extracted?.status || 'failed',
+        createdAt: typeof extracted?.createdAt === 'number' ? extracted.createdAt : now,
+        extractedText: extracted?.extractedText,
+        failureReason: extracted?.failureReason,
+        failureDetail: extracted?.failureDetail,
+        failureStage: extracted?.failureStage,
+        storageKey: extracted?.storageKey || storageKeys[index],
+        lastExtractAttemptAt: extracted?.lastExtractAttemptAt ?? now,
+        extractAttemptCount: extracted?.extractAttemptCount ?? 1,
+        ocrEngine: extracted?.ocrEngine,
+        ocrMetrics: extracted?.ocrMetrics,
+      };
+    });
+  };
+
   const submit = async () => {
-    if (isSubmitting || (!val.trim() && files.length === 0)) return;
+    if (submitLockRef.current || isSubmitting || (!val.trim() && files.length === 0)) return;
+    submitLockRef.current = true;
     setIsSubmitting(true);
     setUploadError(null);
+    let savedStorageKeys: Array<string | undefined> = [];
 
     try {
       let submission: RoomSubmission;
 
       if (files.length > 0) {
+        savedStorageKeys = await saveFilesForRetry();
         const formData = new FormData();
         formData.append('text', val);
         files.forEach((file) => formData.append('files', file, file.name));
@@ -170,8 +261,14 @@ export function BrainDumpInput({
           text: typeof data.text === 'string' ? data.text : val,
           sourceText: typeof data.sourceText === 'string' ? data.sourceText : val,
           extractedText: typeof data.extractedText === 'string' ? data.extractedText : '',
-          sourceFiles: Array.isArray(data.sourceFiles) ? data.sourceFiles : [],
+          sourceFiles: attachRetryMetadata(
+            Array.isArray(data.sourceFiles) ? data.sourceFiles : [],
+            savedStorageKeys,
+          ),
         };
+        submission.sourceText = composeRoomSourceText(submission.text, submission.extractedText, submission.sourceFiles);
+        trackSourceFileExtracts(submission.sourceFiles);
+        setUploadError(buildExtractionWarning(submission.sourceFiles));
       } else {
         submission = {
           text: val,
@@ -179,23 +276,26 @@ export function BrainDumpInput({
           extractedText: '',
           sourceFiles: [],
         };
+        setUploadError(null);
       }
 
       trackEvent('dump_submitted');
       await onNext(submission);
       setVal('');
       setFiles([]);
-      setUploadError(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
-    } catch {
-      const fallbackSubmission = buildFallbackSubmission();
+    } catch (error) {
+      const failureDetail = error instanceof Error ? error.message : 'extract_request_failed';
+      const fallbackSubmission = buildFallbackSubmission(savedStorageKeys, failureDetail);
       setUploadError('ไฟล์แนบยังสกัดไม่ได้ MIND จะใช้ข้อความที่มีอยู่ต่อให้ก่อน');
+      trackSourceFileExtracts(fallbackSubmission.sourceFiles);
       trackEvent('dump_submitted');
       await onNext(fallbackSubmission);
       setVal('');
       setFiles([]);
       if (fileInputRef.current) fileInputRef.current.value = '';
     } finally {
+      submitLockRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -274,6 +374,8 @@ export function BrainDumpInput({
 
         <input
           ref={fileInputRef}
+          id="brain-dump-files"
+          name="brainDumpFiles"
           type="file"
           multiple
           accept={acceptedFileTypes}
@@ -298,6 +400,8 @@ export function BrainDumpInput({
         </div>
 
         <textarea
+          id="brain-dump-text"
+          name="brainDumpText"
           value={val}
           onChange={e => setVal(e.target.value)}
           placeholder="พิมพ์สภาพงานตอนนี้ตรง ๆ ได้เลย เช่น ลูกค้าส่ง feedback มา / งานค้างไปหลายวัน / รอไฟล์จากลูกค้า..."
@@ -407,19 +511,50 @@ export function BrainDumpInput({
       </div>
 
       {studioPanel && (
-        <section style={{
-          marginTop: '0.25rem',
-          paddingTop: '1rem',
-          borderTop: '1px solid rgba(255,255,255,0.08)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '0.65rem',
-        }}>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', lineHeight: 1.55, maxWidth: '42rem' }}>
-            ภาพรวม, คลังเก็บ, และความไว้ใจเป็นตัวช่วยเสริมสำหรับตอนที่อยากดูบริบทลึกขึ้น ไม่จำเป็นต้องเปิดก่อน
-          </p>
-          {studioPanel}
-        </section>
+        focusMode ? (
+          <details
+            style={{
+              marginTop: '0.25rem',
+              paddingTop: '1rem',
+              borderTop: '1px solid rgba(255,255,255,0.08)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.65rem',
+            }}
+          >
+            <summary
+              style={{
+                cursor: 'pointer',
+                listStyle: 'none',
+                color: 'var(--text-secondary)',
+                fontSize: '0.88rem',
+                fontWeight: 600,
+              }}
+            >
+              ดูบริบทเสริม
+            </summary>
+            <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', lineHeight: 1.55, maxWidth: '42rem' }}>
+                ภาพรวม, คลังเก็บ, และความไว้ใจจะเปิดเมื่อคุณต้องการดูบริบทลึกขึ้น
+              </p>
+              {studioPanel}
+            </div>
+          </details>
+        ) : (
+          <section style={{
+            marginTop: '0.25rem',
+            paddingTop: '1rem',
+            borderTop: '1px solid rgba(255,255,255,0.08)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.65rem',
+          }}>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', lineHeight: 1.55, maxWidth: '42rem' }}>
+              ภาพรวม, คลังเก็บ, และความไว้ใจเป็นตัวช่วยเสริมสำหรับตอนที่อยากดูบริบทลึกขึ้น ไม่จำเป็นต้องเปิดก่อน
+            </p>
+            {studioPanel}
+          </section>
+        )
       )}
     </div>
   );

@@ -9,6 +9,7 @@ interface Props {
   onCreateRoom: () => void | Promise<void>;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  focusMode?: boolean;
 }
 
 function scenarioLabel(room: RoomRecord) {
@@ -55,6 +56,7 @@ export function RoomSidebar({
   onSelectRoom,
   onCreateRoom,
   collapsed = false,
+  focusMode = true,
 }: Props) {
   return (
     <aside className={`room-sidebar ${collapsed ? 'is-collapsed' : ''}`}>
@@ -124,14 +126,16 @@ export function RoomSidebar({
                     {active && <span className="room-sidebar-dot room-sidebar-dot-active">กำลังทำ</span>}
                   </div>
 
-                  {summary && <p className="room-sidebar-summary">{summary}</p>}
+                  {!focusMode && summary && <p className="room-sidebar-summary">{summary}</p>}
 
-                  <div className="room-sidebar-footnote">
-                    <span>{scenarioLabel(room)}</span>
-                    {room.lastKnownGoodNextMoves[0] && (
-                      <span className="room-sidebar-footnote-next">เริ่ม: {room.lastKnownGoodNextMoves[0]}</span>
-                    )}
-                  </div>
+                  {!focusMode && (
+                    <div className="room-sidebar-footnote">
+                      <span>{scenarioLabel(room)}</span>
+                      {room.lastKnownGoodNextMoves[0] && (
+                        <span className="room-sidebar-footnote-next">เริ่ม: {room.lastKnownGoodNextMoves[0]}</span>
+                      )}
+                    </div>
+                  )}
                 </>
               )}
             </button>

@@ -10,6 +10,7 @@ import {
 
 export type AiStatus = AiHealthStatus;
 export type HealthCheckResult = AiHealthResult;
+const HEALTH_POLL_TIMEOUT_MS = Number(process.env.AI_HEALTH_POLL_TIMEOUT_MS || 6000) || 6000;
 
 /**
  * Fetches /api/ai/health in the background.
@@ -18,7 +19,7 @@ export type HealthCheckResult = AiHealthResult;
  */
 export async function checkAiHealth(): Promise<HealthCheckResult> {
   try {
-    const res = await fetch('/api/ai/health', { signal: AbortSignal.timeout(4000) });
+    const res = await fetch('/api/ai/health', { signal: AbortSignal.timeout(HEALTH_POLL_TIMEOUT_MS) });
     if (!res.ok) {
       return {
         status: 'unavailable',
@@ -32,7 +33,18 @@ export async function checkAiHealth(): Promise<HealthCheckResult> {
     }
     const data = await res.json() as HealthCheckResult;
     return data;
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return {
+        status: 'checking',
+        model: CANONICAL_LOCAL_PRIMARY_MODEL,
+        modelTier: 'unknown',
+        reason: 'กำลังตรวจสอบโมเดล...',
+        detail: `health endpoint ยังตอบไม่ทันใน ${HEALTH_POLL_TIMEOUT_MS}ms`,
+        retryable: true,
+        actions: [DEFAULT_AI_START_ACTION],
+      };
+    }
     return {
       status: 'unavailable',
       model: CANONICAL_LOCAL_PRIMARY_MODEL,

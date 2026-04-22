@@ -68,6 +68,169 @@ test('normalizeSession preserves reentry brief and action explanation on task st
   assert.equal(session.task?.reentryBrief?.ignoredNoise[0], 'ยังไม่ต้องจัด archive');
 });
 
+test('room records mirror and hydrate primary source preference', () => {
+  const session = normalizeSession({
+    ...createDefaultSession({
+      roomId: 'room-primary',
+      roomTitle: 'ACME primary file',
+    }),
+    task: {
+      id: 'task-primary',
+      roomId: 'room-primary',
+      workflowType: 'client_resume',
+      sourceText: 'บริบทจากไฟล์หลัก',
+      sourceFiles: [
+        {
+          id: 'file-a',
+          name: 'brief-a.pdf',
+          kind: 'pdf',
+          mimeType: 'application/pdf',
+          size: 1200,
+          status: 'ready',
+          createdAt: 1,
+          extractedText: 'A',
+        },
+        {
+          id: 'file-b',
+          name: 'brief-b.pdf',
+          kind: 'pdf',
+          mimeType: 'application/pdf',
+          size: 1300,
+          status: 'ready',
+          createdAt: 2,
+          extractedText: 'B',
+        },
+      ],
+      sourcePreference: {
+        primarySourceId: 'file:file-b',
+        selectedAt: 50,
+        selectedBy: 'user',
+      },
+      extractedText: 'B',
+      createdAt: 10,
+      pendingInputs: [],
+      blockerSignals: [],
+      lifecycleState: 'dumped',
+      currentStepIndex: 0,
+      currentActionId: null,
+      rescueHistory: [],
+    },
+  });
+
+  const room = buildRoomRecordFromSession(session, 'room-primary');
+  assert.equal(room.sourcePreference?.primarySourceId, 'file:file-b');
+  assert.equal(room.sourcePreference?.selectedBy, 'user');
+
+  const staleSession = normalizeSession({
+    ...session,
+    task: session.task
+      ? {
+          ...session.task,
+          sourcePreference: undefined,
+        }
+      : undefined,
+  });
+  const hydrated = hydrateRoomSessionFromRecord(staleSession, room);
+  assert.equal(hydrated.task?.sourcePreference?.primarySourceId, 'file:file-b');
+});
+
+test('normalizeSession preserves draft plan evidence, safety, and feedback metadata', () => {
+  const session = normalizeSession({
+    lastActive: 100,
+    uiRoute: 'ONE_ACTION',
+    notThisCount: 0,
+    currentActionId: 'action-1',
+    task: {
+      id: 'task-evidence',
+      sourceText: 'Client brief says confirm budget before sending proposal.',
+      sourceFiles: [],
+      extractedText: '',
+      createdAt: 10,
+      pendingInputs: [],
+      blockerSignals: [],
+      lifecycleState: 'has_one_action',
+      currentStepIndex: 0,
+      currentActionId: 'action-1',
+      rescueHistory: [],
+      currentPlan: {
+        actionTitle: 'Confirm budget',
+        steps: [
+          {
+            id: 'step-1',
+            text: 'Confirm budget before sending proposal',
+            evidence: [
+              {
+                sourceId: 'manual:task-evidence',
+                label: 'Manual summary by you',
+                excerpt: 'Client brief says confirm budget',
+                sourceKindLabel: 'manual_summary',
+              },
+            ],
+            confidence: {
+              level: 'low',
+              score: 0.42,
+              rationale: 'First guess — please review before acting',
+              supportingSourceCount: 1,
+            },
+            safety: {
+              destructive: false,
+              risk: 'none',
+              manualOnly: false,
+            },
+            provenance: {
+              generatedAt: 20,
+              generatedBy: 'action',
+              sourceIds: ['manual:task-evidence'],
+            },
+          },
+        ],
+      },
+      pendingPlan: {
+        id: 'draft-20',
+        status: 'draft',
+        actionTitle: 'Confirm budget',
+        steps: [
+          {
+            id: 'step-1',
+            text: 'Confirm budget before sending proposal',
+          },
+        ],
+        createdAt: 20,
+        generatedBy: 'action',
+      },
+      planHistory: [
+        {
+          id: 'revision-20',
+          planId: 'draft-20',
+          status: 'draft',
+          actionTitle: 'Confirm budget',
+          steps: [{ id: 'step-1', text: 'Confirm budget before sending proposal' }],
+          createdAt: 20,
+        },
+      ],
+      stepFeedbackHistory: [
+        {
+          id: 'feedback-30',
+          stepId: 'step-1',
+          draftPlanId: 'draft-20',
+          kind: 'not_like_this',
+          note: 'Budget is already approved',
+          createdAt: 30,
+        },
+      ],
+      lastConfirmedActionAt: 40,
+    },
+  });
+
+  assert.equal(session.task?.currentPlan?.steps[0]?.evidence?.[0]?.sourceKindLabel, 'manual_summary');
+  assert.equal(session.task?.currentPlan?.steps[0]?.confidence?.level, 'low');
+  assert.equal(session.task?.currentPlan?.steps[0]?.safety?.manualOnly, false);
+  assert.equal(session.task?.pendingPlan?.status, 'draft');
+  assert.equal(session.task?.planHistory?.[0]?.status, 'draft');
+  assert.equal(session.task?.stepFeedbackHistory?.[0]?.kind, 'not_like_this');
+  assert.equal(session.task?.lastConfirmedActionAt, 40);
+});
+
 test('normalizeSession clears completed task state instead of reviving scaffold data', () => {
   const session = normalizeSession({
     lastActive: 200,
@@ -211,6 +374,67 @@ test('normalizeSession preserves room metadata on session and task', () => {
   assert.equal(session.roomTitle, 'ACME - Website revamp');
   assert.equal(session.roomScenarioType, 'client_project_restart');
   assert.equal(session.task?.roomId, 'room-acme');
+});
+
+test('normalizeSession preserves source file retry metadata', () => {
+  const session = normalizeSession({
+    roomId: 'room-acme',
+    lastActive: 260,
+    uiRoute: 'DUMP_ENTRY',
+    notThisCount: 0,
+    currentActionId: null,
+    task: {
+      id: 'task-file-retry',
+      roomId: 'room-acme',
+      workflowType: 'client_resume',
+      sourceText: 'งานค้างของ ACME',
+      sourceFiles: [
+        {
+          id: 'file-1',
+          name: 'brief.pdf',
+          kind: 'pdf',
+          mimeType: 'application/pdf',
+          size: 2048,
+          status: 'failed',
+          createdAt: 100,
+          failureReason: 'pdf_ocr_failed',
+          failureDetail: 'pdf_ocr_timeout',
+          failureStage: 'pdf_ocr',
+          storageKey: 'room-file:room-acme:brief',
+          lastExtractAttemptAt: 200,
+          extractAttemptCount: 2,
+          ocrEngine: 'tesseract',
+          ocrMetrics: {
+            rawTextLength: 120,
+            normalizedTextLength: 90,
+            fragmentedRunCount: 3,
+            spaceDensity: 0.45,
+            normalWordRatio: 0.25,
+            pageCountProcessed: 2,
+            durationMs: 9000,
+          },
+        },
+      ],
+      extractedText: '',
+      createdAt: 100,
+      pendingInputs: [],
+      blockerSignals: ['missing_file_or_context'],
+      lifecycleState: 'dumped',
+      currentStepIndex: 0,
+      currentActionId: null,
+      rescueHistory: [],
+    },
+  });
+
+  const file = session.task?.sourceFiles[0];
+  assert.equal(file?.storageKey, 'room-file:room-acme:brief');
+  assert.equal(file?.failureDetail, 'pdf_ocr_timeout');
+  assert.equal(file?.failureStage, 'pdf_ocr');
+  assert.equal(file?.lastExtractAttemptAt, 200);
+  assert.equal(file?.extractAttemptCount, 2);
+  assert.equal(file?.ocrEngine, 'tesseract');
+  assert.equal(file?.ocrMetrics?.fragmentedRunCount, 3);
+  assert.equal(file?.ocrMetrics?.pageCountProcessed, 2);
 });
 
 test('buildRoomRecordFromSession seeds lastKnownGood room data when no AI brief exists yet', () => {

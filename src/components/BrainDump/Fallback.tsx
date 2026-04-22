@@ -11,6 +11,7 @@ interface Props {
   lastFailureReason?: AiFailureReason;
   suggestedActions?: string[];
   retryable: boolean;
+  focusMode?: boolean;
 }
 
 const reasonLabels: Record<AiFailureReason, string> = {
@@ -29,6 +30,7 @@ export function ManualFallback({
   lastFailureReason = 'unknown',
   suggestedActions = [],
   retryable,
+  focusMode = true,
 }: Props) {
   useTrackMountEvent('manual_fallback_triggered', { reason: lastFailureReason });
   const [manualStep, setManualStep] = useState('');
@@ -91,7 +93,7 @@ export function ManualFallback({
       )}
 
       {suggestedActions.length > 0 && (
-        <details style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+        <details style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }} open={!focusMode}>
           <summary style={{ cursor: 'pointer' }}>วิธีแก้ที่แนะนำ</summary>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '0.75rem' }}>
             {suggestedActions.map((action) => (
@@ -131,6 +133,8 @@ export function ManualFallback({
             โหมดนี้คือการข้าม AI สำหรับรอบนี้ แล้วไปต่อด้วยก้าวที่คุณเลือกเอง
           </p>
           <textarea
+            id="manual-fallback-step"
+            name="manualFallbackStep"
             value={manualStep}
             onChange={(e) => setManualStep(e.target.value)}
             placeholder="เขียนก้าวเล็กที่สุดที่คุณทำได้ทันทีตอนนี้"

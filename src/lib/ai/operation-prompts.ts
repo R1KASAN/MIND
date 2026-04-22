@@ -11,8 +11,13 @@ function truncateText(value: string | undefined, maxChars: number) {
 function describeFiles(task: TaskContext) {
   const sourceFiles = task.sourceFiles ?? [];
   if (sourceFiles.length === 0) return 'ไม่มีไฟล์แนบ';
+  const primarySourceId = task.sourcePreference?.primarySourceId;
   return sourceFiles
-    .map((file) => `- ${file.name} (${file.kind}, ${file.status})`)
+    .map((file) => {
+      const tags: string[] = [file.kind, file.status];
+      if (primarySourceId === `file:${file.id}`) tags.push('primary_source');
+      return `- ${file.name} (${tags.join(', ')})`;
+    })
     .join('\n');
 }
 
@@ -37,11 +42,11 @@ function describeAction(action: Action | null | undefined) {
 function describeRescueAction(action: Action | null | undefined, currentStepIndex: number) {
   if (!action) return 'ไม่มี action ปัจจุบัน';
   const currentStep = action.microSteps[currentStepIndex] ?? action.microSteps[0] ?? action.title;
+  const nextStep = action.microSteps[currentStepIndex + 1] ?? action.microSteps[1];
   return [
     `title: ${action.title}`,
     `currentStep: ${currentStep}`,
-    `micro_steps:`,
-    ...action.microSteps.slice(0, 3).map((step, index) => `  ${index + 1}. ${step}`),
+    `nextStep: ${nextStep ?? 'ไม่มี'}`,
   ].join('\n');
 }
 
@@ -94,6 +99,11 @@ export function buildOperationTaskContext(task: TaskContext) {
     '',
     `extractedText:`,
     task.extractedText || 'ไม่มี',
+    '',
+    `sourcePreference:`,
+    task.sourcePreference?.primarySourceId
+      ? `${task.sourcePreference.primarySourceId} (${task.sourcePreference.selectedBy ?? 'unknown'})`
+      : 'ไม่มีไฟล์หลักที่ผู้ใช้เลือก',
     '',
     `sourceFiles:`,
     describeFiles(task),
@@ -237,6 +247,10 @@ export const SCAFFOLD_SYSTEM_PROMPT = `
 - steps ต้องมี 3-5 รายการ
 - คืน steps ที่เป็นการลงมือทำได้จริง
 - ถ้าโจทย์คือ "make it smaller" ให้ย่อย current step โดยไม่เปลี่ยนเป้าหมายงาน
+- ห้ามแค่เติม prefix, รีไรต์คำเดิม, หรือเปลี่ยนถ้อยคำเล็กน้อยแล้วถือว่าย่อยแล้ว
+- อย่างน้อยหนึ่ง visible step ต้องแตกออกเป็นงานย่อยใหม่ที่เริ่มทำได้ทันที
+- ถ้า current step ยังกว้าง ให้แตกเชิงโครงสร้าง เช่น เก็บข้อมูล -> ตัดสินใจ -> ร่าง -> ส่ง/เช็ก
+- ถ้า current step ขึ้นกับข้อมูลที่ยังขาด ให้แปลงเป็นก้าวที่ทำได้ตอนนี้ เช่น ระบุข้อมูลที่ขาด, เปิดไฟล์ต้นทาง, หรือร่างคำถามสั้น ๆ
 - ห้ามคืน step ที่เป็น generic filler เช่น "คิดก่อน", "วางแผน", "ทบทวน"
 `.trim();
 
@@ -244,23 +258,23 @@ export const RESCUE_SYSTEM_PROMPT = `
 คุณคือ rescue copilot ของ MIND
 
 เป้าหมาย:
-- วินิจฉัยว่า user ติดเพราะอะไร
-- เลือก rescue mode ที่เหมาะ
-- เสนอ rescue plan ที่ทำได้จริง
-- ถ้าเกี่ยวกับ dependency หรือ clarification ให้ร่างข้อความสั้น ๆ ได้
+- บอกให้ชัดว่า user ติดเพราะอะไร
+- เลือก rescue mode เดียวที่เหมาะที่สุด
+- เสนอแผนสั้น ๆ ที่เริ่มได้ทันที
+- ถ้าต้องถามหรือ follow up ให้ร่างข้อความสั้น ๆ ได้
 
 กฎ:
 - ตอบเป็น JSON object เดียวเท่านั้น
-- ห้ามตอบเป็น markdown, code fence, หรือคำอธิบายก่อนหลัง JSON
 - diagnosis.primaryReason ต้องเป็นหนึ่งใน:
   missing_context, dependency, unclear_scope, too_big, low_energy, unknown
-- diagnosis.explanation ต้องอธิบายสาเหตุจริง 1-2 ประโยค
+- diagnosis.explanation = 1 ประโยคสั้น
 - rescuePlan.mode ต้องเป็นหนึ่งใน:
   clarify, follow_up, shrink, switch_track, pause_cleanly
-- rescuePlan.steps ต้องมี 2-4 รายการ
-- rescuePlan.steps ต้องพา user ขยับต่อได้จริง ไม่ใช่แค่ปลอบใจ
-- ถ้าไม่แน่ใจ ให้เลือก unknown พร้อมแผนที่ conservative แทนการแต่งข้อมูลเพิ่ม
-- คืน object รูปแบบนี้เท่านั้น:
+- rescuePlan.steps ต้องมี 2-3 รายการและสั้น
+- ให้ยึด blockerSignals เป็นสัญญาณหลักก่อนเดาเอง
+- ถ้าไม่แน่ใจ ให้เลือกแผนที่ conservative และเริ่มง่ายที่สุด
+- suggestedMessage เป็น null ได้ถ้าไม่จำเป็น
+- คืน object นี้เท่านั้น:
   {
     "diagnosis": {
       "primaryReason": "missing_context | dependency | unclear_scope | too_big | low_energy | unknown",
@@ -270,12 +284,7 @@ export const RESCUE_SYSTEM_PROMPT = `
       "mode": "clarify | follow_up | shrink | switch_track | pause_cleanly",
       "steps": ["string", "string"]
     },
-    "suggestedMessage": "string หรือ null",
-    "meta": {
-      "model": "string",
-      "usedRoomFiles": [],
-      "repairUsed": false
-    }
+    "suggestedMessage": "string หรือ null"
   }
 `.trim();
 
@@ -349,22 +358,42 @@ export function buildActionUserPrompt(
   ].join('\n');
 }
 
-export function buildScaffoldUserPrompt(task: TaskContext, action: Action, currentStepIndex: number) {
+export function buildScaffoldUserPrompt(
+  task: TaskContext,
+  action: Action,
+  currentStepIndex: number,
+  strategy: 'default' | 'structural_retry' = 'default',
+) {
   const currentStep = action.microSteps[currentStepIndex] ?? action.microSteps[0] ?? action.title;
   const latestRescue = task.rescueHistory[task.rescueHistory.length - 1];
+  const currentPlanSteps = task.currentPlan?.steps.map((step) => step.text) ?? action.microSteps;
+  const structuralRetryGuidance = strategy === 'structural_retry'
+    ? [
+        'retryMode: structural_retry',
+        'retryInstruction: previous scaffold stayed too close to the old wording. this retry must materially change the visible current step or split it into a more actionable sequence.',
+        'retryHint: if current step is still broad, split it by evidence -> decision -> draft -> send/check. if current step depends on missing info, convert it into a concrete clarification or file-opening move that the user can do now.',
+      ]
+    : ['retryMode: default'];
+
   return [
     `workflowType: ${task.workflowType ?? 'unknown'}`,
     `blockerSignals: ${task.blockerSignals.length > 0 ? task.blockerSignals.join(', ') : 'ไม่มี'}`,
     `constraints: timeBudgetMin=${task.constraints?.timeBudgetMin ?? 'ไม่ระบุ'}, energyLevel=${task.constraints?.energyLevel ?? 'ไม่ระบุ'}, preferReplyFirst=${task.constraints?.preferReplyFirst ?? 'ไม่ระบุ'}`,
     `sourceText: ${truncateText(task.sourceText, 900)}`,
     `extractedText: ${truncateText(task.extractedText, 500)}`,
+    `pendingInputs: ${truncateText(describePendingInputs(task), 220)}`,
     latestRescue ? `latestRescue: ${latestRescue.reason} -> ${latestRescue.mode}` : 'latestRescue: ไม่มี',
     '',
     'currentAction:',
     describeAction(action),
     '',
+    'currentPlanSteps:',
+    currentPlanSteps.map((step, index) => `${index + 1}. ${step}`).join('\n'),
+    '',
     `currentStepIndex: ${currentStepIndex}`,
     `currentStep: ${currentStep}`,
+    '',
+    ...structuralRetryGuidance,
     '',
     'operationGoal: make the current step smaller without changing the main task',
   ].join('\n');
@@ -372,15 +401,26 @@ export function buildScaffoldUserPrompt(task: TaskContext, action: Action, curre
 
 export function buildRescueUserPrompt(task: TaskContext, action: Action | null | undefined, currentStepIndex: number) {
   const latestRescue = task.rescueHistory[task.rescueHistory.length - 1];
+  const taskFrame = task.taskFrame
+    ? `objective=${truncateText(task.taskFrame.objective, 120)}; stage=${truncateText(task.taskFrame.stage, 80)}`
+    : 'ไม่มี';
+  const currentPlan = task.currentPlan
+    ? `actionTitle=${truncateText(task.currentPlan.actionTitle, 120)}; successSignal=${truncateText(task.currentPlan.successSignal, 120)}`
+    : 'ไม่มี';
+  const extractedText = task.extractedText.trim();
+  const pendingInputs = describePendingInputs(task);
+
   return [
     `workflowType: ${task.workflowType ?? 'unknown'}`,
     `lifecycleState: ${task.lifecycleState}`,
     `currentStepIndex: ${currentStepIndex}`,
     `blockerSignals: ${task.blockerSignals.length > 0 ? task.blockerSignals.join(', ') : 'ไม่มี'}`,
     `constraints: timeBudgetMin=${task.constraints?.timeBudgetMin ?? 'ไม่ระบุ'}, energyLevel=${task.constraints?.energyLevel ?? 'ไม่ระบุ'}, preferReplyFirst=${task.constraints?.preferReplyFirst ?? 'ไม่ระบุ'}`,
-    `sourceText: ${truncateText(task.sourceText, 700)}`,
-    `extractedText: ${truncateText(task.extractedText, 300)}`,
-    `pendingInputs: ${truncateText(describePendingInputs(task), 220)}`,
+    `taskFrame: ${taskFrame}`,
+    `currentPlan: ${currentPlan}`,
+    `sourceText: ${truncateText(task.sourceText, 320)}`,
+    extractedText ? `extractedText: ${truncateText(extractedText, 120)}` : 'extractedText: ไม่มี',
+    pendingInputs !== 'ไม่มี' ? `pendingInputs: ${truncateText(pendingInputs, 120)}` : 'pendingInputs: ไม่มี',
     latestRescue ? `latestRescue: ${latestRescue.reason} -> ${latestRescue.mode}` : 'latestRescue: ไม่มี',
     '',
     'currentAction:',

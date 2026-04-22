@@ -88,8 +88,9 @@ export function resolveBootstrapSession(
   let nextSession = normalizeSession(session);
   let interceptRoute: ResolvedBootstrapSession['interceptRoute'] = null;
   const stale = isSessionStale(nextSession, now);
+  const suppressReentryIntercept = nextSession.suppressReentryIntercept === true;
 
-  if (stale && !['DUMP_ENTRY', 'MORNING_RITUAL'].includes(nextSession.uiRoute)) {
+  if (stale && !suppressReentryIntercept && !['DUMP_ENTRY', 'MORNING_RITUAL'].includes(nextSession.uiRoute)) {
     nextSession = normalizeSession({
       ...nextSession,
       status: 'BOUNCE_BACK',

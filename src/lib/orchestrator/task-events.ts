@@ -257,11 +257,16 @@ export async function requestAction(options: {
   );
 }
 
-export async function requestScaffold(task: TaskContext, action: Action, currentStepIndex: number): Promise<AiScaffoldResponse> {
+export async function requestScaffold(
+  task: TaskContext,
+  action: Action,
+  currentStepIndex: number,
+  options?: { strategy?: 'default' | 'structural_retry' },
+): Promise<AiScaffoldResponse> {
   const response = await fetch('/api/ai/scaffold', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ task, action, currentStepIndex }),
+    body: JSON.stringify({ task, action, currentStepIndex, strategy: options?.strategy ?? 'default' }),
   });
 
   return parseOperationResponse(

@@ -9,8 +9,11 @@ import {
   type LocalAnalyticsEvent,
 } from '@/lib/analytics/local-analytics';
 import {
+  buildPreferredRoomSourceContext,
   composeRoomSourceText,
+  normalizeRoomSourcePreference,
   normalizeRoomSourceFiles,
+  type RoomSourcePreference,
   type RoomSourceFile,
 } from '@/lib/room';
 
@@ -99,12 +102,82 @@ export interface CurrentPlanStep {
   text: string;
   expectedOutcome?: string;
   canAutoDraft?: boolean;
+  evidence?: PlanEvidenceChip[];
+  confidence?: PlanConfidence;
+  provenance?: PlanProvenance;
+  safety?: PlanSafety;
 }
 
 export interface CurrentPlan {
   actionTitle: string;
   successSignal?: string;
   steps: CurrentPlanStep[];
+}
+
+export type PlanGeneratedBy = 'action' | 'scaffold' | 'rescue' | 'reentry';
+export type PlanConfidenceLevel = 'high' | 'medium' | 'low';
+export type PlanSafetyRisk = 'none' | 'low' | 'medium' | 'high';
+export type PlanSourceKindLabel = 'manual_summary' | 'extracted' | 'retrieved';
+export type DraftPlanStatus = 'draft' | 'reviewing';
+export type PlanRevisionStatus = 'draft' | 'confirmed' | 'rejected';
+export type StepFeedbackKind = 'not_like_this' | 'edited' | 'confirmed';
+
+export interface PlanEvidenceChip {
+  sourceId: string;
+  label: string;
+  excerpt?: string;
+  sourceKindLabel?: PlanSourceKindLabel;
+}
+
+export interface PlanConfidence {
+  level: PlanConfidenceLevel;
+  score: number;
+  rationale: string;
+  supportingSourceCount: number;
+}
+
+export interface PlanProvenance {
+  generatedAt: number;
+  generatedBy: PlanGeneratedBy;
+  sourceIds: string[];
+  userEdited?: boolean;
+  confirmedAt?: number;
+  overrideNote?: string;
+}
+
+export interface PlanSafety {
+  destructive: boolean;
+  risk: PlanSafetyRisk;
+  manualOnly: boolean;
+}
+
+export interface DraftPlan {
+  id: string;
+  status: DraftPlanStatus;
+  actionTitle: string;
+  successSignal?: string;
+  steps: CurrentPlanStep[];
+  createdAt: number;
+  generatedBy: PlanGeneratedBy;
+}
+
+export interface PlanRevision {
+  id: string;
+  planId: string;
+  status: PlanRevisionStatus;
+  actionTitle: string;
+  steps: CurrentPlanStep[];
+  createdAt: number;
+  confirmedAt?: number;
+}
+
+export interface StepFeedback {
+  id: string;
+  stepId: string;
+  draftPlanId?: string;
+  kind: StepFeedbackKind;
+  note?: string;
+  createdAt: number;
 }
 
 export interface RescueHistoryItem {
@@ -154,6 +227,7 @@ export interface CreateTaskContextInput {
   taskShape?: TaskShape;
   createdAt?: number;
   sourceFiles?: RoomSourceFile[];
+  sourcePreference?: RoomSourcePreference;
   extractedText?: string;
   pendingInputs?: PendingInput[];
   blockerSignals?: string[];
@@ -172,6 +246,7 @@ export interface TaskContext {
   taskShape?: TaskShape;
   sourceText: string;
   sourceFiles: RoomSourceFile[];
+  sourcePreference?: RoomSourcePreference;
   extractedText: string;
   createdAt: number;
   lastAttemptAt?: number;
@@ -192,6 +267,10 @@ export interface TaskContext {
   assistantMode?: AssistantMode;
   lastAiOperation?: AiOperationName;
   oneActionTracking?: OneActionTracking;
+  pendingPlan?: DraftPlan;
+  planHistory?: PlanRevision[];
+  stepFeedbackHistory?: StepFeedback[];
+  lastConfirmedActionAt?: number;
 }
 
 export interface Action {
@@ -226,6 +305,7 @@ export interface AppSession {
   hasSeenWalkthrough?: boolean;
   lastWorkflowType?: WorkflowType;
   lastFailureReason?: AiFailureReason;
+  suppressReentryIntercept?: boolean;
 }
 
 export interface MindExport {
@@ -251,6 +331,7 @@ export interface RoomRecord {
   lastKnownGoodBrief?: string;
   lastKnownGoodNextMoves: string[];
   lastKnownGoodAt?: number;
+  sourcePreference?: RoomSourcePreference;
   aiFreshness: RoomAiFreshness;
   lastUpdatedAt: number;
   unread: boolean;
@@ -269,7 +350,16 @@ export interface RoomWorkspace {
 const SESSION_KEY = 'mind_session';
 const ACTIONS_KEY = 'mind_actions';
 const ROOM_WORKSPACE_KEY = 'mind_room_workspace_v1';
+const ROOM_FILE_BLOBS_KEY = 'mind_room_file_blobs_v1';
 const DEFAULT_ROOM_TITLE = 'ห้องงานใหม่';
+
+interface StoredRoomFileBlob {
+  blob: Blob;
+  name: string;
+  mimeType: string;
+  size: number;
+  savedAt: number;
+}
 
 const DEFAULT_TASK_LIFECYCLE_BY_ROUTE: Record<UIRoute, TaskLifecycleState> = {
   DUMP_ENTRY: 'dumped',
@@ -385,6 +475,100 @@ function normalizeTaskFrame(value: unknown): TaskFrame | undefined {
   return { objective, stage, stakeholders };
 }
 
+function normalizeEvidenceChips(value: unknown): PlanEvidenceChip[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const evidence = value.reduce<PlanEvidenceChip[]>((acc, item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return acc;
+    const record = item as Record<string, unknown>;
+    const sourceId = normalizeOptionalString(record.sourceId);
+    const label = normalizeOptionalString(record.label);
+    if (!sourceId || !label) return acc;
+    const excerpt = normalizeOptionalString(record.excerpt);
+    const sourceKindLabel =
+      record.sourceKindLabel === 'manual_summary' ||
+      record.sourceKindLabel === 'extracted' ||
+      record.sourceKindLabel === 'retrieved'
+        ? record.sourceKindLabel
+        : undefined;
+    acc.push({ sourceId, label, excerpt, sourceKindLabel });
+    return acc;
+  }, []);
+  return evidence.length > 0 ? evidence : undefined;
+}
+
+function normalizePlanConfidence(value: unknown): PlanConfidence | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const level = record.level === 'high' || record.level === 'medium' || record.level === 'low'
+    ? record.level
+    : undefined;
+  const score = typeof record.score === 'number' && Number.isFinite(record.score)
+    ? Math.max(0, Math.min(1, record.score))
+    : undefined;
+  const rationale = normalizeOptionalString(record.rationale);
+  const supportingSourceCount = typeof record.supportingSourceCount === 'number' && Number.isFinite(record.supportingSourceCount)
+    ? Math.max(0, Math.floor(record.supportingSourceCount))
+    : undefined;
+  if (!level || score === undefined || !rationale || supportingSourceCount === undefined) return undefined;
+  return { level, score, rationale, supportingSourceCount };
+}
+
+function normalizePlanProvenance(value: unknown): PlanProvenance | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const generatedAt = typeof record.generatedAt === 'number' && Number.isFinite(record.generatedAt)
+    ? record.generatedAt
+    : undefined;
+  const generatedBy =
+    record.generatedBy === 'action' ||
+    record.generatedBy === 'scaffold' ||
+    record.generatedBy === 'rescue' ||
+    record.generatedBy === 'reentry'
+      ? record.generatedBy
+      : undefined;
+  const sourceIds = Array.isArray(record.sourceIds)
+    ? record.sourceIds.map((item) => normalizeOptionalString(item)).filter((item): item is string => Boolean(item))
+    : [];
+  if (!generatedAt || !generatedBy) return undefined;
+  const userEdited = typeof record.userEdited === 'boolean' ? record.userEdited : undefined;
+  const confirmedAt = typeof record.confirmedAt === 'number' && Number.isFinite(record.confirmedAt)
+    ? record.confirmedAt
+    : undefined;
+  const overrideNote = normalizeOptionalString(record.overrideNote);
+  return { generatedAt, generatedBy, sourceIds, userEdited, confirmedAt, overrideNote };
+}
+
+function normalizePlanSafety(value: unknown): PlanSafety | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const destructive = typeof record.destructive === 'boolean' ? record.destructive : undefined;
+  const risk =
+    record.risk === 'none' ||
+    record.risk === 'low' ||
+    record.risk === 'medium' ||
+    record.risk === 'high'
+      ? record.risk
+      : undefined;
+  const manualOnly = typeof record.manualOnly === 'boolean' ? record.manualOnly : undefined;
+  if (destructive === undefined || !risk || manualOnly === undefined) return undefined;
+  return { destructive, risk, manualOnly };
+}
+
+function normalizePlanStep(value: unknown, index: number): CurrentPlanStep | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const stepRecord = value as Record<string, unknown>;
+  const text = normalizeOptionalString(stepRecord.text);
+  if (!text) return undefined;
+  const id = normalizeOptionalString(stepRecord.id) ?? `step-${index + 1}`;
+  const expectedOutcome = normalizeOptionalString(stepRecord.expectedOutcome);
+  const canAutoDraft = typeof stepRecord.canAutoDraft === 'boolean' ? stepRecord.canAutoDraft : undefined;
+  const evidence = normalizeEvidenceChips(stepRecord.evidence);
+  const confidence = normalizePlanConfidence(stepRecord.confidence);
+  const provenance = normalizePlanProvenance(stepRecord.provenance);
+  const safety = normalizePlanSafety(stepRecord.safety);
+  return { id, text, expectedOutcome, canAutoDraft, evidence, confidence, provenance, safety };
+}
+
 function normalizeCurrentPlan(value: unknown): CurrentPlan | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
@@ -393,14 +577,8 @@ function normalizeCurrentPlan(value: unknown): CurrentPlan | undefined {
   const successSignal = normalizeOptionalString(record.successSignal);
   const steps: CurrentPlanStep[] = Array.isArray(record.steps)
     ? record.steps.reduce<CurrentPlanStep[]>((acc, step, index) => {
-        if (!step || typeof step !== 'object' || Array.isArray(step)) return acc;
-        const stepRecord = step as Record<string, unknown>;
-        const text = normalizeOptionalString(stepRecord.text);
-        if (!text) return acc;
-        const id = normalizeOptionalString(stepRecord.id) ?? `step-${index + 1}`;
-        const expectedOutcome = normalizeOptionalString(stepRecord.expectedOutcome);
-        const canAutoDraft = typeof stepRecord.canAutoDraft === 'boolean' ? stepRecord.canAutoDraft : undefined;
-        acc.push({ id, text, expectedOutcome, canAutoDraft });
+        const normalizedStep = normalizePlanStep(step, index);
+        if (normalizedStep) acc.push(normalizedStep);
         return acc;
       }, [])
     : [];
@@ -410,6 +588,77 @@ function normalizeCurrentPlan(value: unknown): CurrentPlan | undefined {
     successSignal,
     steps,
   };
+}
+
+function normalizeDraftPlan(value: unknown): DraftPlan | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const id = normalizeOptionalString(record.id);
+  const status = record.status === 'draft' || record.status === 'reviewing' ? record.status : undefined;
+  const actionTitle = normalizeOptionalString(record.actionTitle);
+  const createdAt = typeof record.createdAt === 'number' && Number.isFinite(record.createdAt) ? record.createdAt : undefined;
+  const generatedBy =
+    record.generatedBy === 'action' ||
+    record.generatedBy === 'scaffold' ||
+    record.generatedBy === 'rescue' ||
+    record.generatedBy === 'reentry'
+      ? record.generatedBy
+      : undefined;
+  if (!id || !status || !actionTitle || !createdAt || !generatedBy) return undefined;
+  const successSignal = normalizeOptionalString(record.successSignal);
+  const steps = Array.isArray(record.steps)
+    ? record.steps.map((step, index) => normalizePlanStep(step, index)).filter((step): step is CurrentPlanStep => Boolean(step))
+    : [];
+  return { id, status, actionTitle, successSignal, steps, createdAt, generatedBy };
+}
+
+function normalizePlanHistory(value: unknown): PlanRevision[] {
+  if (!Array.isArray(value)) return [];
+  return value.reduce<PlanRevision[]>((acc, item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return acc;
+    const record = item as Record<string, unknown>;
+    const id = normalizeOptionalString(record.id) ?? `revision-${index + 1}`;
+    const planId = normalizeOptionalString(record.planId);
+    const status =
+      record.status === 'draft' ||
+      record.status === 'confirmed' ||
+      record.status === 'rejected'
+        ? record.status
+        : undefined;
+    const actionTitle = normalizeOptionalString(record.actionTitle);
+    const createdAt = typeof record.createdAt === 'number' && Number.isFinite(record.createdAt) ? record.createdAt : undefined;
+    if (!planId || !status || !actionTitle || !createdAt) return acc;
+    const confirmedAt = typeof record.confirmedAt === 'number' && Number.isFinite(record.confirmedAt)
+      ? record.confirmedAt
+      : undefined;
+    const steps = Array.isArray(record.steps)
+      ? record.steps.map((step, stepIndex) => normalizePlanStep(step, stepIndex)).filter((step): step is CurrentPlanStep => Boolean(step))
+      : [];
+    acc.push({ id, planId, status, actionTitle, steps, createdAt, confirmedAt });
+    return acc;
+  }, []);
+}
+
+function normalizeStepFeedbackHistory(value: unknown): StepFeedback[] {
+  if (!Array.isArray(value)) return [];
+  return value.reduce<StepFeedback[]>((acc, item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return acc;
+    const record = item as Record<string, unknown>;
+    const id = normalizeOptionalString(record.id) ?? `feedback-${index + 1}`;
+    const stepId = normalizeOptionalString(record.stepId);
+    const kind =
+      record.kind === 'not_like_this' ||
+      record.kind === 'edited' ||
+      record.kind === 'confirmed'
+        ? record.kind
+        : undefined;
+    const createdAt = typeof record.createdAt === 'number' && Number.isFinite(record.createdAt) ? record.createdAt : undefined;
+    if (!stepId || !kind || !createdAt) return acc;
+    const draftPlanId = normalizeOptionalString(record.draftPlanId);
+    const note = normalizeOptionalString(record.note);
+    acc.push({ id, stepId, draftPlanId, kind, note, createdAt });
+    return acc;
+  }, []);
 }
 
 function normalizeTaskShape(value: unknown): TaskShape | undefined {
@@ -823,6 +1072,7 @@ export function buildRoomRecordFromSession(
     lastKnownGoodBrief: lastKnownGood.brief,
     lastKnownGoodNextMoves: lastKnownGood.nextMoves,
     lastKnownGoodAt: lastKnownGood.at,
+    sourcePreference: session.task?.sourcePreference ?? existing?.sourcePreference,
     aiFreshness: lastKnownGood.freshness,
     lastUpdatedAt,
     unread,
@@ -838,25 +1088,38 @@ export function hydrateRoomSessionFromRecord(
   room?: Partial<RoomRecord> | null,
 ): AppSession {
   if (!session.task) return session;
-  if (!roomHasCachedSavePoint(room)) return session;
+  const sessionWithPreference = room?.sourcePreference && !session.task.sourcePreference
+    ? normalizeSession({
+        ...session,
+        task: {
+          ...session.task,
+          sourcePreference: room.sourcePreference,
+        },
+    })
+    : session;
+  const hydratedTask = sessionWithPreference.task;
+  if (!hydratedTask) return sessionWithPreference;
+
+  if (!roomHasCachedSavePoint(room)) return sessionWithPreference;
 
   const shouldRecoverTransientRoute =
-    session.uiRoute === 'SYNTHESIZING' ||
-    session.uiRoute === 'MANUAL_FALLBACK' ||
-    session.task.lifecycleState === 'synthesizing' ||
-    session.task.lifecycleState === 'failed';
+    sessionWithPreference.uiRoute === 'SYNTHESIZING' ||
+    sessionWithPreference.uiRoute === 'MANUAL_FALLBACK' ||
+    hydratedTask.lifecycleState === 'synthesizing' ||
+    hydratedTask.lifecycleState === 'failed';
 
-  if (!shouldRecoverTransientRoute) return session;
+  if (!shouldRecoverTransientRoute) return sessionWithPreference;
 
   return normalizeSession({
-    ...session,
+    ...sessionWithPreference,
     uiRoute: 'DUMP_ENTRY',
     status: 'DUMP_ENTRY',
     task: {
-      ...session.task,
+      ...hydratedTask,
       lifecycleState: 'dumped',
-      reentryBrief: session.task.reentryBrief ?? room?.lastReentryBrief,
-      lastStableSummary: session.task.lastStableSummary ?? normalizeOptionalString(room?.lastKnownGoodBrief),
+      sourcePreference: hydratedTask.sourcePreference ?? room?.sourcePreference,
+      reentryBrief: hydratedTask.reentryBrief ?? room?.lastReentryBrief,
+      lastStableSummary: hydratedTask.lastStableSummary ?? normalizeOptionalString(room?.lastKnownGoodBrief),
     },
   });
 }
@@ -873,6 +1136,7 @@ function normalizeTaskContext(task: unknown, fallback: {
   lastFailureReason?: AiFailureReason;
   lastSynthesis?: AiSynthesisResponse;
   sourceFiles?: RoomSourceFile[];
+  sourcePreference?: RoomSourcePreference;
   extractedText?: string;
   pendingInputs?: PendingInput[];
   blockerSignals?: string[];
@@ -881,13 +1145,11 @@ function normalizeTaskContext(task: unknown, fallback: {
   if (!task || typeof task !== 'object' || Array.isArray(task)) return undefined;
   const record = task as Record<string, unknown>;
   const sourceFiles = normalizeRoomSourceFiles(record.sourceFiles ?? fallback.sourceFiles);
-  const extractedTextFromFiles = sourceFiles
-    .map((file) => normalizeOptionalString(file.extractedText))
-    .filter((value): value is string => Boolean(value))
-    .join('\n\n');
+  const sourcePreference = normalizeRoomSourcePreference(record.sourcePreference ?? fallback.sourcePreference);
+  const preferredContext = buildPreferredRoomSourceContext('', sourceFiles, sourcePreference);
   const extractedText = normalizeOptionalString(record.extractedText)
     ?? fallback.extractedText
-    ?? extractedTextFromFiles
+    ?? preferredContext.extractedText
     ?? '';
   const sourceText = normalizeOptionalString(record.sourceText)
     ?? fallback.sourceText
@@ -927,6 +1189,12 @@ function normalizeTaskContext(task: unknown, fallback: {
   const assistantMode = normalizeAssistantMode(record.assistantMode);
   const lastAiOperation = normalizeAiOperationName(record.lastAiOperation);
   const oneActionTracking = normalizeOneActionTracking(record.oneActionTracking);
+  const pendingPlan = normalizeDraftPlan(record.pendingPlan);
+  const planHistory = normalizePlanHistory(record.planHistory);
+  const stepFeedbackHistory = normalizeStepFeedbackHistory(record.stepFeedbackHistory);
+  const lastConfirmedActionAt = typeof record.lastConfirmedActionAt === 'number' && Number.isFinite(record.lastConfirmedActionAt)
+    ? record.lastConfirmedActionAt
+    : undefined;
 
   return {
     id,
@@ -935,6 +1203,7 @@ function normalizeTaskContext(task: unknown, fallback: {
     taskShape,
     sourceText,
     sourceFiles,
+    sourcePreference,
     extractedText,
     createdAt,
     lastAttemptAt,
@@ -955,6 +1224,10 @@ function normalizeTaskContext(task: unknown, fallback: {
     assistantMode,
     lastAiOperation,
     oneActionTracking,
+    pendingPlan,
+    planHistory,
+    stepFeedbackHistory,
+    lastConfirmedActionAt,
   };
 }
 
@@ -1019,11 +1292,9 @@ export function createTaskContext(
     : inputOrSourceText;
 
   const sourceFiles = normalizeRoomSourceFiles(input.sourceFiles);
-  const extractedTextFromFiles = sourceFiles
-    .map((file) => normalizeOptionalString(file.extractedText))
-    .filter((value): value is string => Boolean(value))
-    .join('\n\n');
-  const extractedText = normalizeOptionalString(input.extractedText) ?? extractedTextFromFiles ?? '';
+  const sourcePreference = normalizeRoomSourcePreference(input.sourcePreference);
+  const preferredContext = buildPreferredRoomSourceContext('', sourceFiles, sourcePreference);
+  const extractedText = normalizeOptionalString(input.extractedText) ?? preferredContext.extractedText ?? '';
   const sourceText = normalizeOptionalString(input.sourceText) ?? composeRoomSourceText('', extractedText, sourceFiles);
   const currentCreatedAt = typeof input.createdAt === 'number' ? input.createdAt : createdAt;
 
@@ -1034,6 +1305,7 @@ export function createTaskContext(
     taskShape: input.taskShape,
     sourceText,
     sourceFiles,
+    sourcePreference,
     extractedText,
     createdAt: currentCreatedAt,
     lastAttemptAt: input.lastAttemptAt,
@@ -1045,6 +1317,8 @@ export function createTaskContext(
     currentStepIndex: typeof input.currentStepIndex === 'number' ? input.currentStepIndex : 0,
     currentActionId: input.currentActionId ?? null,
     rescueHistory: [],
+    planHistory: [],
+    stepFeedbackHistory: [],
     actionExplanation: undefined,
     reentryBrief: undefined,
     oneActionTracking: undefined,
@@ -1123,6 +1397,7 @@ export function normalizeSession(session: Partial<AppSession> & { status?: unkno
         pendingInputs: existingTask.pendingInputs || [],
         blockerSignals: existingTask.blockerSignals || [],
         sourceFiles: existingTask.sourceFiles || [],
+        sourcePreference: existingTask.sourcePreference,
         extractedText: existingTask.extractedText || '',
         rescueHistory: existingTask.rescueHistory || [],
       }
@@ -1165,6 +1440,7 @@ export function normalizeSession(session: Partial<AppSession> & { status?: unkno
     lastFailureReason: completedTask
       ? undefined
       : isFailureReason(session.lastFailureReason) ? session.lastFailureReason : activeTask?.lastFailureReason,
+    suppressReentryIntercept: session.suppressReentryIntercept ?? false,
   };
 }
 
@@ -1211,6 +1487,59 @@ export async function saveSession(session: AppSession): Promise<void> {
   if (normalized.roomId) {
     await syncRoomFromSession(normalized);
   }
+}
+
+export function createRoomFileStorageKey(file: Pick<File, 'name'>, roomId?: string) {
+  const safeRoomId = roomId?.replace(/[^a-zA-Z0-9_-]/g, '_') || 'draft';
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 72) || 'file';
+  return `room-file:${safeRoomId}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}:${safeName}`;
+}
+
+export async function saveRoomFileBlob(file: File, storageKey = createRoomFileStorageKey(file)): Promise<string> {
+  const record: StoredRoomFileBlob = {
+    blob: new Blob([file], { type: file.type || 'application/octet-stream' }),
+    name: file.name || 'untitled',
+    mimeType: file.type || 'application/octet-stream',
+    size: file.size,
+    savedAt: Date.now(),
+  };
+
+  await update(ROOM_FILE_BLOBS_KEY, (value) => {
+    const records = (value && typeof value === 'object' && !Array.isArray(value))
+      ? value as Record<string, StoredRoomFileBlob>
+      : {};
+    return {
+      ...records,
+      [storageKey]: record,
+    };
+  });
+
+  return storageKey;
+}
+
+export async function loadRoomFileBlob(storageKey: string): Promise<File | null> {
+  const records = await get<Record<string, StoredRoomFileBlob>>(ROOM_FILE_BLOBS_KEY);
+  const record = records?.[storageKey];
+  if (!record?.blob) return null;
+  return new File([record.blob], record.name, {
+    type: record.mimeType || record.blob.type || 'application/octet-stream',
+    lastModified: record.savedAt,
+  });
+}
+
+export async function deleteRoomFileBlob(storageKey: string): Promise<void> {
+  await update(ROOM_FILE_BLOBS_KEY, (value) => {
+    const records = (value && typeof value === 'object' && !Array.isArray(value))
+      ? value as Record<string, StoredRoomFileBlob>
+      : {};
+    const nextRecords = { ...records };
+    delete nextRecords[storageKey];
+    return nextRecords;
+  });
+}
+
+export async function clearRoomFileBlobs(): Promise<void> {
+  await del(ROOM_FILE_BLOBS_KEY);
 }
 
 export async function getActions(): Promise<Action[]> {
@@ -1264,6 +1593,7 @@ function normalizeRoomRecord(value: unknown, activeRoomId: string | null): RoomR
           .filter((item): item is string => Boolean(item))
       : [],
     lastKnownGoodAt: typeof record.lastKnownGoodAt === 'number' ? record.lastKnownGoodAt : undefined,
+    sourcePreference: normalizeRoomSourcePreference(record.sourcePreference),
     aiFreshness: normalizeRoomAiFreshness(record.aiFreshness),
   });
 }
@@ -1750,5 +2080,5 @@ export async function exportAllData(): Promise<MindExport> {
 }
 
 export async function clearAllData(): Promise<void> {
-  await Promise.all([del(SESSION_KEY), del(ACTIONS_KEY), clearAnalyticsEvents(), clearRoomWorkspace()]);
+  await Promise.all([del(SESSION_KEY), del(ACTIONS_KEY), clearAnalyticsEvents(), clearRoomWorkspace(), clearRoomFileBlobs()]);
 }

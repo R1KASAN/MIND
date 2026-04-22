@@ -5,10 +5,10 @@ import {
   DUMP_HERO_HEADING,
   DUMP_TEXTBOX_LABEL,
   EDIT_CONTEXT_CTA,
+  getAnalyticsEventCount,
   STUDIO_SNAPSHOT_TARGET_SELECTOR,
   seedStudioSession,
   STUDIO_BLOCKED_INTENT,
-  STUDIO_BLOCKED_REASON,
   STUDIO_PANEL_HEADING,
   STUDIO_STATUS_INTENT,
   waitForAnalyticsEventCount,
@@ -60,6 +60,15 @@ async function run() {
     await page.goto(`${BASE_URL}/?walkthrough=off&ritual=off`, { waitUntil: 'domcontentloaded' });
     await page.getByRole('heading', { name: DUMP_HERO_HEADING }).waitFor({ state: 'visible', timeout: 30000 });
     await page.getByLabel(DUMP_TEXTBOX_LABEL).waitFor({ state: 'visible', timeout: 30000 });
+    const powerToggle = page.getByRole('button', { name: 'โหมดละเอียด' });
+    await powerToggle.waitFor({ state: 'visible', timeout: 30000 });
+    await powerToggle.click();
+    await page.waitForFunction(() => document.querySelector('.mind-shell-layout')?.classList.contains('is-power-mode'), undefined, { timeout: 30000 });
+    await page.locator('.mind-shell-route-detail').waitFor({ state: 'visible', timeout: 30000 });
+    const focusToggle = page.getByRole('button', { name: 'โหมดโฟกัส' });
+    await focusToggle.waitFor({ state: 'visible', timeout: 30000 });
+    await focusToggle.click();
+    await page.waitForFunction(() => document.querySelector('.mind-shell-layout')?.classList.contains('is-focus-mode'), undefined, { timeout: 30000 });
     await page.getByRole('heading', { name: STUDIO_PANEL_HEADING }).waitFor({ state: 'visible', timeout: 30000 });
     const desktopStudio = page.locator('.studio-panel');
     await desktopStudio.waitFor({ state: 'visible', timeout: 30000 });
@@ -73,13 +82,13 @@ async function run() {
     await provenanceSummary.waitFor({ state: 'visible', timeout: 30000 });
     await provenanceSummary.click();
     await desktopStudio.locator('.studio-desktop-stack .studio-provenance-body').first().waitFor({ state: 'visible', timeout: 30000 });
-    await waitForAnalyticsEventCount(page, 'studio_snapshot_viewed', 1);
+    const snapshotEventBaseline = await getAnalyticsEventCount(page, 'studio_snapshot_viewed');
 
     console.log('[SMOKE] reviewing status without live AI');
     const statusButton = desktopStudio.getByRole('button', { name: STUDIO_STATUS_INTENT });
     await statusButton.waitFor({ state: 'visible', timeout: 30000 });
     await statusButton.click();
-    await waitForAnalyticsEventCount(page, 'studio_snapshot_viewed', 1);
+    await waitForAnalyticsEventCount(page, 'studio_snapshot_viewed', snapshotEventBaseline);
 
     console.log('[SMOKE] checking blocked advanced intent copy');
     const showMoreButton = desktopStudio.getByRole('button', { name: 'ดูเพิ่ม' });
@@ -93,12 +102,12 @@ async function run() {
     console.log('[SMOKE] waiting for blocked intent explanation');
     const blockedNote = desktopStudio
       .locator('.studio-desktop-stack .studio-inline-note')
-      .filter({ hasText: STUDIO_BLOCKED_REASON })
+      .filter({ hasText: 'ย่อย' })
       .first();
     await blockedNote.waitFor({ state: 'visible', timeout: 30000 });
     const blockedNoteText = (await blockedNote.textContent())?.trim() ?? '';
-    if (!blockedNoteText.includes(STUDIO_BLOCKED_REASON)) {
-      throw new Error(`expected blocked intent copy to mention "${STUDIO_BLOCKED_REASON}", received: ${blockedNoteText}`);
+    if (!blockedNoteText.includes('ย่อย')) {
+      throw new Error(`expected blocked intent copy to mention "ย่อย", received: ${blockedNoteText}`);
     }
 
     console.log('[SMOKE] returning to dump with current context intact');

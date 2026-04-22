@@ -7,14 +7,19 @@ const BOUNCE_BACK_SCREENSHOT =
   process.env.MIND_MOBILE_BOUNCE_BACK_SCREENSHOT || '/tmp/mind-bounceback-mobile.png';
 const MORNING_SCREENSHOT =
   process.env.MIND_MOBILE_MORNING_SCREENSHOT || '/tmp/mind-morning-mobile.png';
-const STUDIO_SNAPSHOT_HEADING = 'บริบทที่ MIND ใช้อยู่';
 
 async function ensureDirectory(filePath: string) {
   await mkdir(dirname(filePath), { recursive: true });
 }
 
+function getUrl(uiRoute: 'BOUNCE_BACK' | 'MORNING_RITUAL') {
+  return uiRoute === 'MORNING_RITUAL'
+    ? `${BASE_URL}/?walkthrough=off`
+    : `${BASE_URL}/?walkthrough=off&ritual=off`;
+}
+
 async function seedReentrySession(page: Page, uiRoute: 'BOUNCE_BACK' | 'MORNING_RITUAL') {
-  await page.goto(`${BASE_URL}/?walkthrough=off&ritual=off`, { waitUntil: 'domcontentloaded' });
+  await page.goto(getUrl(uiRoute), { waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('domcontentloaded');
 
   await page.evaluate(async ({ uiRoute }) => {
@@ -86,7 +91,10 @@ async function seedReentrySession(page: Page, uiRoute: 'BOUNCE_BACK' | 'MORNING_
       });
     }
     const tx = db.transaction('keyval', 'readwrite');
-    tx.objectStore('keyval').put(session, 'mind_session');
+    const store = tx.objectStore('keyval');
+    store.put(session, 'mind_session');
+    store.delete('mind_room_workspace_v1');
+    store.put([], 'mind_actions');
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
@@ -98,21 +106,28 @@ async function seedReentrySession(page: Page, uiRoute: 'BOUNCE_BACK' | 'MORNING_
 
 async function captureBounceBack(page: Page) {
   await seedReentrySession(page, 'BOUNCE_BACK');
-  await page.goto(`${BASE_URL}/?walkthrough=off&ritual=off`, { waitUntil: 'domcontentloaded' });
+  await page.goto(getUrl('BOUNCE_BACK'), { waitUntil: 'domcontentloaded' });
   await page.getByRole('heading', { name: 'กลับมาแล้ว งานนี้ยังไปต่อได้' }).waitFor({ state: 'visible' });
-  await page.getByText(STUDIO_SNAPSHOT_HEADING).waitFor({ state: 'visible' });
-  await page.getByRole('button', { name: /ทำอันนี้ก่อน:/ }).waitFor({ state: 'visible' });
-  await page.getByText('เริ่มใหม่ = พิมพ์งานก่อนได้เลย ไม่มีไฟล์ก็เริ่มได้').waitFor({ state: 'visible' });
+  await page.getByRole('button', { name: 'ไปต่อจากก้าวนี้' }).waitFor({ state: 'visible' });
+  const moreToggle = page.locator('.reentry-hero-more > summary').first();
+  await moreToggle.waitFor({ state: 'visible' });
+  await moreToggle.click();
+  await page.locator('[data-studio-snapshot-target]').first().waitFor({ state: 'visible' });
+  await page.getByRole('button', { name: 'เริ่มใหม่' }).last().waitFor({ state: 'visible' });
   await ensureDirectory(BOUNCE_BACK_SCREENSHOT);
   await page.screenshot({ path: BOUNCE_BACK_SCREENSHOT, fullPage: true });
 }
 
 async function captureMorning(page: Page) {
   await seedReentrySession(page, 'MORNING_RITUAL');
-  await page.goto(`${BASE_URL}/?walkthrough=off&ritual=off`, { waitUntil: 'domcontentloaded' });
-  await page.getByText('Today with MIND').waitFor({ state: 'visible' });
-  await page.getByText(STUDIO_SNAPSHOT_HEADING).waitFor({ state: 'visible' });
-  await page.getByRole('button', { name: 'เริ่มจากก้าวที่คุ้มสุดก่อน' }).waitFor({ state: 'visible' });
+  await page.goto(getUrl('MORNING_RITUAL'), { waitUntil: 'domcontentloaded' });
+  await page.getByRole('heading', { name: /สวัสดีตอน/ }).waitFor({ state: 'visible' });
+  await page.getByRole('button', { name: 'ไปต่อจากก้าวนี้' }).waitFor({ state: 'visible' });
+  const moreToggle = page.locator('.reentry-hero-more > summary').first();
+  await moreToggle.waitFor({ state: 'visible' });
+  await moreToggle.click();
+  await page.locator('[data-studio-snapshot-target]').first().waitFor({ state: 'visible' });
+  await page.getByRole('button', { name: 'เริ่มใหม่วันนี้' }).last().waitFor({ state: 'visible' });
   await ensureDirectory(MORNING_SCREENSHOT);
   await page.screenshot({ path: MORNING_SCREENSHOT, fullPage: true });
 }

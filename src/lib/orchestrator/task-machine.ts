@@ -16,6 +16,10 @@ import type {
   WorkflowType,
   ReentryResumeTarget,
 } from '@/lib/store/idb';
+import {
+  createDraftPlanFromCurrentPlan,
+  enrichPlanWithProvenance,
+} from '@/lib/orchestrator/plan-provenance';
 import { createTaskContext } from '@/lib/store/idb';
 
 let sessionWorkflowHistory: WorkflowType[] = [];
@@ -270,6 +274,16 @@ export function buildActionSuccessArtifacts(input: {
     (constraints ??= {}).preferReplyFirst = false;
   }
 
+  const generatedAt = Date.now();
+  const currentPlan = enrichPlanWithProvenance({
+    actionTitle: actionResponse.chosenAction.title,
+    successSignal: actionResponse.chosenAction.successSignal,
+    steps: payload.recommended_action.micro_steps.map((step, index) => ({
+      id: `step-${index + 1}`,
+      text: step,
+    })),
+  }, task, 'action', generatedAt);
+
   const nextTask: TaskContext = {
     ...task,
     workflowType,
@@ -284,14 +298,19 @@ export function buildActionSuccessArtifacts(input: {
     lastSynthesis: payload,
     lastFailureReason: undefined,
     actionExplanation: actionResponse.whyThisNow,
-    currentPlan: {
-      actionTitle: actionResponse.chosenAction.title,
-      successSignal: actionResponse.chosenAction.successSignal,
-      steps: payload.recommended_action.micro_steps.map((step, index) => ({
-        id: `step-${index + 1}`,
-        text: step,
-      })),
-    },
+    currentPlan,
+    pendingPlan: createDraftPlanFromCurrentPlan(currentPlan, 'action', generatedAt),
+    planHistory: [
+      ...(task.planHistory ?? []),
+      {
+        id: `revision-${generatedAt}`,
+        planId: `draft-${generatedAt}`,
+        status: 'draft' as const,
+        actionTitle: currentPlan.actionTitle,
+        steps: currentPlan.steps,
+        createdAt: generatedAt,
+      },
+    ].slice(-20),
     constraints,
     oneActionTracking: {
       hasViewedAlternative: false,
@@ -339,6 +358,13 @@ export function buildScaffoldSuccessArtifacts(input: {
     microSteps: nextPayload.recommended_action.micro_steps,
   };
 
+  const generatedAt = Date.now();
+  const currentPlan = enrichPlanWithProvenance({
+    actionTitle: nextActionState.title,
+    successSignal: task.currentPlan?.successSignal,
+    steps: scaffold.steps,
+  }, task, 'scaffold', generatedAt);
+
   const nextTask: TaskContext = {
     ...task,
     lifecycleState: 'in_scaffold',
@@ -348,11 +374,19 @@ export function buildScaffoldSuccessArtifacts(input: {
       scaffold.revisedCurrentStepIndex,
       nextPayload.recommended_action.micro_steps.length - 1,
     ),
-    currentPlan: {
-      actionTitle: nextActionState.title,
-      successSignal: task.currentPlan?.successSignal,
-      steps: scaffold.steps,
-    },
+    currentPlan,
+    pendingPlan: createDraftPlanFromCurrentPlan(currentPlan, 'scaffold', generatedAt),
+    planHistory: [
+      ...(task.planHistory ?? []),
+      {
+        id: `revision-${generatedAt}`,
+        planId: `draft-${generatedAt}`,
+        status: 'draft' as const,
+        actionTitle: currentPlan.actionTitle,
+        steps: currentPlan.steps,
+        createdAt: generatedAt,
+      },
+    ].slice(-20),
     lastSynthesis: nextPayload,
   };
 

@@ -3,19 +3,188 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTrackMountEvent, trackEvent } from '@/lib/instrumentation';
 import { AiSynthesisResponse } from '@/lib/ai/schema';
-import type { Action, TaskConstraints } from '@/lib/store/idb';
+import type { Action, CurrentPlan, CurrentPlanStep, PlanGeneratedBy, PlanSourceKindLabel, TaskConstraints } from '@/lib/store/idb';
 import type { ActionNegotiationInput } from '@/lib/orchestrator/task-controller';
+import { formatConfidenceLabel } from '@/lib/orchestrator/plan-provenance';
 
 interface Props {
   data: AiSynthesisResponse;
   action?: Action | null;
   whyThisNow?: string;
   constraints?: TaskConstraints;
+  plan?: CurrentPlan;
   negotiationLoading?: boolean;
   onAccept: () => void;
   onReject: () => void;
+  onNotLikeThis?: () => void;
   onMarkAdjusted: () => void;
   onNegotiate: (input: ActionNegotiationInput) => void;
+  focusMode?: boolean;
+}
+
+function hasRetrievedEvidence(step?: CurrentPlanStep) {
+  return Boolean(step?.evidence?.some((item) => item.sourceKindLabel === 'retrieved'));
+}
+
+function formatTimestamp(timestamp?: number) {
+  if (!timestamp) return undefined;
+  return new Intl.DateTimeFormat('th-TH', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(timestamp));
+}
+
+function formatSourceKindLabel(value?: PlanSourceKindLabel) {
+  if (value === 'manual_summary') return 'สรุปด้วยมือ';
+  if (value === 'extracted') return 'ดึงจากไฟล์';
+  if (value === 'retrieved') return 'ดึงจากหลักฐาน';
+  return 'หลักฐานในห้อง';
+}
+
+function formatGeneratedByLabel(value?: PlanGeneratedBy) {
+  if (value === 'action') return 'แผนหลัก';
+  if (value === 'scaffold') return 'ย่อยงาน';
+  if (value === 'rescue') return 'ช่วยตอนติด';
+  if (value === 'reentry') return 'กลับเข้าห้อง';
+  return value ?? '';
+}
+
+function StepEvidence({ step }: { step?: CurrentPlanStep }) {
+  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
+  if (!step) return null;
+  const evidence = step.evidence ?? [];
+  const safety = step.safety;
+  const selectedEvidence = evidence.find((item) => item.sourceId === selectedSourceId) ?? evidence[0];
+  const generatedLabel = formatTimestamp(step.provenance?.generatedAt);
+  const confirmedLabel = formatTimestamp(step.provenance?.confirmedAt);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem', width: '100%', maxWidth: '42rem' }}>
+      <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        <span
+          style={{
+            border: '1px solid rgba(255,255,255,0.12)',
+            borderRadius: '999px',
+            padding: '0.28rem 0.58rem',
+            fontSize: '0.74rem',
+            color: 'var(--text-secondary)',
+          }}
+        >
+          ร่างจาก MIND
+        </span>
+        <span
+          style={{
+            border: '1px solid rgba(94,106,210,0.34)',
+            background: 'rgba(94,106,210,0.12)',
+            borderRadius: '999px',
+            padding: '0.28rem 0.58rem',
+            fontSize: '0.74rem',
+            color: 'var(--text-primary)',
+          }}
+        >
+          {formatConfidenceLabel(step.confidence)}
+        </span>
+        {safety?.manualOnly && (
+          <span
+            style={{
+              border: '1px solid rgba(255,99,132,0.3)',
+              background: 'rgba(255,99,132,0.1)',
+              borderRadius: '999px',
+              padding: '0.28rem 0.58rem',
+              fontSize: '0.74rem',
+              color: 'var(--danger)',
+            }}
+          >
+            ทำด้วยมือเท่านั้น · ไม่รันอัตโนมัติ
+          </span>
+        )}
+        {step.provenance?.userEdited && (
+          <span
+            style={{
+              border: '1px solid rgba(87,210,162,0.24)',
+              background: 'rgba(87,210,162,0.08)',
+              borderRadius: '999px',
+              padding: '0.28rem 0.58rem',
+              fontSize: '0.74rem',
+              color: 'var(--text-primary)',
+            }}
+          >
+            Edited by you
+          </span>
+        )}
+      </div>
+      {evidence.length > 0 && (
+        <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+          {evidence.map((item) => (
+            <button
+              key={`${item.sourceId}-${item.label}`}
+              type="button"
+              onClick={() => {
+                setSelectedSourceId(item.sourceId);
+                trackEvent('step_evidence_clicked', {
+                  step_id: step.id,
+                  source_ids: [item.sourceId],
+                  confidence_level: step.confidence?.level,
+                  confidence_score: step.confidence?.score,
+                  destructive_risk: step.safety?.risk,
+                  retrieval_enabled: hasRetrievedEvidence(step),
+                });
+              }}
+              style={{
+                background: selectedSourceId === item.sourceId ? 'rgba(94,106,210,0.16)' : 'rgba(255,255,255,0.04)',
+                border: selectedSourceId === item.sourceId ? '1px solid rgba(94,106,210,0.35)' : '1px solid rgba(255,255,255,0.09)',
+                color: selectedSourceId === item.sourceId ? 'var(--text-primary)' : 'var(--text-secondary)',
+                padding: '0.34rem 0.58rem',
+                fontSize: '0.76rem',
+              }}
+              title={item.excerpt}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+      {(selectedEvidence || generatedLabel || confirmedLabel || step.provenance?.overrideNote) && (
+        <details className="supporting-panel" style={{ padding: '0.85rem' }}>
+          <summary
+            style={{
+              cursor: 'pointer',
+              color: 'var(--text-secondary)',
+              fontSize: '0.84rem',
+              fontWeight: 600,
+              listStyle: 'none',
+            }}
+          >
+            เหตุผล / ประวัติ
+          </summary>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem', marginTop: '0.7rem' }}>
+            {selectedEvidence && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                <span className="supporting-label" style={{ marginBottom: 0 }}>
+                  {formatSourceKindLabel(selectedEvidence.sourceKindLabel)} · {selectedEvidence.label}
+                </span>
+                <p className="supporting-summary" style={{ margin: 0 }}>
+                  {selectedEvidence.excerpt || 'ยังไม่มี excerpt สั้น ๆ จาก source นี้'}
+                </p>
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+              {generatedLabel && <span className="studio-chip">สร้างเมื่อ {generatedLabel}</span>}
+              {confirmedLabel && <span className="studio-chip">ยืนยันเมื่อ {confirmedLabel}</span>}
+              {step.provenance?.generatedBy && <span className="studio-chip">{formatGeneratedByLabel(step.provenance.generatedBy)}</span>}
+              {step.safety?.risk && <span className="studio-chip">ความเสี่ยง: {step.safety.risk}</span>}
+            </div>
+            {step.provenance?.overrideNote && (
+              <p className="studio-inline-note" style={{ margin: 0 }}>
+                แก้ไข: {step.provenance.overrideNote}
+              </p>
+            )}
+          </div>
+        </details>
+      )}
+    </div>
+  );
 }
 
 export function OneAction({
@@ -23,11 +192,14 @@ export function OneAction({
   action,
   whyThisNow,
   constraints,
+  plan,
   negotiationLoading = false,
   onAccept,
   onReject,
+  onNotLikeThis,
   onMarkAdjusted,
   onNegotiate,
+  focusMode = true,
 }: Props) {
   useTrackMountEvent('action_shown');
   const [showTunePanel, setShowTunePanel] = useState(false);
@@ -54,6 +226,7 @@ export function OneAction({
         ? 'ก้าวนี้พาไปตอบลูกค้าและจัดลำดับคุย demo/pilot ก่อน เพื่อให้งานกลับเข้าร่องเร็วที่สุด'
         : 'ก้าวนี้ใกล้การลงมือที่สุด และแตกเป็นขั้นตอนเล็ก ๆ ต่อได้ทันที');
   const [showReplyDraft, setShowReplyDraft] = useState(false);
+  const primaryStep = plan?.steps[0];
 
   useEffect(() => {
     setReplyDraftValue(replyDraft);
@@ -72,6 +245,24 @@ export function OneAction({
       setShowTunePanel(true);
     }
   }, [hasConstraintSelection, negotiationLoading]);
+
+  useEffect(() => {
+    trackEvent('step_draft_shown', {
+      step_id: primaryStep?.id,
+      source_ids: primaryStep?.evidence?.map((item) => item.sourceId),
+      confidence_level: primaryStep?.confidence?.level,
+      confidence_score: primaryStep?.confidence?.score,
+      destructive_risk: primaryStep?.safety?.risk,
+      retrieval_enabled: hasRetrievedEvidence(primaryStep),
+    });
+    if (primaryStep?.safety?.manualOnly) {
+      trackEvent('destructive_step_warning_shown', {
+        step_id: primaryStep.id,
+        destructive_risk: primaryStep.safety.risk,
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.recommended_action.title, primaryStep?.id]);
 
   const handleReject = () => {
     trackEvent('action_rejected');
@@ -114,8 +305,18 @@ export function OneAction({
         <p className="action-hero-rationale">{data.recommended_action.rationale}</p>
       </div>
 
+      <StepEvidence step={primaryStep} />
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.7rem', width: '100%', maxWidth: '42rem' }}>
         <button className="primary" onClick={onAccept}>{primaryActionLabel}</button>
+        {onNotLikeThis && (
+          <button
+            onClick={onNotLikeThis}
+            style={{ background: 'transparent', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}
+          >
+            ไม่ใช่แบบนี้
+          </button>
+        )}
         <button
           onClick={handleReject}
           style={{ background: 'transparent', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}
@@ -124,7 +325,7 @@ export function OneAction({
         </button>
       </div>
 
-      <details className="supporting-panel" style={{ width: '100%', maxWidth: '42rem' }}>
+      <details className="supporting-panel" style={{ width: '100%', maxWidth: '42rem' }} open={!focusMode}>
         <summary
           style={{
             cursor: 'pointer',
@@ -142,7 +343,7 @@ export function OneAction({
 
       <details
         className="supporting-panel expanded"
-        open={showTunePanel || negotiationLoading || hasConstraintSelection}
+        open={focusMode ? showTunePanel || negotiationLoading || hasConstraintSelection : true}
         style={{ width: '100%', maxWidth: '42rem' }}
         onToggle={(event) => setShowTunePanel(event.currentTarget.open)}
       >
@@ -333,6 +534,8 @@ export function OneAction({
                   </button>
                 </div>
                 <textarea
+                  id="reply-draft-editor"
+                  name="replyDraftEditor"
                   ref={replyDraftRef}
                   value={replyDraftValue}
                   onChange={(event) => setReplyDraftValue(event.target.value)}

@@ -22,6 +22,13 @@ In practice, this means:
 
 The source of truth for the local demo and release-gating path is [docs/demo-runbook.md](docs/demo-runbook.md).
 
+For prompt-driven mock-up planning on `localhost:3002`, use:
+
+- [docs/mind-mockup-prompt-plan.md](docs/mind-mockup-prompt-plan.md) for the phase hierarchy
+- [docs/mind-mockup-prompt-runbook.md](docs/mind-mockup-prompt-runbook.md) for the operating workflow
+- [docs/mind-mockup-prompt-chain-example.md](docs/mind-mockup-prompt-chain-example.md) for a complete example
+- [docs/prompt-templates/](docs/prompt-templates/) for copy-ready phase prompts
+
 Use the commands in that runbook for the CPU-safe local AI path:
 
 ```bash

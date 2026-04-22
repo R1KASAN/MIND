@@ -21,9 +21,9 @@ test('resolveRescueRouteBudget widens only timeout-recovery retries', () => {
 
   assert.deepEqual(resolved, {
     primaryTimeoutMs: 20000,
-    repairTimeoutMs: 15000,
-    fallbackTimeoutMs: 15000,
-    overallBudgetMs: 43000,
+    repairTimeoutMs: 16000,
+    fallbackTimeoutMs: 16000,
+    overallBudgetMs: 45000,
   });
 });
 

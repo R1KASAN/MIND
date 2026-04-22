@@ -13,6 +13,48 @@ interface Props {
   refineFeedback?: ScaffoldRefineFeedback | null;
   onMakeSmaller: () => void;
   onWalkAway: () => void;
+  focusMode?: boolean;
+}
+
+function renderRefineFeedbackBadges(refineFeedback: ScaffoldRefineFeedback) {
+  if (!refineFeedback.suggestedRouteLabel && !refineFeedback.suggestedReasonLabel) return null;
+
+  return (
+    <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', marginTop: '0.1rem' }}>
+      {refineFeedback.suggestedRouteLabel ? (
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            padding: '0.26rem 0.58rem',
+            borderRadius: '999px',
+            background: 'rgba(94, 106, 210, 0.14)',
+            border: '1px solid rgba(94, 106, 210, 0.26)',
+            fontSize: '0.76rem',
+            color: 'var(--text-primary)',
+          }}
+        >
+          {refineFeedback.suggestedRouteLabel}
+        </span>
+      ) : null}
+      {refineFeedback.suggestedReasonLabel ? (
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            padding: '0.26rem 0.58rem',
+            borderRadius: '999px',
+            background: 'rgba(255, 255, 255, 0.04)',
+            border: '1px solid rgba(255, 255, 255, 0.08)',
+            fontSize: '0.76rem',
+            color: 'var(--text-secondary)',
+          }}
+        >
+          {refineFeedback.suggestedReasonLabel}
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 // T019: Two-choice Rescue: "Make it smaller" or "Walk away and come back" (spec §6)
@@ -23,6 +65,7 @@ export function Rescue({
   refineFeedback,
   onMakeSmaller,
   onWalkAway,
+  focusMode = true,
 }: Props) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', paddingTop: '2rem' }}>
@@ -73,17 +116,26 @@ export function Rescue({
           </div>
 
           {rescueState.suggestedMessage && (
-            <div style={{
-              padding: '1rem',
-              borderRadius: 'var(--radius)',
-              background: 'rgba(255,255,255,0.03)',
-              border: '1px solid rgba(255,255,255,0.08)',
-            }}>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', marginBottom: '0.35rem' }}>
-                ข้อความที่ใช้ต่อได้
-              </p>
-              <p style={{ margin: 0 }}>{rescueState.suggestedMessage}</p>
-            </div>
+            focusMode ? (
+              <details style={{ padding: '1rem', borderRadius: 'var(--radius)', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '0.78rem', fontWeight: 600, listStyle: 'none' }}>
+                  ข้อความที่ใช้ต่อได้
+                </summary>
+                <p style={{ margin: '0.6rem 0 0' }}>{rescueState.suggestedMessage}</p>
+              </details>
+            ) : (
+              <div style={{
+                padding: '1rem',
+                borderRadius: 'var(--radius)',
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid rgba(255,255,255,0.08)',
+              }}>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', marginBottom: '0.35rem' }}>
+                  ข้อความที่ใช้ต่อได้
+                </p>
+                <p style={{ margin: 0 }}>{rescueState.suggestedMessage}</p>
+              </div>
+            )
           )}
         </div>
       )}
@@ -105,7 +157,13 @@ export function Rescue({
               fontSize: '0.92rem',
             }}
           >
-            {refineFeedback.message}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+              <span>{refineFeedback.message}</span>
+              <span style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', lineHeight: 1.55 }}>
+                {refineFeedback.diagnostic}
+              </span>
+              {renderRefineFeedbackBadges(refineFeedback)}
+            </div>
           </div>
         )}
         <button className="primary" disabled={refineLoading} onClick={onMakeSmaller}>

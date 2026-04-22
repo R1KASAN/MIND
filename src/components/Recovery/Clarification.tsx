@@ -6,9 +6,10 @@ import { useTrackMountEvent } from '@/lib/instrumentation';
 interface Props {
   prompt: string;
   onSubmit: (answer: string) => void;
+  focusMode?: boolean;
 }
 
-export function Clarification({ prompt, onSubmit }: Props) {
+export function Clarification({ prompt, onSubmit, focusMode = true }: Props) {
   useTrackMountEvent('clarification_shown', { prompt });
   const [value, setValue] = useState('');
   const examples = [
@@ -33,41 +34,79 @@ export function Clarification({ prompt, onSubmit }: Props) {
         {prompt}
       </p>
 
-      <div style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '0.5rem',
-        padding: '0.9rem 1rem',
-        borderRadius: '16px',
-        border: '1px solid rgba(255,255,255,0.08)',
-        background: 'rgba(255,255,255,0.03)',
-      }}>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', margin: 0 }}>
-          ตัวอย่างคำตอบสั้น ๆ
-        </p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
-          {examples.map((example) => (
-            <button
-              key={example}
-              type="button"
-              onClick={() => setValue(example)}
-              style={{
-                textAlign: 'left',
-                background: 'transparent',
-                border: '1px solid rgba(255,255,255,0.08)',
-                color: 'var(--text-primary)',
-                borderRadius: '12px',
-                padding: '0.75rem 0.85rem',
-                fontSize: '0.9rem',
-              }}
-            >
-              {example}
-            </button>
-          ))}
+      {focusMode ? (
+        <details style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '0.5rem',
+          padding: '0.9rem 1rem',
+          borderRadius: '16px',
+          border: '1px solid rgba(255,255,255,0.08)',
+          background: 'rgba(255,255,255,0.03)',
+        }}>
+          <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '0.82rem', margin: 0, listStyle: 'none' }}>
+            ตัวอย่างคำตอบสั้น ๆ
+          </summary>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', marginTop: '0.75rem' }}>
+            {examples.map((example) => (
+              <button
+                key={example}
+                type="button"
+                onClick={() => setValue(example)}
+                style={{
+                  textAlign: 'left',
+                  background: 'transparent',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  color: 'var(--text-primary)',
+                  borderRadius: '12px',
+                  padding: '0.75rem 0.85rem',
+                  fontSize: '0.9rem',
+                }}
+              >
+                {example}
+              </button>
+            ))}
+          </div>
+        </details>
+      ) : (
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '0.5rem',
+          padding: '0.9rem 1rem',
+          borderRadius: '16px',
+          border: '1px solid rgba(255,255,255,0.08)',
+          background: 'rgba(255,255,255,0.03)',
+        }}>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', margin: 0 }}>
+            ตัวอย่างคำตอบสั้น ๆ
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+            {examples.map((example) => (
+              <button
+                key={example}
+                type="button"
+                onClick={() => setValue(example)}
+                style={{
+                  textAlign: 'left',
+                  background: 'transparent',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  color: 'var(--text-primary)',
+                  borderRadius: '12px',
+                  padding: '0.75rem 0.85rem',
+                  fontSize: '0.9rem',
+                }}
+              >
+                {example}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       <input
+        id="clarification-answer"
+        name="clarificationAnswer"
         value={value}
         onChange={(e) => setValue(e.target.value)}
         placeholder="พิมพ์รายละเอียดที่ยังขาดอยู่ 1 จุด"

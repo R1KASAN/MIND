@@ -1,0 +1,1502 @@
+.linkReset {
+  color: inherit;
+  text-decoration: none;
+}
+
+.onboardingPage {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: clamp(1rem, 4vw, 3rem);
+}
+
+.landingTopbarTitle {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.landingTopbarTitle h1 {
+  font-size: clamp(1.1rem, 2vw, 1.55rem);
+  line-height: 1.12;
+  letter-spacing: -0.04em;
+}
+
+.healthRail {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: fit-content;
+  padding: 0.45rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid rgba(87, 210, 162, 0.18);
+  background: rgba(87, 210, 162, 0.06);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.82rem;
+}
+
+.healthDot {
+  width: 0.58rem;
+  height: 0.58rem;
+  border-radius: 999px;
+  background: #57d2a2;
+  box-shadow: 0 0 0 4px rgba(87, 210, 162, 0.12);
+}
+
+.healthLabel {
+  color: rgba(255, 255, 255, 0.74);
+}
+
+.topbarActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.firstHero {
+  width: min(100%, 1040px);
+  min-height: min(680px, calc(100dvh - 3rem));
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.7fr);
+  gap: clamp(1rem, 4vw, 2rem);
+  align-items: center;
+}
+
+.intakeHero {
+  width: min(100%, 1180px);
+  grid-template-columns: minmax(280px, 0.72fr) minmax(360px, 1fr) minmax(260px, 0.58fr);
+}
+
+.heroCopy {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.brandPill,
+.softPill,
+.stepBadge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.76);
+  padding: 0.34rem 0.62rem;
+  font-size: 0.78rem;
+}
+
+.heroCopy h1 {
+  max-width: 780px;
+  font-size: clamp(2.4rem, 7vw, 5.8rem);
+  line-height: 0.92;
+  letter-spacing: -0.075em;
+}
+
+.heroCopy p {
+  max-width: 42rem;
+  color: var(--text-secondary);
+  font-size: clamp(1rem, 2.2vw, 1.22rem);
+}
+
+.previewPanel,
+.continuePanel,
+.intakeCard,
+.createCard,
+.loadingAside,
+.heroPanel,
+.summaryCard,
+.evidenceSection,
+.leftRail,
+.rightRail,
+.checklistPanel,
+.askModal,
+.roomCard {
+  border-radius: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.032), rgba(255, 255, 255, 0.016)),
+    rgba(15, 16, 22, 0.72);
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.12);
+}
+
+.previewPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: clamp(1.2rem, 3vw, 1.6rem);
+  background:
+    linear-gradient(180deg, rgba(16, 18, 26, 0.92), rgba(12, 13, 18, 0.92)),
+    rgba(15, 16, 22, 0.72);
+}
+
+.continuePanel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: clamp(1.2rem, 3vw, 1.6rem);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02)),
+    rgba(15, 16, 22, 0.72);
+}
+
+.continuePanelCopy {
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.intakeCard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: clamp(1rem, 2.4vw, 1.35rem);
+}
+
+.landingTextarea {
+  min-height: clamp(220px, 34vh, 360px);
+  font-size: 0.98rem;
+}
+
+.memoryPromise,
+.latestActionLine,
+.updatedLine,
+.stateCaption,
+.provenanceHint {
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.memoryPromise {
+  margin-top: -0.1rem;
+}
+
+.inlineCopy {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.latestActionLine {
+  border-radius: 16px;
+  border: 1px solid rgba(99, 210, 161, 0.18);
+  background: rgba(99, 210, 161, 0.075);
+  color: #c6f9dc;
+  padding: 0.72rem 0.8rem;
+}
+
+.previewPanel h2 {
+  font-size: clamp(1.35rem, 3vw, 2rem);
+  line-height: 1.05;
+}
+
+.previewRows {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.previewRows span {
+  border-radius: 16px;
+  padding: 0.8rem 0.9rem;
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.railHero {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.railHero h2 {
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
+.railHeroCopy {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.railList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.demoRailRoom {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.56rem 0.62rem;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.014);
+}
+
+.demoRailRoomActive {
+  border-color: rgba(123, 136, 255, 0.28);
+  background: rgba(94, 106, 210, 0.035);
+  box-shadow: inset 0 0 0 1px rgba(123, 136, 255, 0.12);
+}
+
+.demoRailIndex {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 0.72rem;
+  flex-shrink: 0;
+}
+
+.demoRailBody {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.demoRailBody strong {
+  line-height: 1.25;
+  font-size: 0.82rem;
+}
+
+.demoRailBody span {
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
+}
+
+.demoRailChip {
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.024);
+  color: rgba(255, 255, 255, 0.74);
+  padding: 0.22rem 0.42rem;
+  font-size: 0.66rem;
+  white-space: nowrap;
+}
+
+.memoryChipLink {
+  border-radius: 16px;
+  padding: 0.8rem 0.9rem;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  color: rgba(255, 255, 255, 0.84);
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.memoryChipLink:hover {
+  transform: translateY(-1px);
+  border-color: rgba(123, 136, 255, 0.28);
+  background: rgba(123, 136, 255, 0.1);
+}
+
+.primaryLink,
+.secondaryLink,
+.primaryButton,
+.secondaryButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.85rem;
+  padding: 0.82rem 1.1rem;
+  border-radius: 999px;
+  font-weight: 700;
+  transition: transform 160ms ease, background 160ms ease, border-color 160ms ease;
+}
+
+.primaryLink,
+.primaryButton {
+  border: 1px solid rgba(123, 136, 255, 0.38);
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 12px 24px rgba(94, 106, 210, 0.16);
+}
+
+.secondaryLink,
+.secondaryButton {
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.primaryButton,
+.secondaryButton {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.primaryButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.primaryLink:hover,
+.secondaryLink:hover,
+.primaryButton:hover:not(:disabled),
+.secondaryButton:hover,
+.roomCard:hover {
+  transform: translateY(-1px);
+}
+
+.anchorTarget {
+  scroll-margin-top: 1rem;
+}
+
+.demoShell {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.topbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: center;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.backButton,
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.8rem;
+  height: 2.8rem;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+}
+
+.topbarTitle {
+  min-width: 0;
+}
+
+.topbarSubtitle {
+  margin-top: 0.2rem;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
+}
+
+.topbarTitle h1 {
+  font-size: clamp(1.05rem, 2.2vw, 1.35rem);
+  line-height: 1.15;
+}
+
+.kicker {
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.roomShell {
+  display: grid;
+  grid-template-columns: minmax(200px, 236px) minmax(0, 1fr) minmax(260px, 304px);
+  gap: 0.9rem;
+  align-items: start;
+}
+
+.roomShellFocus {
+  --room-shell-focus: 1;
+}
+
+.roomShellCollapsed {
+  grid-template-columns: minmax(96px, 112px) minmax(0, 1fr) minmax(260px, 304px);
+}
+
+.roomShell[data-focus-mode="on"] .railHeroCopy,
+.roomShell[data-focus-mode="on"] .studioSnapshotCopy {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.roomShell[data-focus-mode="on"] .railHeroCopy {
+  -webkit-line-clamp: 2;
+}
+
+.roomShell[data-focus-mode="on"] .studioSnapshotCopy {
+  -webkit-line-clamp: 3;
+}
+
+.roomShellCollapsed .demoRailRoom {
+  grid-template-columns: auto;
+  justify-items: center;
+  padding: 0.78rem 0.62rem;
+}
+
+.roomShellCollapsed .demoRailBody,
+.roomShellCollapsed .demoRailChip,
+.roomShellCollapsed .demoRailIndex {
+  display: none;
+}
+
+.roomShellCollapsed .leftRail {
+  padding-inline: 0.7rem;
+}
+
+.roomShellCollapsed .railHero {
+  gap: 0.5rem;
+}
+
+.roomShellCollapsed .railHero h2,
+.roomShellCollapsed .railHeroCopy {
+  display: none;
+}
+
+.roomShellCollapsed .railHero .primaryLink {
+  width: 100%;
+  min-height: 2.4rem;
+  padding-inline: 0.5rem;
+  font-size: 0.78rem;
+}
+
+.singleColumnShell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.leftRail,
+.rightRail {
+  position: sticky;
+  top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.62rem;
+  padding: 0.8rem;
+}
+
+.railRoom {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.85rem;
+  border-radius: 18px;
+  background: rgba(94, 106, 210, 0.13);
+  border: 1px solid rgba(94, 106, 210, 0.22);
+}
+
+.railRoom span,
+.rightRail p,
+.miniEvidenceList span,
+.heroPanel p,
+.summaryGrid p,
+.compactEvidenceItem p,
+.compactEvidenceItem small,
+.createCard p,
+.tinyGuide p {
+  color: var(--text-secondary);
+}
+
+.miniEvidenceList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.miniEvidenceList span {
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 0.55rem;
+  font-size: 0.84rem;
+}
+
+.attachmentPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.72rem;
+}
+
+.studioSnapshotCard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+  padding: 0.72rem;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.studioSnapshotCard h2 {
+  font-size: 0.9rem;
+  line-height: 1.18;
+}
+
+.studioSnapshotRows {
+  display: grid;
+  gap: 0.24rem;
+}
+
+.studioSnapshotRows span {
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  background: rgba(255, 255, 255, 0.018);
+  color: rgba(255, 255, 255, 0.8);
+  padding: 0.38rem 0.48rem;
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
+.studioSnapshotActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.studioSnapshotActions > * {
+  flex: 1 1 0;
+}
+
+.studioSnapshotActions .primaryLink,
+.studioSnapshotActions .secondaryLink,
+.railHero .primaryLink {
+  min-height: 2.45rem;
+  padding: 0.68rem 0.86rem;
+  font-size: 0.8rem;
+}
+
+.inspectorHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 0.16rem;
+}
+
+.inspectorHeader h2 {
+  font-size: 0.98rem;
+  line-height: 1.1;
+}
+
+.attachmentList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.36rem;
+}
+
+.attachmentRow {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.44rem;
+  align-items: start;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  background: rgba(255, 255, 255, 0.018);
+  color: inherit;
+  padding: 0.46rem;
+  text-align: left;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.attachmentRow:hover,
+.attachmentRowActive {
+  border-color: rgba(123, 136, 255, 0.28);
+  background: rgba(123, 136, 255, 0.08);
+  transform: translateY(-1px);
+}
+
+.attachmentRowHighlighted {
+  border-color: rgba(99, 210, 161, 0.46);
+  background:
+    linear-gradient(180deg, rgba(99, 210, 161, 0.11), rgba(123, 136, 255, 0.06)),
+    rgba(255, 255, 255, 0.04);
+  box-shadow: 0 0 0 1px rgba(99, 210, 161, 0.14);
+}
+
+.attachmentIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.76rem;
+  height: 1.76rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.58rem;
+  text-transform: uppercase;
+}
+
+.attachmentBody {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+}
+
+.attachmentTitle {
+  font-weight: 750;
+  line-height: 1.2;
+  font-size: 0.84rem;
+}
+
+.attachmentSource,
+.attachmentExcerpt {
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  line-height: 1.3;
+}
+
+.freshnessChip {
+  border-radius: 999px;
+  padding: 0.24rem 0.5rem;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+
+.freshness_new {
+  background: rgba(123, 136, 255, 0.14);
+  color: #dfe3ff;
+}
+
+.freshness_used {
+  background: rgba(99, 210, 161, 0.12);
+  color: #c6f9dc;
+}
+
+.freshness_stale {
+  background: rgba(245, 158, 11, 0.1);
+  color: #ffe4b0;
+}
+
+.mainStage {
+  min-width: 0;
+}
+
+.surfaceStack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.78rem;
+}
+
+.createLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.55fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.createCard,
+.loadingAside,
+.heroPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: clamp(1rem, 2.4vw, 1.35rem);
+}
+
+.sectionHeader,
+.sectionHeaderInline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.sectionHeader h1,
+.heroPanel h2,
+.summaryCard h2 {
+  font-size: clamp(1.55rem, 3.5vw, 2.45rem);
+  line-height: 1.04;
+  letter-spacing: -0.04em;
+}
+
+.summaryCard h2 {
+  font-size: clamp(1.7rem, 3.6vw, 2.8rem);
+}
+
+.fieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.46rem;
+}
+
+.fieldGroup span {
+  color: rgba(255, 255, 255, 0.82);
+  font-weight: 650;
+}
+
+.fieldGroup input,
+.fieldGroup select,
+.fieldGroup textarea {
+  width: 100%;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.actionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.68rem;
+  align-items: center;
+}
+
+.loadingAside {
+  min-height: 17rem;
+}
+
+.tinyGuide {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.hintBanner {
+  border-radius: 18px;
+  border: 1px solid rgba(99, 210, 161, 0.2);
+  background: rgba(99, 210, 161, 0.08);
+  color: #d9ffe9;
+  padding: 0.8rem 0.95rem;
+}
+
+.reentryBanner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  border-radius: 12px;
+  border: 1px solid rgba(99, 210, 161, 0.14);
+  background: rgba(99, 210, 161, 0.04);
+  color: rgba(255, 255, 255, 0.88);
+  padding: 0.5rem 0.7rem;
+}
+
+.reentryLabel {
+  display: inline-flex;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.reentryCopy {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.8rem;
+  line-height: 1.25;
+}
+
+.summaryCard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.58rem;
+  padding: clamp(0.78rem, 1.5vw, 0.94rem);
+  background: rgba(15, 16, 22, 0.72);
+}
+
+.summaryHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.stepBadge {
+  border-color: rgba(99, 210, 161, 0.2);
+  background: rgba(99, 210, 161, 0.11);
+  color: #c6f9dc;
+  flex-shrink: 0;
+}
+
+.updatedLine {
+  margin-top: 0.35rem;
+}
+
+.summaryLead {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.36;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
+}
+
+.memoryStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.36rem;
+}
+
+.memoryStrip span {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.78);
+  padding: 0.28rem 0.5rem;
+  font-size: 0.7rem;
+}
+
+.summarySupport {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.014);
+  padding: 0.52rem 0.58rem;
+}
+
+.summarySupport summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 700;
+  list-style: none;
+}
+
+.summarySupportBody {
+  display: flex;
+  flex-direction: column;
+  gap: 0.56rem;
+  margin-top: 0.62rem;
+}
+
+.projectStateBlock {
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.018);
+  padding: 0.58rem;
+}
+
+.stateMachine {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.38rem;
+}
+
+.statePill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-height: 1.8rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.68);
+  padding: 0.26rem 0.42rem;
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+.statePillActive {
+  border-color: rgba(123, 136, 255, 0.48);
+  background: rgba(94, 106, 210, 0.14);
+  color: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(123, 136, 255, 0.14);
+}
+
+.stateDot {
+  width: 0.44rem;
+  height: 0.44rem;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.72;
+}
+
+.compactEvidenceItem {
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  background: rgba(255, 255, 255, 0.035);
+  padding: 0.9rem;
+}
+
+.nextSteps {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.scaffoldPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.62rem;
+}
+
+.nextMoveCard {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.54rem;
+  align-items: flex-start;
+  border-radius: 14px;
+  border: 1px solid rgba(123, 136, 255, 0.16);
+  background: rgba(94, 106, 210, 0.045);
+  padding: 0.68rem;
+}
+
+.nextMoveCard strong {
+  display: block;
+  margin-top: 0.16rem;
+  font-size: 0.96rem;
+  line-height: 1.24;
+}
+
+.nextMoveCard p {
+  margin-top: 0.24rem;
+  color: var(--text-secondary);
+  line-height: 1.3;
+  font-size: 0.78rem;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
+}
+
+.scaffoldHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.025);
+  padding: 0.72rem;
+}
+
+.scaffoldHeader strong {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.96rem;
+  line-height: 1.35;
+}
+
+.scaffoldCopy {
+  color: var(--text-secondary);
+  line-height: 1.42;
+  font-size: 0.82rem;
+}
+
+.stepMetaRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.34rem;
+}
+
+.stepMetaRow span {
+  display: inline-flex;
+  width: fit-content;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(255, 255, 255, 0.74);
+  padding: 0.22rem 0.42rem;
+  font-size: 0.68rem;
+}
+
+.citationButton {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(123, 136, 255, 0.22);
+  background: rgba(123, 136, 255, 0.09);
+  color: #dfe3ff;
+  padding: 0.22rem 0.44rem;
+  font-size: 0.68rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.stepMetaRowCompact {
+  margin-top: 0.5rem;
+}
+
+.stepMetaRowCompact span {
+  font-size: 0.7rem;
+}
+
+.refinementBox {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  border-radius: 12px;
+  border: 1px solid rgba(99, 210, 161, 0.18);
+  background: rgba(99, 210, 161, 0.075);
+  padding: 0.62rem;
+}
+
+.scaffoldActions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.scaffoldActions > * {
+  width: 100%;
+}
+
+.scaffoldActions > :first-child,
+.scaffoldActions > :last-child {
+  grid-column: 1 / -1;
+}
+
+.stepDetails {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  background: rgba(255, 255, 255, 0.022);
+  padding: 0.54rem;
+}
+
+.stepDetails summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-weight: 700;
+  list-style: none;
+}
+
+.stepListCompact {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.62rem;
+}
+
+.alternativeList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.75rem;
+}
+
+.alternativeList span {
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.76);
+  padding: 0.4rem 0.65rem;
+  font-size: 0.78rem;
+}
+
+.stepRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.58rem;
+  align-items: flex-start;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.028);
+  border: 1px solid transparent;
+  padding: 0.64rem;
+}
+
+.stepRowActive {
+  background: rgba(94, 106, 210, 0.12);
+  border-color: rgba(94, 106, 210, 0.28);
+}
+
+.stepRowDone {
+  opacity: 0.78;
+}
+
+.stepRationale {
+  margin-top: 0.3rem;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.stepStatusDot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #c6f9dc;
+  font-size: 0.72rem;
+}
+
+.actionCluster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  padding-top: 0.1rem;
+}
+
+.rescueButton {
+  border-color: rgba(245, 158, 11, 0.22);
+  background: rgba(245, 158, 11, 0.09);
+}
+
+.evidenceSection {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  padding: clamp(1rem, 2.4vw, 1.2rem);
+}
+
+.compactEvidenceList {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.compactEvidenceItem {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.75rem;
+}
+
+.compactEvidenceItem h3 {
+  font-size: 0.98rem;
+}
+
+.checklistPanel {
+  position: fixed;
+  right: clamp(0.85rem, 2vw, 1.4rem);
+  bottom: clamp(0.85rem, 2vw, 1.4rem);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  width: min(208px, calc(100vw - 1.7rem));
+  padding: 0.5rem;
+}
+
+.checklistToggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  min-height: 2.6rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(15, 16, 22, 0.92);
+  color: rgba(255, 255, 255, 0.9);
+  padding: 0.55rem 0.75rem;
+}
+
+.checklistBody {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(15, 16, 22, 0.94);
+  padding: 0.8rem;
+}
+
+.checklistItem {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.86rem;
+}
+
+.checkDone,
+.checkEmpty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  flex-shrink: 0;
+}
+
+.checkDone {
+  border-color: rgba(99, 210, 161, 0.34);
+  background: rgba(99, 210, 161, 0.18);
+  color: #c6f9dc;
+}
+
+.tooltipWrap {
+  position: relative;
+  display: inline-flex;
+  vertical-align: middle;
+}
+
+.tooltipButton {
+  width: 1.25rem;
+  height: 1.25rem;
+  min-height: 0;
+  padding: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 0.72rem;
+}
+
+.tooltipBubble {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 0.45rem);
+  z-index: 40;
+  width: min(250px, 70vw);
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(15, 16, 22, 0.98);
+  color: rgba(255, 255, 255, 0.88);
+  padding: 0.72rem;
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.28);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(10px);
+}
+
+.askModal {
+  width: min(520px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.15rem;
+}
+
+.modalHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.qaBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.qaBlock p {
+  color: var(--text-secondary);
+}
+
+.modalResultList {
+  margin-left: 1.15rem;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.provenanceHint {
+  border-radius: 14px;
+  border: 1px solid rgba(99, 210, 161, 0.18);
+  background: rgba(99, 210, 161, 0.075);
+  color: #c6f9dc;
+  padding: 0.7rem;
+}
+
+.mindLoading {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  min-height: 14rem;
+}
+
+.mindLoadingCompact {
+  min-height: 11rem;
+}
+
+.mindLoading h3 {
+  font-size: 1.05rem;
+  line-height: 1.3;
+}
+
+.loadingOrb {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 4.6rem;
+  height: 4.6rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(123, 136, 255, 0.96), rgba(94, 106, 210, 0.34) 56%, transparent 70%);
+  animation: orbPulse 1.35s ease-in-out infinite;
+}
+
+.loadingOrb span {
+  position: absolute;
+  width: 0.44rem;
+  height: 0.44rem;
+  border-radius: 999px;
+  background: #fff;
+  animation: dotOrbit 1.3s ease-in-out infinite;
+}
+
+.loadingOrb span:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.loadingOrb span:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+.loadingSteps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.7rem;
+}
+
+.loadingSteps span {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.055);
+  color: rgba(255, 255, 255, 0.72);
+  padding: 0.34rem 0.55rem;
+  font-size: 0.78rem;
+}
+
+.roomGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.roomCard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 1rem;
+}
+
+.cardRoute {
+  margin-top: auto;
+  color: #dfe3ff;
+  font-weight: 700;
+}
+
+.settingToggle {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  min-height: 4.5rem;
+  padding: 1rem;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  background: rgba(255, 255, 255, 0.04);
+  text-align: left;
+}
+
+@keyframes orbPulse {
+  0%,
+  100% {
+    transform: scale(0.96);
+    box-shadow: 0 0 0 rgba(94, 106, 210, 0);
+  }
+  50% {
+    transform: scale(1.04);
+    box-shadow: 0 0 32px rgba(94, 106, 210, 0.32);
+  }
+}
+
+@keyframes dotOrbit {
+  0%,
+  100% {
+    transform: translate(-0.9rem, 0.15rem);
+    opacity: 0.45;
+  }
+  50% {
+    transform: translate(0.9rem, -0.15rem);
+    opacity: 1;
+  }
+}
+
+@media (max-width: 1040px) {
+  .firstHero,
+  .intakeHero,
+  .roomShell,
+  .createLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .leftRail,
+  .rightRail {
+    position: static;
+  }
+}
+
+@media (max-width: 720px) {
+  .topbar {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .topbar > .secondaryLink {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .summaryHeader,
+  .nextMoveCard,
+  .reentryBanner,
+  .summarySupportBody,
+  .compactEvidenceItem,
+  .mindLoading {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .stateMachine,
+  .roomGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .reentryBanner {
+    align-items: flex-start;
+  }
+
+  .primaryLink,
+  .secondaryLink,
+  .primaryButton,
+  .secondaryButton {
+    width: 100%;
+  }
+
+  .scaffoldActions {
+    grid-template-columns: 1fr;
+  }
+
+  .attachmentRow {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .freshnessChip {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .checklistPanel {
+    position: static;
+    width: 100%;
+    padding: 0;
+  }
+
+  .checklistBody {
+    padding: 0.7rem;
+  }
+}

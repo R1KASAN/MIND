@@ -24,6 +24,7 @@ export async function POST(req: Request) {
   const task = body?.task as TaskContext | undefined;
   const action = body?.action as Action | undefined;
   const currentStepIndex = typeof body?.currentStepIndex === 'number' ? body.currentStepIndex : 0;
+  const strategy = body?.strategy === 'structural_retry' ? 'structural_retry' : 'default';
 
   if (!task?.sourceText || typeof task.sourceText !== 'string' || !action?.title) {
     return Response.json({
@@ -43,7 +44,7 @@ export async function POST(req: Request) {
     operationName: 'scaffold',
     systemPrompt: SCAFFOLD_SYSTEM_PROMPT,
     repairPrompt: AI_OPERATION_REPAIR_PROMPT,
-    userPrompt: buildScaffoldUserPrompt(task, action, currentStepIndex),
+    userPrompt: buildScaffoldUserPrompt(task, action, currentStepIndex, strategy),
     buildRepairUserPrompt: (invalidOutput, failureDetail) =>
       buildOperationRepairUserPrompt('scaffold', taskContext, invalidOutput, failureDetail),
     parse: (raw) => parseAiScaffoldResponse(raw, {

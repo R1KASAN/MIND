@@ -26,6 +26,8 @@ export type AnalyticsEventName =
   | 'action_rejected'
   | 'scaffold_started'
   | 'scaffold_completed'
+  | 'make_smaller_no_change'
+  | 'make_smaller_failed'
   | 'bounce_back_opened'
   | 'bounce_back_resumed'
   | 'reentry_suggestion_selected'
@@ -33,6 +35,11 @@ export type AnalyticsEventName =
   | 'studio_intent_resolved'
   | 'studio_intent_blocked'
   | 'studio_snapshot_viewed'
+  | 'room_file_retry_started'
+  | 'room_file_retry_finished'
+  | 'room_file_retry_failed'
+  | 'ocr_extract_finished'
+  | 'primary_source_selected'
   | 'archive_searched'
   | 'overview_opened'
   | 'clarification_shown'
@@ -68,6 +75,15 @@ export type AnalyticsEventName =
   | 'one_action_accepted_first_try'
   | 'one_action_viewed_alternative'
   | 'one_action_adjustment_clicked'
+  | 'step_draft_shown'
+  | 'step_evidence_clicked'
+  | 'step_not_like_this'
+  | 'step_edited'
+  | 'step_confirmed'
+  | 'reentry_brief_shown'
+  | 'catch_up_mode_opened'
+  | 'destructive_step_warning_shown'
+  | 'destructive_step_confirmed'
   | 'metrics_dashboard_opened'
   | 'value_pulse_shown'
   | 'value_pulse_submitted'
@@ -114,6 +130,44 @@ export interface AnalyticsEventProperties extends Record<string, unknown> {
   valuePulseNote?: string;
   value_pulse_prompt_id?: string;
   valuePulsePromptId?: string;
+  step_id?: string;
+  stepId?: string;
+  source_ids?: string[];
+  sourceIds?: string[];
+  confidence_level?: string;
+  confidenceLevel?: string;
+  confidence_score?: number;
+  confidenceScore?: number;
+  destructive_risk?: string;
+  destructiveRisk?: string;
+  time_since_last_active_ms?: number;
+  timeSinceLastActiveMs?: number;
+  retrieval_enabled?: boolean;
+  retrievalEnabled?: boolean;
+  file_name?: string;
+  fileName?: string;
+  file_kind?: string;
+  fileKind?: string;
+  file_status?: string;
+  fileStatus?: string;
+  failure_reason?: string;
+  failureReason?: string;
+  ocr_engine?: string;
+  ocrEngine?: string;
+  raw_text_length?: number;
+  rawTextLength?: number;
+  normalized_text_length?: number;
+  normalizedTextLength?: number;
+  fragmented_run_count?: number;
+  fragmentedRunCount?: number;
+  space_density?: number;
+  spaceDensity?: number;
+  normal_word_ratio?: number;
+  normalWordRatio?: number;
+  page_count_processed?: number;
+  pageCountProcessed?: number;
+  duration_ms?: number;
+  durationMs?: number;
 }
 
 export interface LocalAnalyticsEvent {
@@ -177,6 +231,16 @@ export interface BusinessLoopSummary {
   valuePulseMinutesSaved: MetricDistribution;
   valuePulseLatestNotes: string[];
   dominantValuePulseSignal: ValuePulseSignal | null;
+  timeToFirstConfirmedActionMs: MetricDistribution;
+  reentryToConfirmedActionRate5m: number | null;
+  notLikeThisRate: number | null;
+  evidenceClickRate: number | null;
+  draftToConfirmConversionRate: number | null;
+  destructiveWarningHitRate: number | null;
+  ocrFailureRate: number | null;
+  ocrGarbledRate: number | null;
+  demoPdfReadyRate: number | null;
+  ocrRetrySuccessRate: number | null;
 }
 
 export interface RoomBusinessSummary {
@@ -190,6 +254,8 @@ export interface RoomBusinessSummary {
   rescueSuccessRate: number | null;
   repeatUsageRate: number | null;
   dominantValuePulseSignal: ValuePulseSignal | null;
+  reentryToConfirmedActionRate5m: number | null;
+  notLikeThisRate: number | null;
 }
 
 export interface MonetizationGateSettings {
@@ -370,6 +436,40 @@ function countEvents(events: LocalAnalyticsEvent[], eventName: AnalyticsEventNam
   return events.filter((event) => event.eventName === eventName).length;
 }
 
+function ratio(numerator: number, denominator: number) {
+  return denominator > 0 ? (numerator / denominator) * 100 : null;
+}
+
+function propertyString(event: LocalAnalyticsEvent, ...keys: string[]) {
+  for (const key of keys) {
+    const value = event.properties[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function countReentryConfirmationsWithin(events: LocalAnalyticsEvent[], windowMs: number) {
+  const sorted = [...events].sort((left, right) => left.timestamp - right.timestamp);
+  const reentryEvents = sorted.filter(
+    (event) => event.eventName === 'reentry_brief_shown' || event.eventName === 'catch_up_mode_opened',
+  );
+  const confirmedEvents = sorted.filter((event) => event.eventName === 'step_confirmed');
+  let confirmed = 0;
+
+  for (const reentryEvent of reentryEvents) {
+    const key = toGroupKey(reentryEvent);
+    const hasConfirmed = confirmedEvents.some(
+      (event) =>
+        toGroupKey(event) === key &&
+        event.timestamp >= reentryEvent.timestamp &&
+        event.timestamp - reentryEvent.timestamp <= windowMs,
+    );
+    if (hasConfirmed) confirmed += 1;
+  }
+
+  return { reentryCount: reentryEvents.length, confirmed };
+}
+
 function collectTaskIds(events: LocalAnalyticsEvent[]) {
   const taskIds = new Set<string>();
   for (const event of events) {
@@ -381,7 +481,9 @@ function collectTaskIds(events: LocalAnalyticsEvent[]) {
 
 export function buildBusinessLoopSummary(events: LocalAnalyticsEvent[]): BusinessLoopSummary {
   const taskOpenedDurations = pairDurations(events, 'task_opened', 'first_action_selected');
+  const confirmedActionDurations = pairDurations(events, 'task_opened', 'step_confirmed');
   const reentryDurations = pairDurations(events, 'reentry_started', 'reentry_understood');
+  const reentryConfirmations = countReentryConfirmationsWithin(events, 1000 * 60 * 5);
   const taskIds = collectTaskIds(events);
   const valuePulseEvents = events.filter(
     (event) =>
@@ -399,6 +501,27 @@ export function buildBusinessLoopSummary(events: LocalAnalyticsEvent[]): Busines
 
   const rescueTriggeredCount = countEvents(events, 'rescue_triggered');
   const rescueResolvedCount = countEvents(events, 'rescue_resolved');
+  const draftShownCount = countEvents(events, 'step_draft_shown');
+  const stepConfirmedCount = countEvents(events, 'step_confirmed');
+  const notLikeThisCount = countEvents(events, 'step_not_like_this');
+  const evidenceClickCount = countEvents(events, 'step_evidence_clicked');
+  const destructiveWarningCount = countEvents(events, 'destructive_step_warning_shown');
+  const destructiveConfirmedCount = countEvents(events, 'destructive_step_confirmed');
+  const extractEvents = events.filter((event) => event.eventName === 'ocr_extract_finished');
+  const ocrCandidateEvents = extractEvents.filter((event) => {
+    const kind = propertyString(event, 'file_kind', 'fileKind');
+    return kind === 'pdf' || kind === 'image';
+  });
+  const failedOcrEvents = ocrCandidateEvents.filter((event) => propertyString(event, 'file_status', 'fileStatus') === 'failed');
+  const garbledOcrEvents = ocrCandidateEvents.filter((event) => propertyString(event, 'failure_reason', 'failureReason') === 'pdf_text_garbled_after_ocr');
+  const demoPdfEvents = extractEvents.filter((event) => {
+    const kind = propertyString(event, 'file_kind', 'fileKind');
+    const fileName = propertyString(event, 'file_name', 'fileName') ?? '';
+    return kind === 'pdf' && fileName.startsWith('mind-demo-');
+  });
+  const readyDemoPdfEvents = demoPdfEvents.filter((event) => propertyString(event, 'file_status', 'fileStatus') === 'ready');
+  const retryFinishedEvents = events.filter((event) => event.eventName === 'room_file_retry_finished');
+  const retrySuccessEvents = retryFinishedEvents.filter((event) => propertyString(event, 'status', 'file_status', 'fileStatus') === 'ready');
   const completedTasks = new Set(
     events.filter((event) => event.eventName === 'task_completed').map((event) => toGroupKey(event)),
   );
@@ -479,6 +602,16 @@ export function buildBusinessLoopSummary(events: LocalAnalyticsEvent[]): Busines
     valuePulseMinutesSaved: buildDistribution(valuePulseMinutesSaved),
     valuePulseLatestNotes,
     dominantValuePulseSignal,
+    timeToFirstConfirmedActionMs: buildDistribution(confirmedActionDurations),
+    reentryToConfirmedActionRate5m: ratio(reentryConfirmations.confirmed, reentryConfirmations.reentryCount),
+    notLikeThisRate: ratio(notLikeThisCount, draftShownCount),
+    evidenceClickRate: ratio(evidenceClickCount, draftShownCount),
+    draftToConfirmConversionRate: ratio(stepConfirmedCount, draftShownCount),
+    destructiveWarningHitRate: ratio(destructiveConfirmedCount, destructiveWarningCount),
+    ocrFailureRate: ratio(failedOcrEvents.length, ocrCandidateEvents.length),
+    ocrGarbledRate: ratio(garbledOcrEvents.length, ocrCandidateEvents.length),
+    demoPdfReadyRate: ratio(readyDemoPdfEvents.length, demoPdfEvents.length),
+    ocrRetrySuccessRate: ratio(retrySuccessEvents.length, retryFinishedEvents.length),
   };
 }
 
@@ -507,6 +640,8 @@ export function buildBusinessLoopSummaryByRoom(events: LocalAnalyticsEvent[]): R
         rescueSuccessRate: summary.rescueSuccessRate,
         repeatUsageRate: summary.repeatUsageRate,
         dominantValuePulseSignal: summary.dominantValuePulseSignal,
+        reentryToConfirmedActionRate5m: summary.reentryToConfirmedActionRate5m,
+        notLikeThisRate: summary.notLikeThisRate,
       };
     })
     .sort((left, right) => right.totalEvents - left.totalEvents);

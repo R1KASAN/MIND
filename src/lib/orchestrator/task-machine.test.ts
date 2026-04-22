@@ -7,6 +7,7 @@ import {
   buildActionSuccessArtifacts,
   buildScaffoldSuccessArtifacts,
   deriveBounceBackRoute,
+  deriveRoomBlockers,
   hasResumableTask,
   routeFromResumeTarget,
 } from './task-machine';
@@ -230,4 +231,25 @@ test('bounce-back route helpers prefer real checkpoints', () => {
   assert.equal(routeFromResumeTarget('ONE_ACTION'), 'ONE_ACTION');
   assert.equal(hasResumableTask(scaffoldTask), true);
   assert.equal(hasResumableTask(doneTask), false);
+});
+
+test('deriveRoomBlockers adds missing_file_or_context when attached files are not ready', () => {
+  const blockers = deriveRoomBlockers(makeTask({
+    blockerSignals: ['timeline_unclear'],
+    sourceFiles: [
+      {
+        id: 'file-1',
+        name: 'brief.pdf',
+        kind: 'pdf',
+        mimeType: 'application/pdf',
+        size: 2048,
+        status: 'failed',
+        createdAt: 1,
+        failureReason: 'pdf_text_garbled_after_ocr',
+      },
+    ],
+  }));
+
+  assert.equal(blockers.includes('timeline_unclear'), true);
+  assert.equal(blockers.includes('missing_file_or_context'), true);
 });

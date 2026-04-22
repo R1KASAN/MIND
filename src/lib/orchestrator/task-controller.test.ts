@@ -6,10 +6,13 @@ import type { AiSynthesisResponse } from '../ai/schema';
 import type { Action, AppSession, TaskContext } from '../store/idb';
 import { normalizeSession } from '../store/idb';
 import {
+  SCAFFOLD_REFINE_FAILED_COPY,
+  SCAFFOLD_REFINE_NO_CHANGE_COPY,
+} from './scaffold-refine';
+import {
   createTaskController,
   mergeTaskConstraints,
 } from './task-controller';
-import { SCAFFOLD_REFINE_FAILURE_COPY } from './scaffold-refine';
 
 function makeTask(overrides: Partial<TaskContext> = {}): TaskContext {
   return {
@@ -99,7 +102,7 @@ test('mergeTaskConstraints persists reply-first and patches time/energy constrai
   assert.equal(result.nextTask.constraints?.energyLevel, 'low');
 });
 
-test('handleMakeSmaller surfaces inline feedback for a no_change scaffold refinement', async () => {
+test('handleMakeSmaller routes to rescue with no_change diagnostics after structural retry still changes nothing', async () => {
   const payload = makePayload();
   const task = makeTask({
     lifecycleState: 'in_scaffold',
@@ -116,28 +119,75 @@ test('handleMakeSmaller surfaces inline feedback for a no_change scaffold refine
   const session = makeSession(task, payload);
   const sessionRef = { current: session };
   const refineLoadingStates: boolean[] = [];
-  let feedbackMessage: string | null = null;
+  let latestSession: AppSession | null = session;
+  let feedback: { message: string; reason: string; diagnostic: string } | null = null;
   let currentPayload: AiSynthesisResponse | null = payload;
+  const trackedEvents: Array<{ name: string; properties: Record<string, unknown> | undefined }> = [];
 
   const originalFetch = global.fetch;
-  global.fetch = async () => new Response(JSON.stringify({
-    planTitle: 'สรุปสถานะงานและขอ clarification ที่ยังไม่ชัด',
-    steps: [
-      { id: 'step-1', text: 'ขยับอีกนิด: สรุปสถานะงานที่เราทำแล้ว' },
-      { id: 'step-2', text: 'ถามลูกค้าว่าต้องการให้เริ่มจากจุดไหน' },
-      { id: 'step-3', text: 'ร่างข้อความตอบกลับเพื่อขอ clarification' },
-    ],
-    shortcutOptions: [],
-    revisedCurrentStepIndex: 0,
-    meta: {
-      model: 'qwen2.5:3b',
-      usedRoomFiles: [],
-      repairUsed: false,
-    },
-  }), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-  });
+  const originalConsoleLog = console.log;
+  console.log = (...args: unknown[]) => {
+    const [first, second] = args;
+    if (typeof first === 'string' && first.startsWith('[EVENT] ')) {
+      trackedEvents.push({
+        name: first.replace('[EVENT] ', '').trim(),
+        properties: (second as Record<string, unknown> | undefined),
+      });
+    }
+  };
+  let scaffoldCalls = 0;
+  global.fetch = async (input) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+
+    if (url.includes('/api/ai/scaffold')) {
+      scaffoldCalls += 1;
+      return new Response(JSON.stringify({
+        planTitle: 'สรุปสถานะงานและขอ clarification ที่ยังไม่ชัด',
+        steps: [
+          { id: 'step-1', text: scaffoldCalls === 1 ? 'ขยับอีกนิด: สรุปสถานะงานที่เราทำแล้ว' : 'สรุปสถานะงานที่เราทำแล้ว' },
+          { id: 'step-2', text: 'ถามลูกค้าว่าต้องการให้เริ่มจากจุดไหน' },
+          { id: 'step-3', text: 'ร่างข้อความตอบกลับเพื่อขอ clarification' },
+        ],
+        shortcutOptions: [],
+        revisedCurrentStepIndex: 0,
+        meta: {
+          model: 'qwen2.5:3b',
+          usedRoomFiles: [],
+          repairUsed: scaffoldCalls > 1,
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.includes('/api/ai/rescue')) {
+      return new Response(JSON.stringify({
+        diagnosis: {
+          primaryReason: 'too_big',
+          explanation: 'ก้าวนี้ยังใหญ่เกินกว่าจะย่อยต่อจากถ้อยคำเดิมได้',
+        },
+        rescuePlan: {
+          mode: 'shrink',
+          steps: [
+            'กลับไปทำแค่ส่วนเล็กที่สุดของ step นี้ก่อน',
+            'ถ้ายังติดอยู่ ให้เลือกข้อมูลชิ้นเดียวที่ต้องดูต่อ',
+          ],
+        },
+        suggestedMessage: null,
+        meta: {
+          model: 'qwen2.5:3b',
+          usedRoomFiles: [],
+          repairUsed: false,
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    throw new Error(`unexpected fetch call: ${url}`);
+  };
 
   try {
     const controller = createTaskController({
@@ -148,7 +198,9 @@ test('handleMakeSmaller surfaces inline feedback for a no_change scaffold refine
       clarificationPrompt: '',
       dumpStartTime: null,
       aiModel: 'qwen2.5:3b',
-      setSession: () => undefined,
+      setSession: (value) => {
+        latestSession = value;
+      },
       setCurrentPayload: (value) => {
         currentPayload = value;
       },
@@ -166,7 +218,9 @@ test('handleMakeSmaller surfaces inline feedback for a no_change scaffold refine
         refineLoadingStates.push(value);
       },
       setScaffoldRefineFeedback: (value) => {
-        feedbackMessage = value?.message ?? null;
+        feedback = value
+          ? { message: value.message, reason: value.reason, diagnostic: value.diagnostic }
+          : null;
       },
       setDumpStartTime: () => undefined,
       recordAiOpsEntry: () => undefined,
@@ -177,13 +231,211 @@ test('handleMakeSmaller surfaces inline feedback for a no_change scaffold refine
 
     await controller.handleMakeSmaller();
 
-    assert.deepEqual(refineLoadingStates, [true, false]);
-    assert.equal(feedbackMessage, SCAFFOLD_REFINE_FAILURE_COPY);
+    assert.deepEqual(refineLoadingStates, [true, false, false]);
+    assert.equal(scaffoldCalls, 2);
+    assert.equal(feedback?.message, SCAFFOLD_REFINE_NO_CHANGE_COPY);
+    assert.equal(feedback?.reason, 'no_change');
+    assert.match(feedback?.diagnostic ?? '', /2 รอบ/);
+    const noChangeEvent = trackedEvents.find((event) => event.name === 'make_smaller_no_change');
+    assert.equal(feedback?.message, SCAFFOLD_REFINE_NO_CHANGE_COPY);
+    assert.equal(noChangeEvent?.properties?.outcome_label, 'rescue');
+    assert.equal(noChangeEvent?.properties?.initial_scaffold_model, 'qwen2.5:3b');
+    assert.equal(noChangeEvent?.properties?.structural_retry_used, true);
+    assert.equal(noChangeEvent?.properties?.structural_retry_model, 'qwen2.5:3b');
+    assert.equal(latestSession?.uiRoute, 'RESCUE');
     assert.equal(
       currentPayload?.recommended_action.micro_steps[0],
       'สรุปสถานะงานที่เราทำแล้ว',
     );
   } finally {
+    console.log = originalConsoleLog;
+    global.fetch = originalFetch;
+  }
+});
+
+test('handleMakeSmaller routes to clarification when no_change suggests missing scope', async () => {
+  const payload = makePayload();
+  const task = makeTask({
+    lifecycleState: 'in_scaffold',
+    currentActionId: 'action-1',
+    currentStepIndex: 1,
+    blockerSignals: ['unclear_scope'],
+    lastSynthesis: payload,
+    currentPlan: {
+      actionTitle: payload.recommended_action.title,
+      steps: payload.recommended_action.micro_steps.map((step, index) => ({
+        id: `step-${index + 1}`,
+        text: step,
+      })),
+    },
+  });
+  const session = makeSession(task, payload);
+  const sessionRef = { current: session };
+  let latestSession: AppSession | null = session;
+  let clarificationPrompt = '';
+  let feedback: { routeLabel?: string; reasonLabel?: string } | null = null;
+
+  const originalFetch = global.fetch;
+  global.fetch = async (input) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    if (!url.includes('/api/ai/scaffold')) {
+      throw new Error(`unexpected fetch call: ${url}`);
+    }
+
+    return new Response(JSON.stringify({
+      planTitle: 'สรุปสถานะงานและขอ clarification ที่ยังไม่ชัด',
+      steps: [
+        { id: 'step-1', text: 'สรุปสถานะงานที่เราทำแล้ว' },
+        { id: 'step-2', text: 'ถามลูกค้าว่าต้องการให้เริ่มจากจุดไหน' },
+        { id: 'step-3', text: 'ร่างข้อความตอบกลับเพื่อขอ clarification' },
+      ],
+      shortcutOptions: [],
+      revisedCurrentStepIndex: 1,
+      meta: {
+        model: 'qwen2.5:3b',
+        usedRoomFiles: [],
+        repairUsed: false,
+      },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    const controller = createTaskController({
+      session,
+      sessionRef,
+      currentPayload: payload,
+      currentActionState: makeAction(),
+      clarificationPrompt: '',
+      dumpStartTime: null,
+      aiModel: 'qwen2.5:3b',
+      setSession: (value) => {
+        latestSession = value;
+      },
+      setCurrentPayload: () => undefined,
+      setCurrentActionState: () => undefined,
+      setManualFallbackSuggestedActions: () => undefined,
+      setManualFallbackRetryable: () => undefined,
+      setClarificationPrompt: (value) => {
+        clarificationPrompt = value;
+      },
+      setCurrentWhyThisNow: () => undefined,
+      setCurrentRescueState: () => undefined,
+      setIsRescueLoading: () => undefined,
+      setIsNegotiatingAction: () => undefined,
+      setIsReentryLoading: () => undefined,
+      isScaffoldRefining: false,
+      setIsScaffoldRefining: () => undefined,
+      setScaffoldRefineFeedback: (value) => {
+        feedback = value
+          ? { routeLabel: value.suggestedRouteLabel, reasonLabel: value.suggestedReasonLabel }
+          : null;
+      },
+      setDumpStartTime: () => undefined,
+      recordAiOpsEntry: () => undefined,
+      persistSession: async () => undefined,
+      persistActionSave: async () => undefined,
+      persistActionUpdate: async () => undefined,
+    });
+
+    await controller.handleMakeSmaller();
+
+    assert.equal(latestSession?.uiRoute, 'CLARIFICATION');
+    assert.match(clarificationPrompt, /ต้องรู้เพิ่มอีกนิด/);
+    assert.match(clarificationPrompt, /ถามลูกค้า/);
+    assert.equal(feedback?.routeLabel, 'ไป Clarification');
+    assert.equal(feedback?.reasonLabel, 'โจทย์ยังไม่ชัด');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('handleMakeSmaller surfaces failed diagnostics when scaffold request fails', async () => {
+  const payload = makePayload();
+  const task = makeTask({
+    lifecycleState: 'in_scaffold',
+    currentActionId: 'action-1',
+    lastSynthesis: payload,
+    currentPlan: {
+      actionTitle: payload.recommended_action.title,
+      steps: payload.recommended_action.micro_steps.map((step, index) => ({
+        id: `step-${index + 1}`,
+        text: step,
+      })),
+    },
+  });
+  const session = makeSession(task, payload);
+  const sessionRef = { current: session };
+  let feedback: { message: string; reason: string; diagnostic: string } | null = null;
+  const trackedEvents: Array<{ name: string; properties: Record<string, unknown> | undefined }> = [];
+
+  const originalFetch = global.fetch;
+  const originalConsoleLog = console.log;
+  console.log = (...args: unknown[]) => {
+    const [first, second] = args;
+    if (typeof first === 'string' && first.startsWith('[EVENT] ')) {
+      trackedEvents.push({
+        name: first.replace('[EVENT] ', '').trim(),
+        properties: (second as Record<string, unknown> | undefined),
+      });
+    }
+  };
+  global.fetch = async () => new Response(JSON.stringify({
+    ok: false,
+    error: {
+      type: 'operation_failed',
+      reason: 'unknown',
+      message: 'AI scaffold ไม่สำเร็จ (503)',
+      retryable: true,
+    },
+  }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+
+  try {
+    const controller = createTaskController({
+      session,
+      sessionRef,
+      currentPayload: payload,
+      currentActionState: makeAction(),
+      clarificationPrompt: '',
+      dumpStartTime: null,
+      aiModel: 'qwen2.5:3b',
+      setSession: () => undefined,
+      setCurrentPayload: () => undefined,
+      setCurrentActionState: () => undefined,
+      setManualFallbackSuggestedActions: () => undefined,
+      setManualFallbackRetryable: () => undefined,
+      setClarificationPrompt: () => undefined,
+      setCurrentWhyThisNow: () => undefined,
+      setCurrentRescueState: () => undefined,
+      setIsRescueLoading: () => undefined,
+      setIsNegotiatingAction: () => undefined,
+      setIsReentryLoading: () => undefined,
+      isScaffoldRefining: false,
+      setIsScaffoldRefining: () => undefined,
+      setScaffoldRefineFeedback: (value) => {
+        feedback = value
+          ? { message: value.message, reason: value.reason, diagnostic: value.diagnostic }
+          : null;
+      },
+      setDumpStartTime: () => undefined,
+      recordAiOpsEntry: () => undefined,
+      persistSession: async () => undefined,
+      persistActionSave: async () => undefined,
+      persistActionUpdate: async () => undefined,
+    });
+
+    await controller.handleMakeSmaller();
+
+    assert.equal(feedback?.message, SCAFFOLD_REFINE_FAILED_COPY);
+    assert.equal(feedback?.reason, 'failed');
+    assert.match(feedback?.diagnostic ?? '', /output ใช้ต่อไม่ได้|ไม่สำเร็จ/);
+    const failedEvent = trackedEvents.find((event) => event.name === 'make_smaller_failed');
+    assert.equal(failedEvent?.properties?.outcome_label, 'retry');
+    assert.equal(failedEvent?.properties?.failed_operation, 'scaffold');
+  } finally {
+    console.log = originalConsoleLog;
     global.fetch = originalFetch;
   }
 });
@@ -743,6 +995,142 @@ test('handleDump falls back to local synthesis when action synthesis times out',
     assert.equal(currentPayload?.recommended_action.micro_steps.length, 3);
     assert.ok((currentActionState?.title.length ?? 0) > 0);
     assert.ok((latestSession?.task?.lastStableSummary?.length ?? 0) > 0);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('handleDump ignores a second concurrent submit and only runs one AI lifecycle', async () => {
+  const session = normalizeSession({
+    lastActive: 100,
+    uiRoute: 'DUMP_ENTRY',
+    notThisCount: 0,
+    task: null,
+  });
+  const sessionRef = { current: session };
+  let latestSession: AppSession | null = session;
+  const fetchCalls: string[] = [];
+  let releaseIntake: (() => void) | null = null;
+  const intakeGate = new Promise<void>((resolve) => {
+    releaseIntake = resolve;
+  });
+
+  const originalFetch = global.fetch;
+  global.fetch = async (input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    fetchCalls.push(url);
+
+    if (url.includes('/api/ai/intake')) {
+      await intakeGate;
+      return new Response(JSON.stringify({
+        workflowType: 'client_response',
+        roomDigest: 'ลูกค้าส่ง feedback ยาวหลายข้อเกี่ยวกับ landing page',
+        taskFrame: {
+          objective: 'ตอบลูกค้ากลับวันนี้',
+          stage: 'กำลังสรุปสถานการณ์',
+          stakeholders: ['ลูกค้า'],
+        },
+        blockers: [],
+        requiresClarification: false,
+        clarificationQuestion: null,
+        taskShape: {
+          deliverableType: 'reply',
+          immediateNeed: 'send_reply_now',
+          missingInputs: [],
+          workContext: 'ลูกค้าส่ง feedback ยาวหลายข้อเกี่ยวกับ landing page และผมต้องตอบลูกค้ากลับวันนี้',
+          confidence: 0.9,
+        },
+        candidateActions: [
+          {
+            title: 'สรุปประเด็นหลักจากข้อความลูกค้าก่อน',
+            rationale: 'ช่วยให้ตอบกลับได้ตรงประเด็นโดยไม่ต้องอ่านวนหลายรอบ',
+            kind: 'reply_first',
+          },
+        ],
+        meta: {
+          model: 'qwen2.5:3b',
+          repairUsed: false,
+          usedRoomFiles: [],
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.includes('/api/ai/action')) {
+      return new Response(JSON.stringify({
+        chosenAction: {
+          title: 'สรุปประเด็นหลักแล้วร่างข้อความตอบกลับ',
+          rationale: 'ช่วยให้ตอบลูกค้าได้โดยไม่ต้องกลับไปอ่านใหม่ทั้งก้อน',
+          successSignal: 'ได้ร่างตอบกลับฉบับแรก',
+        },
+        situationSummary: 'สรุปสถานะงานที่เราทำแล้ว',
+        whyThisNow: 'นี่คือก้าวที่ขยับงานได้เร็วสุดจากบริบทปัจจุบัน',
+        alternatives: [],
+        replyDraft: 'ผมสรุปประเด็นหลักให้ก่อน แล้วค่อยร่างคำตอบ',
+        meta: {
+          model: 'qwen2.5:3b',
+          repairUsed: false,
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    throw new Error(`unexpected fetch call to ${url}`);
+  };
+
+  try {
+    const controller = createTaskController({
+      session,
+      sessionRef,
+      currentPayload: null,
+      currentActionState: null,
+      clarificationPrompt: '',
+      dumpStartTime: null,
+      aiModel: 'qwen2.5:3b',
+      setSession: (value) => {
+        latestSession = value;
+        sessionRef.current = value;
+      },
+      setCurrentPayload: () => undefined,
+      setCurrentActionState: () => undefined,
+      setManualFallbackSuggestedActions: () => undefined,
+      setManualFallbackRetryable: () => undefined,
+      setClarificationPrompt: () => undefined,
+      setCurrentWhyThisNow: () => undefined,
+      setCurrentRescueState: () => undefined,
+      setIsRescueLoading: () => undefined,
+      setIsNegotiatingAction: () => undefined,
+      setIsReentryLoading: () => undefined,
+      isScaffoldRefining: false,
+      setIsScaffoldRefining: () => undefined,
+      setScaffoldRefineFeedback: () => undefined,
+      setDumpStartTime: () => undefined,
+      recordAiOpsEntry: () => undefined,
+      persistSession: async () => undefined,
+      persistActionSave: async () => undefined,
+      persistActionUpdate: async () => undefined,
+    });
+
+    const submission = {
+      text: 'ลูกค้าส่ง feedback มาเยอะมาก ต้องสรุปก่อน',
+      sourceText: 'ลูกค้าส่ง feedback มาเยอะมาก ต้องสรุปก่อน',
+      extractedText: '',
+      sourceFiles: [],
+    };
+
+    const firstRun = controller.handleDump(submission);
+    const secondRun = controller.handleDump(submission);
+
+    releaseIntake?.();
+    await Promise.all([firstRun, secondRun]);
+
+    assert.equal(fetchCalls.filter((url) => url.includes('/api/ai/intake')).length, 1);
+    assert.equal(fetchCalls.filter((url) => url.includes('/api/ai/action')).length, 1);
+    assert.equal(latestSession?.uiRoute, 'ONE_ACTION');
   } finally {
     global.fetch = originalFetch;
   }

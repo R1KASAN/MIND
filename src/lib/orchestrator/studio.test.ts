@@ -73,6 +73,8 @@ test('buildStudioSnapshot prefers reentry summary and current action title', () 
   assert.equal(snapshot?.title, 'สรุปสถานะล่าสุด');
   assert.equal(snapshot?.summary.includes('สรุปสถานะล่าสุดก่อน'), true);
   assert.equal(snapshot?.fileCount, 1);
+  assert.equal(snapshot?.readyFiles.length, 1);
+  assert.equal(snapshot?.readyFiles[0]?.copy.title, 'อ่านไฟล์ได้แล้ว');
   assert.equal(snapshot?.blockers.length, 2);
   assert.equal(snapshot?.provenance?.confidence, 'high');
   assert.equal(snapshot?.provenance?.inputsUsed[0], 'reentry brief');
@@ -107,6 +109,109 @@ test('buildStudioSnapshot falls back to source text provenance when structured c
   assert.equal(snapshot?.provenance?.inputsUsed.includes('ข้อความต้นทาง'), true);
   assert.equal(snapshot?.provenance?.changesSince[0], 'ยังไม่เห็นการเปลี่ยนจากรอบก่อน');
   assert.equal(snapshot?.provenance?.whyThisNow.includes('ข้อความต้นทาง'), true);
+  assert.equal(snapshot?.readyFiles.length, 0);
+});
+
+test('buildStudioSnapshot hides raw corrupt file context when attached file extraction failed', () => {
+  const snapshot = buildStudioSnapshot(
+    {
+      id: 'task-3',
+      workflowType: 'client_resume',
+      sourceText: 'ไฟล์แนบ:\n- mind-demo-brief.pdf (pdf, ลอง OCR แล้วแต่ข้อความ PDF ยังไม่ชัดพอ)',
+      sourceFiles: [
+        {
+          id: 'file-1',
+          name: 'mind-demo-brief.pdf',
+          kind: 'pdf',
+          mimeType: 'application/pdf',
+          size: 2400,
+          status: 'failed',
+          createdAt: 1,
+          failureReason: 'pdf_text_garbled_after_ocr',
+          failureDetail: 'fragmented_word_runs',
+          failureStage: 'pdf_ocr',
+          storageKey: 'room-file:demo:file',
+          extractAttemptCount: 1,
+        },
+      ],
+      extractedText: '',
+      createdAt: 10,
+      pendingInputs: [],
+      blockerSignals: ['missing_file_or_context'],
+      lifecycleState: 'dumped',
+      currentStepIndex: 0,
+      currentActionId: null,
+      rescueHistory: [],
+    },
+    null,
+    null,
+  );
+
+  assert.equal(snapshot?.title, 'บริบทไฟล์ยังไม่สมบูรณ์');
+  assert.equal(snapshot?.summary.includes('MIND ยังอ่านได้ไม่ชัด'), true);
+  assert.equal(snapshot?.fileIssues[0]?.name, 'mind-demo-brief.pdf');
+  assert.equal(snapshot?.fileIssues[0]?.failureDetail, 'fragmented_word_runs');
+  assert.equal(snapshot?.fileIssues[0]?.failureStage, 'pdf_ocr');
+  assert.equal(snapshot?.fileIssues[0]?.storageKey, 'room-file:demo:file');
+});
+
+test('buildStudioSnapshot marks selected primary file and asks for selection when multiple ready files have no primary', () => {
+  const baseTask = {
+    id: 'task-multi-file',
+    workflowType: 'client_resume' as const,
+    sourceText: 'ไฟล์แนบ:\n- brief-a.pdf (pdf)\n- brief-b.pdf (pdf)',
+    sourceFiles: [
+      {
+        id: 'file-a',
+        name: 'brief-a.pdf',
+        kind: 'pdf' as const,
+        mimeType: 'application/pdf',
+        size: 1200,
+        status: 'ready' as const,
+        createdAt: 1,
+        extractedText: 'บริบทไฟล์ A',
+      },
+      {
+        id: 'file-b',
+        name: 'brief-b.pdf',
+        kind: 'pdf' as const,
+        mimeType: 'application/pdf',
+        size: 1300,
+        status: 'ready' as const,
+        createdAt: 2,
+        extractedText: 'บริบทไฟล์ B',
+      },
+    ],
+    extractedText: '',
+    createdAt: 10,
+    pendingInputs: [],
+    blockerSignals: [],
+    lifecycleState: 'dumped' as const,
+    currentStepIndex: 0,
+    currentActionId: null,
+    rescueHistory: [],
+  };
+
+  const needsSelection = buildStudioSnapshot(baseTask, null, null);
+  assert.equal(needsSelection?.needsPrimaryFileSelection, true);
+  assert.equal(needsSelection?.primaryFileName, undefined);
+  assert.equal(needsSelection?.readyFiles.every((file) => !file.isPrimary), true);
+
+  const selected = buildStudioSnapshot({
+    ...baseTask,
+    sourcePreference: {
+      primarySourceId: 'file:file-b',
+      selectedAt: 20,
+      selectedBy: 'user',
+    },
+    extractedText: 'บริบทไฟล์ B',
+  }, null, null);
+
+  assert.equal(selected?.needsPrimaryFileSelection, false);
+  assert.equal(selected?.primaryFileName, 'brief-b.pdf');
+  assert.equal(selected?.primaryFileSummary?.includes('บริบทไฟล์ B'), true);
+  assert.equal(selected?.readyFiles.find((file) => file.id === 'file-b')?.isPrimary, true);
+  assert.equal(selected?.readyFiles.find((file) => file.id === 'file-a')?.isPrimary, false);
 });
 
 test('getStudioIntents blocks advanced actions without current action context', () => {

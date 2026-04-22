@@ -263,12 +263,16 @@ export function MonetizationDashboard() {
 
       <section style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+        gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
         gap: '0.9rem',
       }}>
         <SummaryCard label="Task loop" value="≤ 10 นาที" helper="เวลาเป้าหมายจากกลับมาจาก context chaos → next move ที่เริ่มได้จริง" />
         <SummaryCard label="Value capture" value={DEFAULT_MONETIZATION_HYPOTHESIS.valueCaptureRule} helper={`Price band: ${currentPriceBand}`} />
         <SummaryCard label="Positioning" value={settings.positioning ?? DEFAULT_MONETIZATION_HYPOTHESIS.positioning} helper="Overlay-first คือ default จนกว่าจะมีหลักฐานว่าคนยอมย้าย workflow เข้า hub" />
+        <SummaryCard label="Reentry confirm" value={formatMetric(summary.reentryToConfirmedActionRate5m, '%')} helper="สัดส่วน reentry ที่พาไปสู่ confirmed action ภายใน 5 นาที" />
+        <SummaryCard label="AI mismatch" value={formatMetric(summary.notLikeThisRate, '%')} helper="Not like this ต่อ draft ทั้งหมด ยิ่งต่ำยิ่ง grounded" />
+        <SummaryCard label="Evidence trust" value={formatMetric(summary.evidenceClickRate, '%')} helper="อัตรากดดูหลักฐานของ step ที่ MIND เสนอ" />
+        <SummaryCard label="Confirmed action" value={formatMetric(summary.timeToFirstConfirmedActionMs.median, 'ms')} helper="เวลาจากเปิดงานจนยืนยันก้าวถัดไปจริง" />
       </section>
 
       <section style={{

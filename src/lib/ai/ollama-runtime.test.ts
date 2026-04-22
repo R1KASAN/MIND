@@ -5,9 +5,12 @@ import {
   DEFAULT_PRIMARY_MODEL,
   FALLBACK_MODELS,
   getCanonicalRuntimeAlignmentIssues,
+  getAiHealth,
   getAiInstallActions,
   getModelTier,
   isPrimaryModel,
+  markModelFailure,
+  markModelSuccess,
 } from '@/lib/ai/ollama-runtime';
 
 test('getModelTier classifies primary, fallback, emergency, and unknown models', () => {
@@ -69,4 +72,93 @@ test('getCanonicalRuntimeAlignmentIssues flags model mismatch', () => {
       actual: 'qwen2.5:3b',
     },
   ]);
+});
+
+test('getAiHealth recovers preferred model when only emergency model is loaded', async () => {
+  const originalFetch = global.fetch;
+
+  markModelFailure('gemma2:2b', 'timed out');
+  markModelFailure('qwen2.5:3b', 'timed out');
+
+  global.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.toString();
+
+    if (url.endsWith('/api/tags')) {
+      return new Response(JSON.stringify({
+        models: [{ name: 'gemma2:2b' }, { name: 'llama3.2:1b' }, { name: 'qwen2.5:3b' }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+
+    if (url.endsWith('/api/ps')) {
+      return new Response(JSON.stringify({
+        models: [{ name: 'llama3.2:1b' }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+
+    if (url.endsWith('/api/chat')) {
+      const payload = JSON.parse(String(init?.body)) as { model: string };
+      if (payload.model === 'gemma2:2b') {
+        return new Response(JSON.stringify({
+          message: { content: '{"ok":true}' },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+
+      return new Response(JSON.stringify({ error: 'model still unavailable' }), {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    throw new Error(`unexpected fetch to ${url}`);
+  };
+
+  try {
+    const health = await getAiHealth();
+    assert.equal(health.status, 'ready');
+    assert.equal(health.model, 'gemma2:2b');
+    assert.notEqual(health.modelTier, 'emergency');
+  } finally {
+    global.fetch = originalFetch;
+    markModelSuccess('gemma2:2b');
+    markModelSuccess('qwen2.5:3b');
+    markModelSuccess('llama3.2:1b');
+  }
+});
+
+test('getAiHealth stays in checking state when cached failures exist but Ollama is installed', async () => {
+  const originalFetch = global.fetch;
+
+  markModelFailure('gemma2:2b', 'timed out');
+  markModelFailure('qwen2.5:3b', 'timed out');
+  markModelFailure('llama3.2:1b', 'timed out');
+
+  global.fetch = async (input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input.toString();
+
+    if (url.endsWith('/api/tags')) {
+      return new Response(JSON.stringify({
+        models: [{ name: 'gemma2:2b' }, { name: 'qwen2.5:3b' }, { name: 'llama3.2:1b' }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+
+    if (url.endsWith('/api/ps')) {
+      return new Response(JSON.stringify({ models: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    throw new Error(`unexpected fetch to ${url}`);
+  };
+
+  try {
+    const health = await getAiHealth();
+    assert.equal(health.status, 'checking');
+    assert.equal(health.retryable, true);
+  } finally {
+    global.fetch = originalFetch;
+    markModelSuccess('gemma2:2b');
+    markModelSuccess('qwen2.5:3b');
+    markModelSuccess('llama3.2:1b');
+  }
 });

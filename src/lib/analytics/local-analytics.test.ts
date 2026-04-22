@@ -130,6 +130,62 @@ test('buildBusinessLoopSummary summarizes value pulse signals', () => {
   assert.equal(summary.valuePulseLatestNotes[0], 'เริ่มงานได้เร็วขึ้น');
 });
 
+test('buildBusinessLoopSummary calculates v1.5 reentry and evidence metrics', () => {
+  const summary = buildBusinessLoopSummary([
+    normalizeAnalyticsEvent('task_opened', { task_id: 'task-1' }, 1000),
+    normalizeAnalyticsEvent('step_draft_shown', { task_id: 'task-1', step_id: 'step-1' }, 1200),
+    normalizeAnalyticsEvent('step_evidence_clicked', { task_id: 'task-1', step_id: 'step-1' }, 1500),
+    normalizeAnalyticsEvent('reentry_brief_shown', { task_id: 'task-1' }, 2000),
+    normalizeAnalyticsEvent('step_confirmed', { task_id: 'task-1', step_id: 'step-1' }, 4000),
+    normalizeAnalyticsEvent('task_opened', { task_id: 'task-2' }, 10000),
+    normalizeAnalyticsEvent('step_draft_shown', { task_id: 'task-2', step_id: 'step-2' }, 11000),
+    normalizeAnalyticsEvent('step_not_like_this', { task_id: 'task-2', step_id: 'step-2' }, 12000),
+    normalizeAnalyticsEvent('destructive_step_warning_shown', { task_id: 'task-2', step_id: 'step-2' }, 13000),
+  ]);
+
+  assert.equal(summary.timeToFirstConfirmedActionMs.median, 3000);
+  assert.equal(summary.reentryToConfirmedActionRate5m, 100);
+  assert.equal(summary.notLikeThisRate, 50);
+  assert.equal(summary.evidenceClickRate, 50);
+  assert.equal(summary.draftToConfirmConversionRate, 50);
+  assert.equal(summary.destructiveWarningHitRate, 0);
+});
+
+test('buildBusinessLoopSummary calculates OCR ingest metrics', () => {
+  const summary = buildBusinessLoopSummary([
+    normalizeAnalyticsEvent('ocr_extract_finished', {
+      file_name: 'mind-demo-ready.pdf',
+      file_kind: 'pdf',
+      file_status: 'ready',
+      ocr_engine: 'text-layer',
+    }, 1000),
+    normalizeAnalyticsEvent('ocr_extract_finished', {
+      file_name: 'mind-demo-garbled.pdf',
+      file_kind: 'pdf',
+      file_status: 'failed',
+      failure_reason: 'pdf_text_garbled_after_ocr',
+      ocr_engine: 'tesseract',
+      fragmented_run_count: 3,
+    }, 2000),
+    normalizeAnalyticsEvent('ocr_extract_finished', {
+      file_name: 'client-scan.pdf',
+      file_kind: 'pdf',
+      file_status: 'failed',
+      failure_reason: 'pdf_ocr_failed',
+      ocr_engine: 'tesseract',
+    }, 3000),
+    normalizeAnalyticsEvent('room_file_retry_finished', {
+      fileName: 'client-scan.pdf',
+      status: 'ready',
+    }, 4000),
+  ]);
+
+  assert.equal(summary.ocrFailureRate, 66.66666666666666);
+  assert.equal(summary.ocrGarbledRate, 33.33333333333333);
+  assert.equal(summary.demoPdfReadyRate, 50);
+  assert.equal(summary.ocrRetrySuccessRate, 100);
+});
+
 test('buildBusinessLoopSummaryByRoom groups metrics by room', () => {
   const summaries = buildBusinessLoopSummaryByRoom([
     normalizeAnalyticsEvent('task_opened', {
@@ -161,4 +217,22 @@ test('buildBusinessLoopSummaryByRoom groups metrics by room', () => {
   assert.equal(summaries.length, 2);
   assert.equal(summaries[0]?.roomTitle, 'ACME');
   assert.equal(summaries.find((summary) => summary.roomId === 'room-b')?.timeToNextMoveMs.median, 1500);
+});
+
+test('normalizeAnalyticsEvent preserves make_smaller refinement outcome details', () => {
+  const noChange = normalizeAnalyticsEvent('make_smaller_no_change', {
+    task_id: 'task-1',
+    rescue_reason: 'too_big',
+    outcome_label: 'rescue',
+  }, 1000);
+  const failed = normalizeAnalyticsEvent('make_smaller_failed', {
+    task_id: 'task-2',
+    outcome_label: 'retry',
+  }, 2000);
+
+  assert.equal(noChange.eventName, 'make_smaller_no_change');
+  assert.equal(noChange.rescueReason, 'too_big');
+  assert.equal(noChange.outcomeLabel, 'rescue');
+  assert.equal(failed.eventName, 'make_smaller_failed');
+  assert.equal(failed.outcomeLabel, 'retry');
 });

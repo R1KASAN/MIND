@@ -75,6 +75,25 @@ test('stale beats morning ritual', () => {
   assert.equal(resolved.session.uiRoute, 'BOUNCE_BACK');
 });
 
+test('suppressReentryIntercept keeps stale sessions on DUMP_ENTRY after walk away', () => {
+  const session = createSession({
+    uiRoute: 'DUMP_ENTRY',
+    status: 'DUMP_ENTRY',
+    lastActive: Date.UTC(2026, 3, 11, 1, 0, 0),
+    suppressReentryIntercept: true,
+  });
+
+  const resolved = resolveBootstrapSession(session, {
+    skipWalkthrough: false,
+    skipMorningRitual: false,
+    today: '2026-04-13',
+    now: Date.UTC(2026, 3, 13, 1, 0, 0),
+  });
+
+  assert.equal(resolved.interceptRoute, null);
+  assert.equal(resolved.session.uiRoute, 'DUMP_ENTRY');
+});
+
 test('walkthrough=off suppresses overlay', () => {
   const session = createSession();
 

@@ -12,8 +12,12 @@ interface Props {
   loadingIntentId?: StudioIntentId | null;
   onIntent: (intent: StudioIntent) => void | Promise<void>;
   onEditContext?: () => void;
+  onRetryFile?: (fileId: string) => void | Promise<void>;
+  onSelectPrimaryFile?: (fileId: string) => void | Promise<void>;
+  retryingFileId?: string | null;
   mode?: StudioMode;
   isCompactViewport?: boolean;
+  focusMode?: boolean;
 }
 
 const PANEL_COPY: Record<StudioMode, { title: string; detail: string }> = {
@@ -45,17 +49,24 @@ export function StudioPanel({
   loadingIntentId = null,
   onIntent,
   onEditContext,
+  onRetryFile,
+  onSelectPrimaryFile,
+  retryingFileId = null,
   mode = 'dump',
   isCompactViewport = false,
+  focusMode = true,
 }: Props) {
-  const [showAllMobileIntents, setShowAllMobileIntents] = useState(false);
-  const [showAllDesktopIntents, setShowAllDesktopIntents] = useState(false);
+  const [expandMobileIntents, setExpandMobileIntents] = useState(false);
+  const [expandDesktopIntents, setExpandDesktopIntents] = useState(false);
   const [blockedMessage, setBlockedMessage] = useState<string | null>(null);
+  const [blockedIntentId, setBlockedIntentId] = useState<StudioIntentId | null>(null);
   const [snapshotEmphasized, setSnapshotEmphasized] = useState(false);
   const primaryIntents = intents.slice(0, 2);
   const extraIntents = intents.slice(2);
   const snapshotRef = useRef<HTMLDivElement | null>(null);
   const copy = PANEL_COPY[mode];
+  const showAllDesktopIntents = !focusMode || expandDesktopIntents;
+  const showAllMobileIntents = !focusMode || expandMobileIntents;
 
   useEffect(() => {
     if (!snapshotEmphasized) return;
@@ -66,11 +77,13 @@ export function StudioPanel({
   const handleIntentClick = async (intent: StudioIntent) => {
     if (!intent.active) {
       setBlockedMessage(intent.blockedReason ?? intent.description);
+      setBlockedIntentId(intent.id);
       await onIntent(intent);
       return;
     }
 
     setBlockedMessage(null);
+    setBlockedIntentId(null);
     await onIntent(intent);
 
     if (intent.id === 'review_status' && snapshot) {
@@ -81,32 +94,35 @@ export function StudioPanel({
 
   const renderIntentButton = (intent: StudioIntent) => {
     const isLoading = loadingIntentId === intent.id;
+    const showBlockedMessage = !intent.active && blockedIntentId === intent.id && blockedMessage;
     return (
-      <button
-        key={intent.id}
-        type="button"
-        aria-disabled={!intent.active}
-        onClick={() => void handleIntentClick(intent)}
-        className={`studio-intent-button ${intent.active ? 'is-active' : 'is-blocked'}`}
-      >
-        <span style={{ fontWeight: 600, textAlign: 'left' }}>
-          {isLoading ? 'กำลังใช้บริบทเดิม…' : intent.label}
-        </span>
-        <span style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', textAlign: 'left', lineHeight: 1.5 }}>
-          {intent.active ? intent.description : intent.blockedReason ?? intent.description}
-        </span>
-      </button>
+      <div key={intent.id} className="studio-intent-item">
+        <button
+          type="button"
+          data-blocked={!intent.active ? 'true' : undefined}
+          onClick={() => void handleIntentClick(intent)}
+          className={`studio-intent-button ${intent.active ? 'is-active' : 'is-blocked'}`}
+        >
+          <span style={{ fontWeight: 600, textAlign: 'left' }}>
+            {isLoading ? 'กำลังใช้บริบทเดิม…' : intent.label}
+          </span>
+          <span style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', textAlign: 'left', lineHeight: 1.5 }}>
+            {intent.active ? intent.description : intent.blockedReason ?? intent.description}
+          </span>
+        </button>
+        {showBlockedMessage ? <p className="studio-inline-note">{blockedMessage}</p> : null}
+      </div>
     );
   };
 
   return (
     <aside className="studio-panel">
       <div className="studio-panel-intro">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.12rem' }}>
+        <div className="studio-panel-intro-copy">
           <p className="studio-eyebrow">Studio / ตัวช่วย</p>
-          <h2 style={{ fontSize: '0.96rem', lineHeight: 1.28 }}>{copy.title}</h2>
+          <h2 className="studio-panel-title">{copy.title}</h2>
         </div>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.83rem', lineHeight: 1.45 }}>
+        <p className="studio-panel-detail">
           {copy.detail}
         </p>
       </div>
@@ -118,20 +134,23 @@ export function StudioPanel({
               snapshot={snapshot}
               surface="dump_studio"
               onEditContext={onEditContext}
+              onRetryFile={onRetryFile}
+              onSelectPrimaryFile={onSelectPrimaryFile}
+              retryingFileId={retryingFileId}
               emphasized={snapshotEmphasized}
               trackView={isCompactViewport}
+              powerMode={!focusMode}
             />
           </div>
         )}
         <div className="studio-mobile-chip-row">
           {primaryIntents.map((intent) => renderIntentButton(intent))}
         </div>
-        {blockedMessage && <p className="studio-inline-note">{blockedMessage}</p>}
         {extraIntents.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
             <button
               type="button"
-              onClick={() => setShowAllMobileIntents((value) => !value)}
+              onClick={() => setExpandMobileIntents((value) => !value)}
               className="studio-more-button"
             >
               {showAllMobileIntents ? 'ซ่อนตัวช่วยเพิ่ม' : 'ดูตัวช่วยเพิ่ม'}
@@ -152,12 +171,16 @@ export function StudioPanel({
               snapshot={snapshot}
               surface="dump_studio"
               onEditContext={onEditContext}
+              onRetryFile={onRetryFile}
+              onSelectPrimaryFile={onSelectPrimaryFile}
+              retryingFileId={retryingFileId}
               emphasized={snapshotEmphasized}
               trackView={!isCompactViewport}
+              powerMode={!focusMode}
             />
           </div>
         ) : (
-          <section className="studio-card" style={{ gap: '0.6rem' }}>
+          <section className="studio-card studio-card-empty" style={{ gap: '0.6rem' }}>
             <p className="studio-eyebrow">บริบทที่ MIND ใช้อยู่</p>
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', lineHeight: 1.6 }}>
               ยังไม่มีจุดล่าสุดของงานนี้ เพราะ MIND ยังมีบริบทไม่พอให้สรุป
@@ -165,13 +188,16 @@ export function StudioPanel({
           </section>
         )}
 
-        <div className="studio-card" style={{ gap: '0.65rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center' }}>
-            <p className="studio-eyebrow">ทำอะไรต่อได้บ้าง</p>
+        <div className="studio-card studio-card-actions" style={{ gap: '0.65rem' }}>
+          <div className="studio-section-header">
+            <div className="studio-section-header-copy">
+              <p className="studio-eyebrow">ทำอะไรต่อได้บ้าง</p>
+              <p className="studio-section-note">เลือกใช้ทีละอย่างตามจังหวะของงานนี้</p>
+            </div>
             {extraIntents.length > 0 && (
               <button
                 type="button"
-                onClick={() => setShowAllDesktopIntents((value) => !value)}
+                onClick={() => setExpandDesktopIntents((value) => !value)}
                 className="studio-more-button"
               >
                 {showAllDesktopIntents ? 'ซ่อนเพิ่ม' : 'ดูเพิ่ม'}
@@ -181,7 +207,6 @@ export function StudioPanel({
           <div className="studio-intent-list">
             {(showAllDesktopIntents ? intents : primaryIntents).map((intent) => renderIntentButton(intent))}
           </div>
-          {blockedMessage && <p className="studio-inline-note">{blockedMessage}</p>}
         </div>
       </div>
     </aside>

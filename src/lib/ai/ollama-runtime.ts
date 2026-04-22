@@ -106,6 +106,7 @@ const EMERGENCY_MODELS = ['llama3.2:1b'];
 
 const MODEL_PRIORITY = [...new Set([...PRIMARY_MODELS, ...FALLBACK_MODELS, ...EMERGENCY_MODELS])];
 const PRIME_TIMEOUT_MS = Number(process.env.AI_PRIME_TIMEOUT_MS || 45000) || 45000;
+const HEALTH_RECOVERY_TIMEOUT_MS = Number(process.env.AI_HEALTH_RECOVERY_TIMEOUT_MS || 8000) || 8000;
 
 let primePromise: Promise<string | null> | null = null;
 const knownBadModels = new Set<string>();
@@ -199,9 +200,9 @@ async function fetchLoadedModelNames() {
   }
 }
 
-async function warmModel(model: string) {
+async function warmModel(model: string, timeoutMs = PRIME_TIMEOUT_MS) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), PRIME_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const res = await fetch(OLLAMA_CHAT_ENDPOINT, {
@@ -258,6 +259,23 @@ async function primeBestAvailableModel() {
   return null;
 }
 
+async function recoverPreferredModel(installed: string[], activeModel: string | undefined) {
+  const preferredCandidates = installed.filter((model) => {
+    const tier = getModelTier(model);
+    return (
+      (tier === 'primary' || tier === 'fallback') &&
+      !matchesModel(activeModel ?? '', model)
+    );
+  });
+
+  for (const model of preferredCandidates) {
+    const warmed = await warmModel(model, HEALTH_RECOVERY_TIMEOUT_MS);
+    if (warmed) return warmed;
+  }
+
+  return null;
+}
+
 export async function getAiHealth(): Promise<AiHealthResult> {
   try {
     const installed = await fetchInstalledModelNames();
@@ -278,6 +296,18 @@ export async function getAiHealth(): Promise<AiHealthResult> {
     const activeModel = ordered[0] || installed[0];
 
     if (loaded.length > 0) {
+      if (getModelTier(activeModel) === 'emergency') {
+        const recoveredModel = await recoverPreferredModel(installed, activeModel);
+        if (recoveredModel) {
+          return {
+            status: 'ready',
+            model: recoveredModel,
+            modelTier: getModelTier(recoveredModel),
+            retryable: true,
+          };
+        }
+      }
+
       return {
         status: 'ready',
         model: activeModel,
@@ -292,25 +322,14 @@ export async function getAiHealth(): Promise<AiHealthResult> {
       });
     }
 
-    if (knownBadModels.size >= installed.length && installed.length > 0) {
-      return {
-        status: 'unavailable',
-        model: activeModel,
-        modelTier: getModelTier(activeModel),
-        reason: 'Ollama ไม่พร้อมใช้งาน',
-        detail: lastWarmFailureDetail || 'โมเดลในเครื่องยังเริ่มทำงานไม่สำเร็จ',
-        retryable: true,
-        actions: [DEFAULT_AI_START_ACTION, ...getAiInstallActions()],
-      };
-    }
-
     return {
       status: 'checking',
       model: activeModel,
       modelTier: getModelTier(activeModel),
       reason: 'กำลังโหลดโมเดล...',
-      detail: 'Ollama กำลังเตรียมโมเดลในเครื่อง',
+      detail: lastWarmFailureDetail || 'Ollama กำลังเตรียมโมเดลในเครื่อง',
       retryable: true,
+      actions: [DEFAULT_AI_START_ACTION, ...getAiInstallActions()],
     };
   } catch (error) {
     return {

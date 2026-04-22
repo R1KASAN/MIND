@@ -8,6 +8,7 @@ interface Props {
   onMakeSmaller: () => void | Promise<void>;
   continueDisabled?: boolean;
   makeSmallerDisabled?: boolean;
+  focusMode?: boolean;
 }
 
 function scenarioCopy(room: RoomRecord) {
@@ -25,7 +26,7 @@ function getFreshnessState(room: RoomRecord) {
     return {
       tone: 'fallback',
       title: 'ใช้จุดล่าสุด',
-      detail: 'MIND ใช้สรุปล่าสุดที่เชื่อถือได้ไว้ก่อน',
+      detail: 'ยังไม่มีสรุปใหม่ ใช้จุดล่าสุดที่เชื่อถือได้ไว้ก่อน',
     };
   }
 
@@ -33,14 +34,14 @@ function getFreshnessState(room: RoomRecord) {
     return {
       tone: 'stale',
       title: 'ยังไม่อัปเดต',
-      detail: 'เปิดห้องแล้วเริ่มต่อได้เลย แม้ยังไม่ได้สรุปรอบใหม่',
+      detail: 'เข้าไปต่อได้เลย แล้วค่อยให้ MIND สรุปรอบใหม่',
     };
   }
 
   return {
     tone: 'fresh',
-    title: 'พร้อมใช้',
-    detail: 'จุดล่าสุดนี้เพิ่งอัปเดตและพร้อมใช้ต่อทันที',
+    title: 'พร้อมต่อ',
+    detail: 'จุดล่าสุดนี้พร้อมใช้ต่อทันที',
   };
 }
 
@@ -57,6 +58,7 @@ export function RoomCanvasHeader({
   onMakeSmaller,
   continueDisabled = false,
   makeSmallerDisabled = false,
+  focusMode = true,
 }: Props) {
   if (!room) return null;
 
@@ -71,15 +73,18 @@ export function RoomCanvasHeader({
   const hasSavePoint = brief.length > 0 || nextMoves.length > 0;
   const primaryNextMove = nextMoves[0];
   const extraNextMoves = nextMoves.slice(1);
-  const showMore = extraNextMoves.length > 0 || freshness.detail.length > 0;
+  const showMore = extraNextMoves.length > 0 || freshness.detail.length > 0 || !makeSmallerDisabled;
 
   return (
     <section className="room-canvas-header">
       <div className="room-canvas-header-top">
         <div className="room-canvas-title-stack">
-          <p className="studio-eyebrow">จุดล่าสุด</p>
+          <p className="studio-eyebrow">ห้องนี้</p>
           <h2 className="room-canvas-title">{room.title}</h2>
-          <p className="room-canvas-subtitle">{roomIdentity}</p>
+          <p className="room-canvas-subtitle">
+            <span className={`room-canvas-status room-canvas-status-${freshness.tone}`}>{freshness.title}</span>
+            <span>{roomIdentity}</span>
+          </p>
         </div>
         <div className="room-reentry-actions">
           <button
@@ -90,22 +95,10 @@ export function RoomCanvasHeader({
           >
             ต่อจากจุดนี้
           </button>
-          <button
-            type="button"
-            className="room-reentry-action room-reentry-action-secondary"
-            onClick={() => void onMakeSmaller()}
-            disabled={makeSmallerDisabled}
-          >
-            ทำให้เริ่มง่ายขึ้น
-          </button>
         </div>
       </div>
 
       <div className="room-canvas-meta">
-        <span className="studio-chip">{room.lastState}</span>
-        <span className={`studio-chip room-freshness-chip room-freshness-chip-${freshness.tone}`}>
-          {freshness.title}
-        </span>
         <span className="studio-chip">{updatedAt}</span>
         {room.stale && <span className="studio-chip studio-chip-danger">ค้างมาหลายวัน</span>}
       </div>
@@ -131,9 +124,18 @@ export function RoomCanvasHeader({
       )}
 
       {showMore && (
-        <details className="room-reentry-more">
-          <summary>ดูเพิ่ม</summary>
+      <details className="room-reentry-more" open={!focusMode}>
+        <summary>ดูเพิ่ม</summary>
           <div className="room-reentry-more-body">
+            {!makeSmallerDisabled && (
+              <button
+                type="button"
+                className="room-reentry-action room-reentry-action-secondary"
+                onClick={() => void onMakeSmaller()}
+              >
+                ทำให้เริ่มง่ายขึ้น
+              </button>
+            )}
             {extraNextMoves.length > 0 && (
               <div className="room-next-moves">
                 {extraNextMoves.map((item) => (

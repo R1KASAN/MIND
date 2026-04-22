@@ -1,5 +1,14 @@
 import type { AiSynthesisResponse } from '@/lib/ai/schema';
 import type { Action, AppSession, TaskContext } from '@/lib/store/idb';
+import {
+  describeRoomFileFailureReason,
+  getPrimaryReadyRoomSourceFile,
+  getReadyRoomSourceFiles,
+  getRoomFileUxCopy,
+  getRoomSourceIdForFile,
+  type RoomFileFailureStage,
+  type RoomFileUxCopy,
+} from '@/lib/room';
 import { hasResumableTask } from '@/lib/orchestrator/task-machine';
 
 export type StudioIntentId =
@@ -25,14 +34,43 @@ export interface StudioProvenance {
   confidence: StudioProvenanceConfidence;
 }
 
+export interface StudioFileIssue {
+  id: string;
+  name: string;
+  reason: string;
+  copy: RoomFileUxCopy;
+  failureReason?: string;
+  failureDetail?: string;
+  failureStage?: RoomFileFailureStage;
+  storageKey?: string;
+  extractAttemptCount?: number;
+  lastExtractAttemptAt?: number;
+}
+
+export interface StudioReadyFile {
+  id: string;
+  sourceId: string;
+  name: string;
+  copy: RoomFileUxCopy;
+  extractedText?: string;
+  storageKey?: string;
+  isPrimary: boolean;
+  isAutoPrimary: boolean;
+}
+
 export interface StudioSnapshot {
   title: string;
   summary: string;
   blockers: string[];
   actionTitle?: string;
   fileCount: number;
+  readyFiles: StudioReadyFile[];
+  primaryFileName?: string;
+  primaryFileSummary?: string;
+  needsPrimaryFileSelection: boolean;
   contextLabel: string;
   lastUpdatedLabel: string;
+  fileIssues: StudioFileIssue[];
   provenance?: StudioProvenance;
 }
 
@@ -50,6 +88,39 @@ function fallbackTaskTitle(task: TaskContext) {
 function normalizeCompactText(value?: string | null) {
   const trimmed = value?.replace(/\s+/g, ' ').trim();
   return trimmed || '';
+}
+
+function getFailedSourceFileIssues(task: TaskContext): StudioFileIssue[] {
+  return task.sourceFiles
+    .filter((file) => file.status === 'failed' || file.status === 'unsupported')
+    .map((file) => ({
+      id: file.id,
+      name: file.name,
+      reason: describeRoomFileFailureReason(file.failureReason) ?? 'อ่านไฟล์นี้ได้ไม่ชัด',
+      copy: getRoomFileUxCopy(file),
+      failureReason: file.failureReason,
+      failureDetail: file.failureDetail,
+      failureStage: file.failureStage,
+      storageKey: file.storageKey,
+      extractAttemptCount: file.extractAttemptCount,
+      lastExtractAttemptAt: file.lastExtractAttemptAt,
+    }));
+}
+
+function getReadySourceFiles(task: TaskContext): StudioReadyFile[] {
+  const primaryFile = getPrimaryReadyRoomSourceFile(task.sourceFiles, task.sourcePreference);
+  const hasExplicitPrimary = Boolean(task.sourcePreference?.primarySourceId);
+  return getReadyRoomSourceFiles(task.sourceFiles)
+    .map((file) => ({
+      id: file.id,
+      sourceId: getRoomSourceIdForFile(file),
+      name: file.name,
+      copy: getRoomFileUxCopy(file),
+      extractedText: file.extractedText,
+      storageKey: file.storageKey,
+      isPrimary: primaryFile?.id === file.id,
+      isAutoPrimary: !hasExplicitPrimary && primaryFile?.id === file.id,
+    }));
 }
 
 function uniqueStrings(values: Array<string | null | undefined>) {
@@ -136,7 +207,11 @@ export function buildStudioSnapshot(
 ): StudioSnapshot | null {
   if (!task) return null;
 
+  const fileIssues = getFailedSourceFileIssues(task);
+  const hasFailedSourceFiles = fileIssues.length > 0;
+
   const title =
+    (hasFailedSourceFiles ? 'บริบทไฟล์ยังไม่สมบูรณ์' : undefined) ||
     task.taskFrame?.objective ||
     task.currentPlan?.actionTitle ||
     action?.title ||
@@ -144,12 +219,18 @@ export function buildStudioSnapshot(
     fallbackTaskTitle(task);
 
   const summary =
+    (hasFailedSourceFiles && !task.reentryBrief?.summary && !task.lastSynthesis?.situation_summary
+      ? 'ไฟล์แนบบางส่วนถูกแนบเข้ามาแล้ว แต่ MIND ยังอ่านได้ไม่ชัด จึงจะใช้ข้อความเดิมหรือบริบทที่อ่านได้ต่อให้ก่อน'
+      : undefined) ||
     task.reentryBrief?.summary ||
     task.lastSynthesis?.situation_summary ||
     action?.situationSummary ||
     truncateText(task.sourceText.replace(/\s+/g, ' '), 180);
 
   const fileCount = task.sourceFiles.length;
+  const readyFiles = getReadySourceFiles(task);
+  const primaryReadyFile = getPrimaryReadyRoomSourceFile(task.sourceFiles, task.sourcePreference);
+  const needsPrimaryFileSelection = getReadyRoomSourceFiles(task.sourceFiles).length > 1 && !primaryReadyFile;
   const actionTitle =
     task.currentPlan?.actionTitle ||
     action?.title ||
@@ -167,8 +248,15 @@ export function buildStudioSnapshot(
     blockers: task.blockerSignals.slice(0, 3),
     actionTitle,
     fileCount,
+    readyFiles,
+    primaryFileName: primaryReadyFile?.name,
+    primaryFileSummary: primaryReadyFile?.extractedText
+      ? truncateText(primaryReadyFile.extractedText.replace(/\s+/g, ' '), 180)
+      : undefined,
+    needsPrimaryFileSelection,
     contextLabel: fileCount > 0 ? `${fileCount} ไฟล์ + ข้อความเดิม` : 'ข้อความเดิมของงานนี้',
     lastUpdatedLabel: formatRelativeTimestamp(lastUpdatedAt),
+    fileIssues,
     provenance: buildStudioProvenance(task, title, summary),
   };
 }
