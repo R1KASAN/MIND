@@ -37,6 +37,7 @@ test('getAiInstallActions includes both primary and fallback install commands', 
 
 test('getCanonicalRuntimeAlignmentIssues accepts canonical host and model', () => {
   const issues = getCanonicalRuntimeAlignmentIssues({
+    NODE_ENV: 'test',
     OLLAMA_HOST: 'http://127.0.0.1:11437',
     AI_MODEL: 'gemma2:2b',
   });
@@ -46,6 +47,7 @@ test('getCanonicalRuntimeAlignmentIssues accepts canonical host and model', () =
 
 test('getCanonicalRuntimeAlignmentIssues flags host mismatch', () => {
   const issues = getCanonicalRuntimeAlignmentIssues({
+    NODE_ENV: 'test',
     OLLAMA_HOST: 'http://127.0.0.1:11434',
     AI_MODEL: 'gemma2:2b',
   });
@@ -61,6 +63,7 @@ test('getCanonicalRuntimeAlignmentIssues flags host mismatch', () => {
 
 test('getCanonicalRuntimeAlignmentIssues flags model mismatch', () => {
   const issues = getCanonicalRuntimeAlignmentIssues({
+    NODE_ENV: 'test',
     OLLAMA_HOST: 'http://127.0.0.1:11437',
     AI_MODEL: 'qwen2.5:3b',
   });

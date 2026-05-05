@@ -14,6 +14,7 @@ import {
   type RoomDataSourceStatus,
   type RoomDataSourceType,
 } from '@/lib/retrieval/room-data';
+import { buildRoomDataSourcesWithMemory } from '@/lib/retrieval/room-memory-sources';
 
 type PanelMode = 'manage' | 'review';
 type TypeFilter = RoomDataSourceType | 'all';
@@ -33,13 +34,17 @@ const TYPE_FILTERS: Array<{ value: TypeFilter; label: string }> = [
   { value: 'file', label: 'ไฟล์' },
   { value: 'clarification', label: 'คำตอบเพิ่ม' },
   { value: 'manual_rescue', label: 'โน้ตตอน rescue' },
+  { value: 'memory_ref', label: 'Room memory' },
 ];
 
 const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
   { value: 'all', label: 'ทุกสถานะ' },
   { value: 'ready', label: 'พร้อมใช้' },
+  { value: 'pending', label: 'กำลังอ่าน' },
   { value: 'failed', label: 'อ่านไม่สำเร็จ' },
   { value: 'unsupported', label: 'ยังไม่รองรับ' },
+  { value: 'tombstone', label: 'ถูกลบแล้ว' },
+  { value: 'missing', label: 'ต้นทางหาย' },
 ];
 
 function formatSourceTypeLabel(type: RoomDataSourceType) {
@@ -52,6 +57,8 @@ function formatSourceTypeLabel(type: RoomDataSourceType) {
       return 'คำตอบเพิ่ม';
     case 'manual_rescue':
       return 'โน้ตตอน rescue';
+    case 'memory_ref':
+      return 'Room memory';
   }
 }
 
@@ -59,10 +66,20 @@ function formatSourceStatusLabel(status: RoomDataSourceStatus) {
   switch (status) {
     case 'ready':
       return 'พร้อมใช้';
+    case 'pending':
+      return 'กำลังอ่าน';
+    case 'unreadable':
+      return 'อ่านไม่ได้';
+    case 'failed_extraction':
+      return 'แยกข้อความไม่สำเร็จ';
     case 'failed':
       return 'อ่านไม่สำเร็จ';
     case 'unsupported':
       return 'ยังไม่รองรับ';
+    case 'tombstone':
+      return 'source ถูกลบแล้ว';
+    case 'missing':
+      return 'ต้นทางหาย';
   }
 }
 
@@ -102,7 +119,7 @@ function SourceCard({
           <p className="studio-eyebrow">{source.label}</p>
           <h3 className="data-source-title">{source.title}</h3>
         </div>
-        {onToggle && (
+        {onToggle && source.deletable !== false && (
           <label className="data-source-check">
             <input type="checkbox" checked={checked} onChange={onToggle} />
             <span>เลือก</span>
@@ -119,6 +136,9 @@ function SourceCard({
         <span className="studio-chip">{formatUsageLabel(source)}</span>
         {isPrimary && <span className="studio-chip studio-chip-success">ไฟล์หลัก</span>}
         {source.storageKey && <span className="studio-chip">ไฟล์เก็บในเครื่อง</span>}
+        {source.refStatus === 'available' && <span className="studio-chip">memory ref พร้อมใช้</span>}
+        {source.refStatus === 'tombstone' && <span className="studio-chip studio-chip-danger">เคยมี evidence แต่ถูกลบแล้ว</span>}
+        {source.refStatus === 'missing' && <span className="studio-chip studio-chip-danger">memory ref หาต้นทางไม่เจอ</span>}
       </div>
       {source.type === 'file' && (
         <p className="studio-inline-note" style={{ margin: 0 }}>
@@ -179,12 +199,35 @@ export function DataReviewPanel({
   const [sensitiveOnly, setSensitiveOnly] = useState(false);
   const [selectedTokens, setSelectedTokens] = useState<Set<string>>(() => new Set());
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const sources = useMemo(() => buildRoomDataSources(task), [task]);
+  const [sources, setSources] = useState<RoomDataSource[]>(() => buildRoomDataSources(task));
   const retrievalReady = shouldUseRicherRoomRetrieval(task, sources);
+  const hasRoomMemoryRefs = sources.some((source) => source.type === 'memory_ref');
 
   useEffect(() => {
     setMode(initialMode);
   }, [initialMode]);
+
+  useEffect(() => {
+    let active = true;
+    const fallbackSources = buildRoomDataSources(task);
+    setSources(fallbackSources);
+    setSelectedTokens(new Set());
+    setConfirmDelete(false);
+
+    void buildRoomDataSourcesWithMemory(task)
+      .then((nextSources) => {
+        if (!active) return;
+        setSources(nextSources);
+      })
+      .catch(() => {
+        if (!active) return;
+        setSources(fallbackSources);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [task]);
 
   const manageResults = useMemo(() => searchRoomDataSources({
     sources,
@@ -202,11 +245,11 @@ export function DataReviewPanel({
   }, [reviewQuestion, sources, task.roomId]);
 
   const selectedSources = useMemo(() => (
-    sources.filter((source) => selectedTokens.has(source.deleteToken))
+    sources.filter((source) => source.deletable !== false && selectedTokens.has(source.deleteToken))
   ), [selectedTokens, sources]);
 
   const deleteWarning = buildPreDeleteWarning(selectedSources);
-  const canDelete = selectedTokens.size > 0;
+  const canDelete = selectedSources.length > 0;
 
   const toggleToken = (token: string) => {
     setSelectedTokens((current) => {
@@ -224,7 +267,7 @@ export function DataReviewPanel({
       setConfirmDelete(true);
       return;
     }
-    const tokens = [...selectedTokens];
+    const tokens = selectedSources.map((source) => source.deleteToken);
     await onDeleteSources(tokens);
     trackEvent('data_deleted', {
       room_id: task.roomId,
@@ -244,8 +287,10 @@ export function DataReviewPanel({
             <h2 className="data-review-title">{mode === 'manage' ? 'จัดการข้อมูล' : 'ทบทวนห้อง'}</h2>
             <p className="studio-inline-note" style={{ margin: 0 }}>
               {retrievalReady
-                ? 'ห้องนี้เข้าเกณฑ์ใช้ retrieval ที่ละเอียดขึ้น แต่ core flow ยังใช้ TaskContext เป็นหลัก'
-                : 'ใช้ metadata + summaries ของห้องนี้ก่อน ถ้า source เยอะขึ้นค่อยเปิด retrieval ที่ละเอียดขึ้น'}
+                ? 'อ่านจาก snapshot, recent events, และ refs ของ Room Memory แบบ bounded replay'
+                : hasRoomMemoryRefs
+                  ? 'แสดงหลักฐานจาก TaskContext พร้อม Room Memory refs และสถานะ tombstone / missing'
+                  : 'ใช้ metadata + summaries ของห้องนี้ก่อน ถ้า source เยอะขึ้นค่อยเปิด retrieval ที่ละเอียดขึ้น'}
             </p>
           </div>
           <button type="button" className="shell-secondary-button" onClick={onClose}>ปิด</button>
@@ -311,7 +356,7 @@ export function DataReviewPanel({
                   </p>
                 )}
                 <button type="button" disabled={!canDelete} onClick={() => void handleDelete()}>
-                  {deleteWarning && !confirmDelete ? 'ตรวจ warning ก่อนลบ' : `ลบ ${selectedTokens.size} source`}
+                  {deleteWarning && !confirmDelete ? 'ตรวจ warning ก่อนลบ' : `ลบ ${selectedSources.length} source`}
                 </button>
               </div>
             </aside>
@@ -330,7 +375,7 @@ export function DataReviewPanel({
                     source={source}
                     checked={selectedTokens.has(source.deleteToken)}
                     primarySourceId={task.sourcePreference?.primarySourceId}
-                    onToggle={() => toggleToken(source.deleteToken)}
+                    onToggle={source.deletable === false ? undefined : () => toggleToken(source.deleteToken)}
                     onSelectPrimarySource={onSelectPrimarySource}
                   />
                 ))

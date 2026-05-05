@@ -106,7 +106,7 @@ test('inferScaffoldRefineFallback eval fixtures cover clarify, dependency, and t
   ] as const;
 
   for (const fixture of fixtures) {
-    const result = inferScaffoldRefineFallback(fixture.blockerSignals, fixture.currentStep);
+    const result = inferScaffoldRefineFallback([...fixture.blockerSignals], fixture.currentStep);
     assert.equal(result.route, fixture.expectedRoute, fixture.name);
 
     if (fixture.expectedRoute === 'clarification') {

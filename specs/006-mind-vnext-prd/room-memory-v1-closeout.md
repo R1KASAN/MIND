@@ -11,7 +11,9 @@ Room Memory v1 is scoped to the Dexie event-log-first foundation for task contin
 - source tombstone marking from the room UI
 - unit/regression coverage for event append, projection, lazy backfill, bounded replay, and ref tombstones
 
-This slice does not move the full workspace store to Dexie and does not add Manage Data or Review Room UI behavior.
+The base Room Memory code slice is committed as `9a60f6a Add room memory event log foundation`.
+
+This slice does not move the full workspace store to Dexie. The follow-up Manage Data adapter reads Room Memory replay context through `src/lib/retrieval/room-memory-sources.ts` without turning the UI into a file manager.
 
 ## Data Contract
 
@@ -27,17 +29,18 @@ AI reentry uses bounded replay:
 
 ## Gate Baseline
 
-Expected closeout gates:
+Verified on 2026-05-05:
 
 - `npm test`
 - `npm run build`
-- targeted ESLint for Room Memory files
+- `npm run lint -- --quiet`
 - `npm run typecheck:app`
+- `npm run typecheck:test`
 
-`npm run typecheck:test` remains a separate gate for existing test type debt. Current failures are concentrated in legacy test fixtures and mocks such as `ollama-runtime.test.ts`, `app-bootstrap.test.ts`, `scaffold-refine.test.ts`, `task-controller.test.ts`, and `use-room-actions.test.ts`. It should not block Room Memory v1 review unless the failure is introduced by this slice.
+The prior `typecheck:test` debt was fixed in test fixtures/mocks only. No runtime behavior was changed for that gate.
 
 ## Follow-Ups
 
-Manage Data and Review Room should consume `roomSnapshots`, recent `roomEvents`, and resolved refs. Review Room should show tombstone/missing refs without crashing and without restoring deleted raw content.
+Manage Data and Review Room now consume bounded Room Memory replay refs and show `available`, `tombstone`, and `missing` states without restoring deleted raw content. A deeper event timeline can come later if Review Room needs step-by-step provenance, but it is not required for the v1 evidence surface.
 
 Do not batch `source_added` yet. Revisit batching only after event volume or latency evidence shows the per-ref append loop is a real cost.

@@ -1,9 +1,18 @@
 import type { PendingInput, TaskContext } from '@/lib/store/idb';
 import { describeRoomFileFailureReason, stripRoomFileContext, type RoomSourceFile } from '@/lib/room';
 import { MiniSearchRetrievalEngine, shouldUseRicherRetrieval, type RetrievalSourceItem } from '@/lib/retrieval/engine';
+import type { RoomMemoryRefStatus } from '@/lib/store/room-memory-db';
 
-export type RoomDataSourceType = 'text' | 'file' | 'clarification' | 'manual_rescue';
-export type RoomDataSourceStatus = 'ready' | 'pending' | 'unreadable' | 'failed_extraction' | 'failed' | 'unsupported';
+export type RoomDataSourceType = 'text' | 'file' | 'clarification' | 'manual_rescue' | 'memory_ref';
+export type RoomDataSourceStatus =
+  | 'ready'
+  | 'pending'
+  | 'unreadable'
+  | 'failed_extraction'
+  | 'failed'
+  | 'unsupported'
+  | 'tombstone'
+  | 'missing';
 
 export interface RoomDataSource extends RetrievalSourceItem {
   type: RoomDataSourceType;
@@ -17,6 +26,8 @@ export interface RoomDataSource extends RetrievalSourceItem {
   sensitiveFlags: string[];
   storageKey?: string;
   deleteToken: string;
+  deletable?: boolean;
+  refStatus?: RoomMemoryRefStatus;
 }
 
 export interface RoomDataSearchInput {

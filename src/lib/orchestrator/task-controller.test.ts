@@ -120,7 +120,7 @@ test('handleMakeSmaller routes to rescue with no_change diagnostics after struct
   const sessionRef = { current: session };
   const refineLoadingStates: boolean[] = [];
   let latestSession: AppSession | null = session;
-  let feedback: { message: string; reason: string; diagnostic: string } | null = null;
+  let feedback = null as { message: string; reason: string; diagnostic: string } | null;
   let currentPayload: AiSynthesisResponse | null = payload;
   const trackedEvents: Array<{ name: string; properties: Record<string, unknown> | undefined }> = [];
 
@@ -273,7 +273,7 @@ test('handleMakeSmaller routes to clarification when no_change suggests missing 
   const sessionRef = { current: session };
   let latestSession: AppSession | null = session;
   let clarificationPrompt = '';
-  let feedback: { routeLabel?: string; reasonLabel?: string } | null = null;
+  let feedback = null as { routeLabel?: string; reasonLabel?: string } | null;
 
   const originalFetch = global.fetch;
   global.fetch = async (input) => {
@@ -368,7 +368,7 @@ test('handleMakeSmaller surfaces failed diagnostics when scaffold request fails'
   });
   const session = makeSession(task, payload);
   const sessionRef = { current: session };
-  let feedback: { message: string; reason: string; diagnostic: string } | null = null;
+  let feedback = null as { message: string; reason: string; diagnostic: string } | null;
   const trackedEvents: Array<{ name: string; properties: Record<string, unknown> | undefined }> = [];
 
   const originalFetch = global.fetch;
@@ -879,8 +879,8 @@ test('handleDump falls back to local synthesis when action synthesis times out',
   });
   const sessionRef = { current: session };
   let latestSession: AppSession | null = session;
-  let currentPayload: AiSynthesisResponse | null = null;
-  let currentActionState: Action | null = null;
+  let currentPayload = null as AiSynthesisResponse | null;
+  let currentActionState = null as Action | null;
   const fetchCalls: string[] = [];
 
   const originalFetch = global.fetch;
@@ -1005,12 +1005,12 @@ test('handleDump ignores a second concurrent submit and only runs one AI lifecyc
     lastActive: 100,
     uiRoute: 'DUMP_ENTRY',
     notThisCount: 0,
-    task: null,
+    task: undefined,
   });
   const sessionRef = { current: session };
   let latestSession: AppSession | null = session;
   const fetchCalls: string[] = [];
-  let releaseIntake: (() => void) | null = null;
+  let releaseIntake = null as (() => void) | null;
   const intakeGate = new Promise<void>((resolve) => {
     releaseIntake = resolve;
   });
@@ -1093,7 +1093,7 @@ test('handleDump ignores a second concurrent submit and only runs one AI lifecyc
       aiModel: 'qwen2.5:3b',
       setSession: (value) => {
         latestSession = value;
-        sessionRef.current = value;
+        if (value) sessionRef.current = value;
       },
       setCurrentPayload: () => undefined,
       setCurrentActionState: () => undefined,
@@ -1638,8 +1638,8 @@ test('resumeFromSuggestedReentry seeds one-action state for dumped save-point ro
   });
   const sessionRef = { current: session };
   let latestSession: AppSession | null = session;
-  let currentPayload: AiSynthesisResponse | null = null;
-  let currentActionState: Action | null = null;
+  let currentPayload = null as AiSynthesisResponse | null;
+  let currentActionState = null as Action | null;
   const savedActions: Action[] = [];
 
   const controller = createTaskController({

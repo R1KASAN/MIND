@@ -41,6 +41,11 @@ function createRoom(id: string): RoomRecord {
 
 const mockPayload = {
   requires_clarification: false,
+  workflow_type: 'client_response',
+  situation_summary: 'Client needs a reply.',
+  detected_blockers: [],
+  clarification_nudge: undefined,
+  reply_draft: undefined,
   recommended_action: {
     title: 'Reply to client',
     rationale: 'Fastest unblock',
