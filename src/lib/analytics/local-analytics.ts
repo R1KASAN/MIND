@@ -512,7 +512,10 @@ export function buildBusinessLoopSummary(events: LocalAnalyticsEvent[]): Busines
     const kind = propertyString(event, 'file_kind', 'fileKind');
     return kind === 'pdf' || kind === 'image';
   });
-  const failedOcrEvents = ocrCandidateEvents.filter((event) => propertyString(event, 'file_status', 'fileStatus') === 'failed');
+  const failedOcrEvents = ocrCandidateEvents.filter((event) => {
+    const status = propertyString(event, 'file_status', 'fileStatus');
+    return status === 'failed' || status === 'failed_extraction' || status === 'unreadable';
+  });
   const garbledOcrEvents = ocrCandidateEvents.filter((event) => propertyString(event, 'failure_reason', 'failureReason') === 'pdf_text_garbled_after_ocr');
   const demoPdfEvents = extractEvents.filter((event) => {
     const kind = propertyString(event, 'file_kind', 'fileKind');

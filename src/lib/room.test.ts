@@ -38,7 +38,7 @@ test('getRoomFileUxCopy accepts full file records', () => {
     kind: 'pdf',
     mimeType: 'application/pdf',
     size: 1024,
-    status: 'failed',
+    status: 'unreadable',
     createdAt: 10,
     failureReason: 'pdf_text_garbled_after_ocr',
   };
@@ -117,4 +117,27 @@ test('buildPreferredRoomSourceContext uses only the selected primary ready file'
   assert.equal(context.extractedText, 'ข้อความจากไฟล์ B');
   assert.match(context.sourceText, /ข้อความจากไฟล์ B/);
   assert.doesNotMatch(context.sourceText, /ข้อความจากไฟล์ A/);
+});
+
+test('buildPreferredRoomSourceContext keeps unreadable file text out of source context', () => {
+  const files: RoomSourceFile[] = [
+    {
+      id: 'scan',
+      name: 'scan.pdf',
+      kind: 'pdf',
+      mimeType: 'application/pdf',
+      size: 1200,
+      status: 'unreadable',
+      createdAt: 1,
+      extractedText: 'M I N D D E M O g a r b l e d',
+      failureReason: 'pdf_text_garbled_after_ocr',
+    },
+  ];
+
+  const context = buildPreferredRoomSourceContext('ข้อความเดิม', files);
+
+  assert.match(context.sourceText, /scan.pdf/);
+  assert.match(context.sourceText, /ลอง OCR แล้วแต่ข้อความ PDF ยังไม่ชัดพอ/);
+  assert.doesNotMatch(context.sourceText, /M I N D D E M O/);
+  assert.equal(context.extractedText, '');
 });

@@ -434,12 +434,16 @@ export function buildReentryUserPrompt(
   task: TaskContext,
   action: Action | null | undefined,
   scope: AiReentryScope,
+  roomMemoryContext?: string,
 ) {
   return [
     buildOperationTaskContext(task),
     '',
     'currentAction:',
     describeAction(action),
+    '',
+    'roomMemoryContext:',
+    roomMemoryContext?.trim() || 'ไม่มี retrieved room memory เพิ่มเติม',
     '',
     `scope: ${scope}`,
     '',

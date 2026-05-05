@@ -18,6 +18,15 @@ import type { AiSynthesisResponse } from '@/lib/ai/schema';
 import { AiSynthesisResponseSchema } from '@/lib/ai/schema';
 import { trackEvent } from '@/lib/instrumentation';
 import { composeRoomSourceText } from '@/lib/room';
+import { buildRoomDataSources, createMetadataRetrievalEngine, type RoomDataSource } from '@/lib/retrieval/room-data';
+import {
+  appendRoomMemoryEvent,
+  buildRoomMemoryReplayContext,
+  ensureRoomMemoryBackfilled,
+  type RoomMemoryEvent,
+  type RoomMemoryEventType,
+  type RoomMemoryRef,
+} from '@/lib/store/room-memory-db';
 import type {
   Action,
   AiFailureReason,
@@ -207,6 +216,78 @@ function resolveRescueRetryBackoffMs(attemptIndex: number, error: unknown) {
   return Math.min(baseDelay + attemptIndex * 500, baseDelay + 1000);
 }
 
+function makeRoomMemoryEventId(roomId: string, type: RoomMemoryEventType) {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return `room-memory:${roomId}:${type}:${crypto.randomUUID()}`;
+  }
+  return `room-memory:${roomId}:${type}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+}
+
+function roomMemoryRefsFromSources(sources: RoomDataSource[]): RoomMemoryRef[] {
+  return sources.map((source) => ({
+    id: source.id,
+    kind: source.kind ?? source.type,
+    label: source.title,
+    excerpt: source.excerpt,
+  }));
+}
+
+async function safeAppendLiveRoomMemoryEvent(event: RoomMemoryEvent) {
+  try {
+    await appendRoomMemoryEvent(event);
+  } catch {
+    // Room memory must never block the primary lifecycle while Dexie is unavailable.
+  }
+}
+
+async function safeAppendLiveSourceAddedEvents(
+  task: TaskContext,
+  refs: RoomMemoryRef[],
+  sourceOperationId: string,
+) {
+  const roomId = task.roomId ?? task.id;
+  for (const ref of refs) {
+    await safeAppendLiveRoomMemoryEvent(buildLiveRoomMemoryEvent({
+      task,
+      type: 'source_added',
+      summary: `Source entered room: ${ref.label ?? ref.id}`,
+      refs: [ref],
+      payload: { sourceRef: ref },
+      actor: 'system',
+      sourceOperationId,
+      dedupeKey: `live:${roomId}:source_added:${ref.id}`,
+    }));
+  }
+}
+
+function buildLiveRoomMemoryEvent(input: {
+  task: TaskContext;
+  type: RoomMemoryEventType;
+  summary: string;
+  refs?: RoomMemoryRef[];
+  payload?: Record<string, unknown>;
+  actor?: RoomMemoryEvent['actor'];
+  sourceOperationId?: string;
+  dedupeKey?: string;
+}): RoomMemoryEvent {
+  const roomId = input.task.roomId ?? input.task.id;
+  const createdAt = Date.now();
+  return {
+    id: makeRoomMemoryEventId(roomId, input.type),
+    roomId,
+    type: input.type,
+    createdAt,
+    actor: input.actor ?? 'ai',
+    origin: 'live',
+    summary: input.summary,
+    refs: input.refs ?? [],
+    payloadVersion: 1,
+    sourceOperationId: input.sourceOperationId,
+    dedupeKey: input.dedupeKey,
+    payload: input.payload,
+  };
+}
+
 export async function requestLegacySynthesis(task: TaskContext): Promise<AiSynthesisResponse> {
   const dump = buildSynthesisInput(task);
   const response = await fetch('/api/ai', {
@@ -230,12 +311,33 @@ export async function requestIntake(task: TaskContext): Promise<AiIntakeResponse
     body: JSON.stringify({ task: buildIntakeRequestTask(task) }),
   });
 
-  return parseOperationResponse(
+  const intake = await parseOperationResponse(
     response,
     AiIntakeResponseSchema,
     `AI intake ไม่สำเร็จ (${response.status})`,
     'intake',
   );
+  const refs = roomMemoryRefsFromSources(buildRoomDataSources(task).filter((source) => source.status === 'ready'));
+  await safeAppendLiveSourceAddedEvents(task, refs, 'intake');
+  await safeAppendLiveRoomMemoryEvent(buildLiveRoomMemoryEvent({
+    task,
+    type: 'summary_updated',
+    summary: intake.roomDigest,
+    refs,
+    payload: { summary: intake.roomDigest },
+    sourceOperationId: 'intake',
+  }));
+  if (intake.blockers.length > 0) {
+    await safeAppendLiveRoomMemoryEvent(buildLiveRoomMemoryEvent({
+      task,
+      type: 'blocker_updated',
+      summary: `Current blockers: ${intake.blockers.join(', ')}`,
+      refs,
+      payload: { blockers: intake.blockers },
+      sourceOperationId: 'intake',
+    }));
+  }
+  return intake;
 }
 
 export async function requestAction(options: {
@@ -249,12 +351,39 @@ export async function requestAction(options: {
     body: JSON.stringify(options),
   });
 
-  return parseOperationResponse(
+  const action = await parseOperationResponse(
     response,
     AiActionResponseSchema,
     `AI action ไม่สำเร็จ (${response.status})`,
     'action',
   );
+  const refs = roomMemoryRefsFromSources(buildRoomDataSources(options.task).filter((source) => source.status === 'ready'));
+  await safeAppendLiveSourceAddedEvents(options.task, refs, 'action');
+  await safeAppendLiveRoomMemoryEvent(buildLiveRoomMemoryEvent({
+    task: options.task,
+    type: 'action_selected',
+    summary: action.chosenAction.title,
+    refs,
+    payload: {
+      action: {
+        title: action.chosenAction.title,
+        rationale: action.chosenAction.rationale,
+        successSignal: action.chosenAction.successSignal,
+      },
+    },
+    sourceOperationId: 'action',
+  }));
+  if (action.situationSummary) {
+    await safeAppendLiveRoomMemoryEvent(buildLiveRoomMemoryEvent({
+      task: options.task,
+      type: 'summary_updated',
+      summary: action.situationSummary,
+      refs,
+      payload: { summary: action.situationSummary },
+      sourceOperationId: 'action',
+    }));
+  }
+  return action;
 }
 
 export async function requestScaffold(
@@ -269,12 +398,28 @@ export async function requestScaffold(
     body: JSON.stringify({ task, action, currentStepIndex, strategy: options?.strategy ?? 'default' }),
   });
 
-  return parseOperationResponse(
+  const scaffold = await parseOperationResponse(
     response,
     AiScaffoldResponseSchema,
     `AI scaffold ไม่สำเร็จ (${response.status})`,
     'scaffold',
   );
+  const refs = roomMemoryRefsFromSources(buildRoomDataSources(task).filter((source) => source.status === 'ready'));
+  await safeAppendLiveSourceAddedEvents(task, refs, 'scaffold');
+  await safeAppendLiveRoomMemoryEvent(buildLiveRoomMemoryEvent({
+    task,
+    type: 'plan_updated',
+    summary: `Plan: ${scaffold.planTitle}`,
+    refs,
+    payload: {
+      plan: {
+        actionTitle: scaffold.planTitle,
+        steps: scaffold.steps,
+      },
+    },
+    sourceOperationId: 'scaffold',
+  }));
+  return scaffold;
 }
 
 export async function requestRescue(task: TaskContext, action: Action | null, currentStepIndex: number): Promise<AiRescueResponse> {
@@ -328,6 +473,33 @@ export async function requestRescue(task: TaskContext, action: Action | null, cu
           recoveredFromPassType: initialFailurePassType,
         });
       }
+
+      const refs = roomMemoryRefsFromSources(buildRoomDataSources(task).filter((source) => source.status === 'ready'));
+      await safeAppendLiveSourceAddedEvents(task, refs, 'rescue');
+      await safeAppendLiveRoomMemoryEvent(buildLiveRoomMemoryEvent({
+        task,
+        type: 'rescue_created',
+        summary: `Rescue: ${parsed.diagnosis.primaryReason} -> ${parsed.rescuePlan.mode}`,
+        refs,
+        payload: {
+          rescue: {
+            reason: parsed.diagnosis.primaryReason,
+            mode: parsed.rescuePlan.mode,
+            explanation: parsed.diagnosis.explanation,
+            steps: parsed.rescuePlan.steps,
+            createdAt: Date.now(),
+          },
+        },
+        sourceOperationId: 'rescue',
+      }));
+      await safeAppendLiveRoomMemoryEvent(buildLiveRoomMemoryEvent({
+        task,
+        type: 'blocker_updated',
+        summary: `Current blockers: ${parsed.diagnosis.primaryReason}`,
+        refs,
+        payload: { blockers: [parsed.diagnosis.primaryReason] },
+        sourceOperationId: 'rescue',
+      }));
 
       return parsed;
     } catch (error) {
@@ -389,7 +561,7 @@ export async function requestRescue(task: TaskContext, action: Action | null, cu
         throw error;
       }
 
-      return parseAiRescueResponse(
+      const fallbackRescue = parseAiRescueResponse(
         JSON.stringify({
           diagnosis: {
             primaryReason: 'unknown',
@@ -412,6 +584,33 @@ export async function requestRescue(task: TaskContext, action: Action | null, cu
             action?.microSteps?.[currentStepIndex],
         },
       );
+      const refs = roomMemoryRefsFromSources(buildRoomDataSources(task).filter((source) => source.status === 'ready'));
+      await safeAppendLiveSourceAddedEvents(task, refs, 'rescue:fallback');
+      await safeAppendLiveRoomMemoryEvent(buildLiveRoomMemoryEvent({
+        task,
+        type: 'rescue_created',
+        summary: `Rescue: ${fallbackRescue.diagnosis.primaryReason} -> ${fallbackRescue.rescuePlan.mode}`,
+        refs,
+        payload: {
+          rescue: {
+            reason: fallbackRescue.diagnosis.primaryReason,
+            mode: fallbackRescue.rescuePlan.mode,
+            explanation: fallbackRescue.diagnosis.explanation,
+            steps: fallbackRescue.rescuePlan.steps,
+            createdAt: Date.now(),
+          },
+        },
+        sourceOperationId: 'rescue:fallback',
+      }));
+      await safeAppendLiveRoomMemoryEvent(buildLiveRoomMemoryEvent({
+        task,
+        type: 'blocker_updated',
+        summary: `Current blockers: ${fallbackRescue.diagnosis.primaryReason}`,
+        refs,
+        payload: { blockers: [fallbackRescue.diagnosis.primaryReason] },
+        sourceOperationId: 'rescue:fallback',
+      }));
+      return fallbackRescue;
     }
   }
 
@@ -424,21 +623,124 @@ export async function requestReentry(
   scope: AiReentryScope,
   currentStepIndex: number,
 ): Promise<AiReentryResponse> {
+  const roomId = task.roomId ?? task.id;
+  const currentStep =
+    task.currentPlan?.steps[currentStepIndex]?.text ??
+    action?.microSteps?.[currentStepIndex] ??
+    '';
+  const memoryQuery = [
+    action?.title,
+    task.currentPlan?.actionTitle,
+    currentStep,
+    task.taskFrame?.objective,
+    task.lastStableSummary,
+    task.lastSynthesis?.situation_summary,
+  ].filter((value): value is string => Boolean(value?.trim())).join(' ');
+  const roomSources = buildRoomDataSources(task).filter((source) => source.status === 'ready');
+  const retrievalEngine = await createMetadataRetrievalEngine(roomSources);
+  const memoryHits = await retrievalEngine.retrieveHits(memoryQuery, roomId, 5);
+  const sourceMemoryContext = memoryHits.map(({ item: source, reason }: { item: RoomDataSource; reason: string }) => ({
+    id: source.id,
+    title: source.title,
+    kind: source.kind ?? source.type,
+    status: source.status,
+    excerpt: source.excerpt,
+    summary: source.summary,
+    reason: source.usedInPlanCount > 0
+      ? `used_in_plan:${source.usedInPlanCount}`
+      : source.lastUsedAt
+        ? 'recently_used'
+        : reason,
+  }));
+  const roomMemoryReplay = await (async () => {
+    try {
+      await ensureRoomMemoryBackfilled({ task });
+      return buildRoomMemoryReplayContext({
+        roomId,
+        query: memoryQuery,
+        eventLimit: 10,
+        refLimit: 5,
+        availableSources: roomSources,
+      });
+    } catch {
+      return null;
+    }
+  })();
+  const memoryContext = [
+    ...(roomMemoryReplay?.snapshot
+      ? [{
+          id: `snapshot:${roomId}`,
+          title: 'Room memory snapshot',
+          kind: 'room_snapshot',
+          status: 'derived',
+          summary: roomMemoryReplay.snapshot.currentSummary,
+          excerpt: [
+            roomMemoryReplay.snapshot.currentAction?.title,
+            roomMemoryReplay.snapshot.currentPlan?.actionTitle,
+            roomMemoryReplay.snapshot.currentBlockers.length > 0
+              ? `blockers: ${roomMemoryReplay.snapshot.currentBlockers.join(', ')}`
+              : undefined,
+            roomMemoryReplay.snapshot.latestRescue
+              ? `latestRescue: ${roomMemoryReplay.snapshot.latestRescue.reason}`
+              : undefined,
+            roomMemoryReplay.snapshot.latestReentry?.summary,
+          ].filter(Boolean).join(' · '),
+          reason: `snapshot_version:${roomMemoryReplay.snapshot.version}`,
+        }]
+      : []),
+    ...(roomMemoryReplay?.recentEvents ?? []).map((event) => ({
+      id: event.id,
+      title: event.type,
+      kind: 'room_event',
+      status: event.origin,
+      summary: event.summary,
+      excerpt: event.summary,
+      reason: `event:${event.type}`,
+    })),
+    ...(roomMemoryReplay?.relevantRefs ?? []).map((ref) => ({
+      id: ref.id,
+      title: ref.label ?? ref.id,
+      kind: ref.kind,
+      status: ref.status,
+      summary: ref.excerpt,
+      excerpt: ref.excerpt,
+      reason: `ref:${ref.status}`,
+    })),
+    ...sourceMemoryContext,
+  ];
+
   try {
     const response = await fetch('/api/ai/reentry', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ task, action, scope }),
+      body: JSON.stringify({ task, action, scope, memoryContext }),
     });
 
-    return parseOperationResponse(
+    const reentry = await parseOperationResponse(
       response,
       AiReentryResponseSchema,
       `AI reentry ไม่สำเร็จ (${response.status})`,
       'reentry',
     );
+    const refs = roomMemoryRefsFromSources(roomSources);
+    await safeAppendLiveSourceAddedEvents(task, refs, 'reentry');
+    await safeAppendLiveRoomMemoryEvent(buildLiveRoomMemoryEvent({
+      task,
+      type: 'reentry_created',
+      summary: reentry.reentrySummary,
+      refs,
+      payload: {
+        reentry: {
+          summary: reentry.reentrySummary,
+          topActions: reentry.topActions,
+          createdAt: Date.now(),
+        },
+      },
+      sourceOperationId: 'reentry',
+    }));
+    return reentry;
   } catch {
-    return parseAiReentryResponse(
+    const fallbackReentry = parseAiReentryResponse(
       JSON.stringify({
         reentrySummary:
           scope === 'morning_ritual'
@@ -465,6 +767,23 @@ export async function requestReentry(
         fallbackResumeTarget: 'ONE_ACTION',
       },
     );
+    const refs = roomMemoryRefsFromSources(roomSources);
+    await safeAppendLiveSourceAddedEvents(task, refs, 'reentry:fallback');
+    await safeAppendLiveRoomMemoryEvent(buildLiveRoomMemoryEvent({
+      task,
+      type: 'reentry_created',
+      summary: fallbackReentry.reentrySummary,
+      refs,
+      payload: {
+        reentry: {
+          summary: fallbackReentry.reentrySummary,
+          topActions: fallbackReentry.topActions,
+          createdAt: Date.now(),
+        },
+      },
+      sourceOperationId: 'reentry:fallback',
+    }));
+    return fallbackReentry;
   }
 }
 

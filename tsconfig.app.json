@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "node_modules",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    ".next-mockup",
+    "generated",
+    "outputs",
+    "tmp",
+    "mockup-app/.next"
+  ]
+}

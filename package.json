@@ -12,6 +12,8 @@
     "start:local-ai": "OLLAMA_HOST=http://127.0.0.1:11437 AI_MODEL=gemma2:2b AI_FALLBACK_MODELS=gemma2:2b tsx scripts/ensure-canonical-ollama-runtime.ts && OLLAMA_HOST=http://127.0.0.1:11437 AI_MODEL=gemma2:2b AI_FALLBACK_MODELS=gemma2:2b next start",
     "start:raw": "next start",
     "lint": "eslint",
+    "typecheck:app": "tsc -p tsconfig.app.json --noEmit",
+    "typecheck:test": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx --test src/lib/ai/*.test.ts src/lib/orchestrator/*.test.ts src/lib/retrieval/*.test.ts src/lib/room.test.ts src/lib/room-extraction.server.test.ts src/lib/store/*.test.ts",
     "runtime:ollama:check": "tsx scripts/check-local-ollama-runtime.ts",
     "runtime:ollama:check:cpu-safe": "OLLAMA_HOST=http://127.0.0.1:11437 tsx scripts/check-local-ollama-runtime.ts",
@@ -37,14 +39,18 @@
     "benchmark:rescue": "tsx scripts/benchmark-rescue-route.ts"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^0.1.80",
     "@tesseract.js-data/eng": "^1.0.0",
     "@tesseract.js-data/tha": "^1.0.0",
+    "dexie": "^4.4.2",
     "idb-keyval": "^6.2.2",
+    "minisearch": "^7.2.0",
     "next": "16.2.2",
-    "pdf-parse": "^2.4.5",
+    "pdfjs-dist": "^5.4.296",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "tesseract.js": "^7.0.0",
+    "unpdf": "^1.6.2",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -54,6 +60,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.2",
+    "fake-indexeddb": "^6.2.5",
     "tsx": "^4.20.6",
     "typescript": "^5"
   }

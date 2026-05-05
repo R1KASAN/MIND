@@ -1,8 +1,10 @@
+import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { Action, TaskContext } from '../store/idb';
 import { composeRoomSourceText, type RoomSourceFile } from '../room';
+import { clearRoomMemoryData, getRoomMemoryDb, getRoomMemorySnapshot } from '../store/room-memory-db';
 import { requestIntake, requestRescue, SynthesisFailure } from './task-events';
 
 function makeTask(): TaskContext {
@@ -127,6 +129,43 @@ test('requestRescue retries once on 503 and returns the recovered rescue payload
   }
 });
 
+test('requestRescue fallback appends blocker_updated with fallback diagnosis', async () => {
+  const originalFetch = global.fetch;
+  const originalMaxAttempts = process.env.MIND_RESCUE_RETRY_MAX_ATTEMPTS;
+
+  process.env.MIND_RESCUE_RETRY_MAX_ATTEMPTS = '1';
+  await clearRoomMemoryData();
+
+  global.fetch = async () => new Response(JSON.stringify({
+    ok: false,
+    error: {
+      reason: 'request_timeout',
+      message: 'AI rescue ไม่สำเร็จ (503)',
+      retryable: true,
+    },
+  }), {
+    status: 503,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  try {
+    const rescue = await requestRescue(makeTask(), makeAction(), 0);
+    const snapshot = await getRoomMemorySnapshot('task-1');
+    const events = await getRoomMemoryDb().roomEvents.where('roomId').equals('task-1').toArray();
+
+    assert.equal(rescue.diagnosis.primaryReason, 'unknown');
+    assert.equal(snapshot?.latestRescue?.reason, 'unknown');
+    assert.deepEqual(snapshot?.currentBlockers, ['unknown']);
+    assert.ok(events.some((event) => event.type === 'rescue_created' && event.sourceOperationId === 'rescue:fallback'));
+    assert.ok(events.some((event) => event.type === 'blocker_updated' && event.sourceOperationId === 'rescue:fallback'));
+  } finally {
+    global.fetch = originalFetch;
+    await clearRoomMemoryData();
+    if (originalMaxAttempts === undefined) delete process.env.MIND_RESCUE_RETRY_MAX_ATTEMPTS;
+    else process.env.MIND_RESCUE_RETRY_MAX_ATTEMPTS = originalMaxAttempts;
+  }
+});
+
 test('requestIntake omits file context when sourceText is the canonical merged room text', async () => {
   const originalFetch = global.fetch;
   const file: RoomSourceFile = {
@@ -169,6 +208,44 @@ test('requestIntake omits file context when sourceText is the canonical merged r
     });
   } finally {
     global.fetch = originalFetch;
+  }
+});
+
+test('requestIntake appends source_added events for live room sources', async () => {
+  const originalFetch = global.fetch;
+  const file: RoomSourceFile = {
+    id: 'file-1',
+    name: 'brief.pdf',
+    kind: 'pdf',
+    mimeType: 'application/pdf',
+    size: 1200,
+    status: 'ready',
+    createdAt: 1,
+    extractedText: 'Phase 2 budget and deadline notes',
+  };
+  const task: TaskContext = {
+    ...makeTask(),
+    sourceText: 'Manual note about the client scope',
+    sourceFiles: [file],
+  };
+
+  await clearRoomMemoryData();
+  global.fetch = async () => new Response(JSON.stringify(makeIntakeResponse()), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  try {
+    await requestIntake(task);
+    const events = await getRoomMemoryDb().roomEvents.where('roomId').equals('task-1').toArray();
+    const sourceEvents = events.filter((event) => event.type === 'source_added');
+
+    assert.ok(sourceEvents.some((event) => event.refs.some((ref) => ref.id === 'manual:task-1')));
+    assert.ok(sourceEvents.some((event) => event.refs.some((ref) => ref.id === 'file:file-1')));
+    assert.equal(sourceEvents.every((event) => event.actor === 'system'), true);
+  } finally {
+    global.fetch = originalFetch;
+    await clearRoomMemoryData();
   }
 });
 

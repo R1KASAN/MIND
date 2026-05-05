@@ -59,6 +59,32 @@ const STATUS_LABELS = {
 
 type ExportMode = 'active' | 'all' | 'idle';
 
+const DEFAULT_SCENARIO: DemoObservationDraft['scenario'] = 'A';
+const DEFAULT_SEVERITY: DemoObservationDraft['severity'] = 'minor';
+const DEFAULT_CONFIDENCE: DemoObservationDraft['confidence'] = 'medium';
+
+function buildInitialPanelState(currentRoute?: UIRoute) {
+  const entries = getDemoObservationEntries();
+  const sessionRecords = getDemoObservationSessionRecords();
+  const activeSession = getActiveDemoObservationSession();
+  const sessionDraft = activeSession
+    ? sessionDraftFromRecord(activeSession)
+    : getDemoObservationSessionDraft();
+
+  return {
+    entries,
+    sessionRecords,
+    sessionDraft,
+    draft: createObservationDraft(currentRoute, {
+      scenario: DEFAULT_SCENARIO,
+      severity: DEFAULT_SEVERITY,
+      confidence: DEFAULT_CONFIDENCE,
+    }),
+    activeSessionId: activeSession?.sessionId ?? null,
+    selectedSessionId: activeSession?.sessionId ?? sessionRecords[0]?.sessionId ?? null,
+  };
+}
+
 function fieldStyle() {
   return {
     padding: '0.75rem 0.8rem',
@@ -96,50 +122,33 @@ function sessionDraftFromRecord(record: DemoObservationSessionRecord): DemoObser
 }
 
 export function DemoObservationPanel({ open, onToggle, currentRoute }: Props) {
-  const [entries, setEntries] = useState<DemoObservationEntry[]>([]);
-  const [sessionRecords, setSessionRecords] = useState<DemoObservationSessionRecord[]>([]);
-  const [sessionDraft, setSessionDraft] = useState<DemoObservationSessionDraft>(() => getDemoObservationSessionDraft());
-  const [draft, setDraft] = useState<DemoObservationDraft>(() => createObservationDraft(currentRoute));
+  const [initialState] = useState(() => buildInitialPanelState(currentRoute));
+  const [entries, setEntries] = useState<DemoObservationEntry[]>(initialState.entries);
+  const [sessionRecords, setSessionRecords] = useState<DemoObservationSessionRecord[]>(initialState.sessionRecords);
+  const [sessionDraft, setSessionDraft] = useState<DemoObservationSessionDraft>(initialState.sessionDraft);
+  const [draft, setDraft] = useState<DemoObservationDraft>(initialState.draft);
   const [copyState, setCopyState] = useState<ExportMode>('idle');
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const [defaultScenario, setDefaultScenario] = useState<DemoObservationDraft['scenario']>('A');
-  const [defaultSeverity, setDefaultSeverity] = useState<DemoObservationDraft['severity']>('minor');
-  const [defaultConfidence, setDefaultConfidence] = useState<DemoObservationDraft['confidence']>('medium');
-
-  useEffect(() => {
-    const nextEntries = getDemoObservationEntries();
-    const nextSessionRecords = getDemoObservationSessionRecords();
-    const nextActiveSession = getActiveDemoObservationSession();
-    const nextSessionDraft = nextActiveSession
-      ? sessionDraftFromRecord(nextActiveSession)
-      : getDemoObservationSessionDraft();
-
-    setEntries(nextEntries);
-    setSessionRecords(nextSessionRecords);
-    setActiveSessionId(nextActiveSession?.sessionId ?? null);
-    setSelectedSessionId(nextActiveSession?.sessionId ?? nextSessionRecords[0]?.sessionId ?? null);
-    setSessionDraft(nextSessionDraft);
-    setDraft(createObservationDraft(currentRoute, {
-      scenario: defaultScenario,
-      severity: defaultSeverity,
-      confidence: defaultConfidence,
-    }));
-  }, []);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(initialState.activeSessionId);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(initialState.selectedSessionId);
+  const [defaultScenario, setDefaultScenario] = useState<DemoObservationDraft['scenario']>(DEFAULT_SCENARIO);
+  const [defaultSeverity, setDefaultSeverity] = useState<DemoObservationDraft['severity']>(DEFAULT_SEVERITY);
+  const [defaultConfidence, setDefaultConfidence] = useState<DemoObservationDraft['confidence']>(DEFAULT_CONFIDENCE);
 
   useEffect(() => {
     saveDemoObservationSessionDraft(sessionDraft);
   }, [sessionDraft]);
 
   useEffect(() => {
-    setDraft((current) => {
+    const timeoutId = window.setTimeout(() => {
       const nextSurface = inferSurfaceFromRoute(currentRoute);
-      if (!nextSurface) return current;
-      return {
+      if (!nextSurface) return;
+      setDraft((current) => ({
         ...current,
         surface: current.surface === nextSurface ? current.surface : nextSurface,
-      };
-    });
+      }));
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
   }, [currentRoute]);
 
   const activeSession = useMemo(

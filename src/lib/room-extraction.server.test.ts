@@ -77,7 +77,7 @@ test('extractRoomSubmission marks PDF failed when OCR output is still garbled', 
     extractPdfTextViaOcr: async () => 'ไ ฟ ล ์ ต ั ว อ ย ่ า ง M I N D',
   });
 
-  assert.equal(submission.sourceFiles[0]?.status, 'failed');
+  assert.equal(submission.sourceFiles[0]?.status, 'unreadable');
   assert.equal(submission.sourceFiles[0]?.failureReason, 'pdf_text_garbled_after_ocr');
   assert.equal(submission.sourceFiles[0]?.failureStage, 'pdf_ocr');
   assert.equal(submission.sourceFiles[0]?.failureDetail, 'fragmented_word_runs');
@@ -98,7 +98,7 @@ test('extractRoomSubmission marks PDF failed when OCR runtime fails', async () =
     },
   });
 
-  assert.equal(submission.sourceFiles[0]?.status, 'failed');
+  assert.equal(submission.sourceFiles[0]?.status, 'failed_extraction');
   assert.equal(submission.sourceFiles[0]?.failureReason, 'pdf_ocr_failed');
   assert.equal(submission.sourceFiles[0]?.failureStage, 'pdf_ocr');
   assert.equal(submission.sourceFiles[0]?.failureDetail, 'pdf_ocr_timeout');

@@ -1,9 +1,9 @@
 import type { PendingInput, TaskContext } from '@/lib/store/idb';
 import { describeRoomFileFailureReason, stripRoomFileContext, type RoomSourceFile } from '@/lib/room';
-import { MetadataOnlyRetrievalEngine, shouldUseRicherRetrieval, type RetrievalSourceItem } from '@/lib/retrieval/engine';
+import { MiniSearchRetrievalEngine, shouldUseRicherRetrieval, type RetrievalSourceItem } from '@/lib/retrieval/engine';
 
 export type RoomDataSourceType = 'text' | 'file' | 'clarification' | 'manual_rescue';
-export type RoomDataSourceStatus = 'ready' | 'failed' | 'unsupported';
+export type RoomDataSourceStatus = 'ready' | 'pending' | 'unreadable' | 'failed_extraction' | 'failed' | 'unsupported';
 
 export interface RoomDataSource extends RetrievalSourceItem {
   type: RoomDataSourceType;
@@ -101,7 +101,7 @@ function buildSourceBase(task: TaskContext, sourceId: string, createdAt: number 
     : null;
 
   return {
-    roomId: task.roomId,
+    roomId: task.roomId ?? task.id,
     createdAt,
     usedInPlanCount: usedCountForSource(task, sourceId),
     lastUsedAt,
@@ -249,7 +249,7 @@ export function searchRoomDataSources(input: RoomDataSearchInput): RoomDataSourc
 }
 
 export async function createMetadataRetrievalEngine(sources: RoomDataSource[]) {
-  const engine = new MetadataOnlyRetrievalEngine<RoomDataSource>();
+  const engine = new MiniSearchRetrievalEngine<RoomDataSource>();
   await Promise.all(sources.map((source) => engine.indexSourceItem(source)));
   return engine;
 }

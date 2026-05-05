@@ -74,6 +74,8 @@ interface UseRoomActionsOptions {
   hydrateSessionState: (nextSession: AppSession) => Promise<void>;
   refreshRooms: () => Promise<unknown>;
   resetRoomInteractionState: () => void;
+  readOnly?: boolean;
+  onReadOnlyBlocked?: () => void;
 }
 
 export function useRoomActions({
@@ -87,11 +89,18 @@ export function useRoomActions({
   hydrateSessionState,
   refreshRooms,
   resetRoomInteractionState,
+  readOnly = false,
+  onReadOnlyBlocked,
 }: UseRoomActionsOptions) {
   useEffect(() => {
     const handleRoomSwitchHotkeys = (event: KeyboardEvent) => {
       if (!(event.altKey || (event.metaKey && event.shiftKey))) return;
       if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+      if (readOnly) {
+        event.preventDefault();
+        onReadOnlyBlocked?.();
+        return;
+      }
 
       const nextRoom = getAdjacentRoom(
         rooms,
@@ -111,12 +120,16 @@ export function useRoomActions({
 
     window.addEventListener('keydown', handleRoomSwitchHotkeys);
     return () => window.removeEventListener('keydown', handleRoomSwitchHotkeys);
-  }, [activeRoomId, hydrateSessionState, refreshRooms, resetRoomInteractionState, rooms]);
+  }, [activeRoomId, hydrateSessionState, onReadOnlyBlocked, readOnly, refreshRooms, resetRoomInteractionState, rooms]);
 
   const activeRoom = rooms.find((room) => room.id === activeRoomId) ?? null;
   const visibleRoom = activeRoom && typeof activeRoom.trashedAt !== 'number' ? activeRoom : null;
 
   const handleCreateRoom = async () => {
+    if (readOnly) {
+      onReadOnlyBlocked?.();
+      return;
+    }
     const created = await createRoom({
       title: `Client room ${rooms.length + 1}`,
       scenarioType: demoScenarioId,
@@ -130,6 +143,10 @@ export function useRoomActions({
 
   const handleSelectRoom = async (roomId: string) => {
     if (roomId === activeRoomId) return;
+    if (readOnly) {
+      onReadOnlyBlocked?.();
+      return;
+    }
     const selectedRoom = rooms.find((room) => room.id === roomId);
     if (!selectedRoom || typeof selectedRoom.trashedAt === 'number') return;
     const nextSession = await activateRoom(roomId);
@@ -139,6 +156,10 @@ export function useRoomActions({
   };
 
   const handleRenameRoom = async (roomId: string, nextTitle: string) => {
+    if (readOnly) {
+      onReadOnlyBlocked?.();
+      return;
+    }
     const result = await renameRoom(roomId, nextTitle);
     resetRoomInteractionState();
     if (result.session) {
@@ -148,6 +169,10 @@ export function useRoomActions({
   };
 
   const handleTrashRoom = async (roomId: string) => {
+    if (readOnly) {
+      onReadOnlyBlocked?.();
+      return;
+    }
     const result = await trashRoom(roomId);
     resetRoomInteractionState();
     if (result.session) {
@@ -157,11 +182,19 @@ export function useRoomActions({
   };
 
   const handleRestoreRoom = async (roomId: string) => {
+    if (readOnly) {
+      onReadOnlyBlocked?.();
+      return;
+    }
     await restoreRoom(roomId);
     await refreshRooms();
   };
 
   const handleContinueFromRoomCard = async () => {
+    if (readOnly) {
+      onReadOnlyBlocked?.();
+      return;
+    }
     if (!session) return;
     if (!session.task) return;
 
@@ -184,6 +217,10 @@ export function useRoomActions({
   };
 
   const handleMakeSmallerFromRoomCard = async () => {
+    if (readOnly) {
+      onReadOnlyBlocked?.();
+      return;
+    }
     if (!session) return;
     if (!session.task || !hasResumableTask(session.task)) return;
 

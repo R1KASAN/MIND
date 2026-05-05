@@ -7,6 +7,7 @@ import {
   getRoomFileUxCopy,
   getRoomSourceIdForFile,
   type RoomFileFailureStage,
+  type RoomFileStatus,
   type RoomFileUxCopy,
 } from '@/lib/room';
 import { hasResumableTask } from '@/lib/orchestrator/task-machine';
@@ -37,6 +38,7 @@ export interface StudioProvenance {
 export interface StudioFileIssue {
   id: string;
   name: string;
+  status: RoomFileStatus;
   reason: string;
   copy: RoomFileUxCopy;
   failureReason?: string;
@@ -92,10 +94,11 @@ function normalizeCompactText(value?: string | null) {
 
 function getFailedSourceFileIssues(task: TaskContext): StudioFileIssue[] {
   return task.sourceFiles
-    .filter((file) => file.status === 'failed' || file.status === 'unsupported')
+    .filter((file) => file.status !== 'ready')
     .map((file) => ({
       id: file.id,
       name: file.name,
+      status: file.status,
       reason: describeRoomFileFailureReason(file.failureReason) ?? 'อ่านไฟล์นี้ได้ไม่ชัด',
       copy: getRoomFileUxCopy(file),
       failureReason: file.failureReason,

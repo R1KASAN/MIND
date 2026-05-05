@@ -9,6 +9,9 @@ import {
   hydrateRoomSessionFromRecord,
   loadRoomFileBlob,
   normalizeSession,
+  createTaskContext,
+  type MemoryDegradationReason,
+  type MemoryMode,
   type RoomRecord,
 } from '@/lib/store/idb';
 import { processWeeklySweep } from '@/lib/store/memoryRules';
@@ -28,10 +31,11 @@ import {
   createAutoRoomSourcePreference,
   getRoomSourceIdForFile,
   stripRoomFileContext,
+  type RoomSubmission,
   type RoomSourceFile,
 } from '@/lib/room';
 import {
-  loadBootstrapWorkspace,
+  loadSafeBootstrapWorkspace,
   migrateLegacyActiveDumpContext,
   parseBootstrapFlags,
   resolveBootstrapSession,
@@ -54,6 +58,7 @@ import {
   hasSeenValuePulse,
   type ValuePulseContext,
 } from '@/lib/value-pulse';
+import { markRoomMemoryRefDeleted } from '@/lib/store/room-memory-db';
 
 import { BrainDumpInput } from '@/components/BrainDump/Input';
 import { ManualFallback } from '@/components/BrainDump/Fallback';
@@ -147,6 +152,27 @@ function getHealthRailContent(health: HealthCheckResult) {
     detail: health.actions?.[0] ?? health.detail ?? DEFAULT_AI_START_ACTION,
     tone: 'unavailable' as const,
   };
+}
+
+const AI_OFFLINE_MANUAL_COPY = 'AI ในเครื่องยังไม่พร้อม ใช้ Manual Mode ได้ก่อน ข้อมูลงานยังอยู่ในเครื่องนี้';
+
+function isAiOfflineManualMode(health: HealthCheckResult) {
+  return health.status === 'unavailable' || health.status === 'model_missing';
+}
+
+function memoryDegradationCopy(reason?: MemoryDegradationReason) {
+  switch (reason) {
+    case 'schema_mismatch':
+      return 'schema ของ memory ไม่ตรงกับแอปเวอร์ชันนี้';
+    case 'migration_exception':
+      return 'migration ของ memory ล้มเหลวระหว่างเปิดแอป';
+    case 'critical_validation_failed':
+      return 'ข้อมูลสำคัญบางส่วนไม่ผ่าน validation';
+    case 'unreadable_store':
+      return 'อ่าน IndexedDB บาง store ไม่สำเร็จ';
+    default:
+      return 'memory บางส่วนอาจไม่เข้ากับแอปเวอร์ชันนี้';
+  }
 }
 
 // T028/T029: Local-timezone "today" string for morning ritual day comparison
@@ -316,6 +342,9 @@ export default function StateMachinePage() {
   const [showObservationCapture, setShowObservationCapture] = useState(false);
   const [activeStudioIntent, setActiveStudioIntent] = useState<StudioIntentId | null>(null);
   const [retryingFileId, setRetryingFileId] = useState<string | null>(null);
+  const [aiOfflineNotice, setAiOfflineNotice] = useState<string | null>(null);
+  const [memoryMode, setMemoryMode] = useState<MemoryMode>('normal');
+  const [memoryDegradationReason, setMemoryDegradationReason] = useState<MemoryDegradationReason | undefined>();
 
   // T046: Background AI status — non-blocking passive indicator
   const [aiHealth, setAiHealth] = useState<HealthCheckResult>(DEFAULT_AI_HEALTH);
@@ -336,6 +365,7 @@ export default function StateMachinePage() {
   const [uiViewMode, setUiViewMode] = useState<'FOCUS' | 'POWER'>('FOCUS');
   const reentryUnderstoodRef = useRef<string | null>(null);
   const previousUiRouteRef = useRef<UIRoute | null>(null);
+  const memoryModeRef = useRef<MemoryMode>('normal');
   const valuePulseAnchorRef = useRef<ValuePulseContext | null>(null);
   const [activeValuePulseContext, setActiveValuePulseContext] = useState<ValuePulseContext | null>(null);
 
@@ -389,6 +419,24 @@ export default function StateMachinePage() {
     return () => mediaQuery.removeEventListener('change', handleChange);
   }, []);
 
+  useEffect(() => {
+    memoryModeRef.current = memoryMode;
+  }, [memoryMode]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const handleDebugToggle = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || !event.shiftKey || event.key.toLowerCase() !== 'd') return;
+      event.preventDefault();
+      setAllowAiDebug(true);
+      setAllowObservationCapture(true);
+      setShowAiOpsDebug((value) => !value);
+      setShowObservationCapture((value) => !value);
+    };
+    window.addEventListener('keydown', handleDebugToggle);
+    return () => window.removeEventListener('keydown', handleDebugToggle);
+  }, []);
+
   const refreshRooms = useCallback(async () => {
     const workspace = await getRoomWorkspace();
     setRooms(workspace.rooms);
@@ -438,22 +486,30 @@ export default function StateMachinePage() {
       setAllowObservationCapture(flags.allowObservationCapture);
       setShowObservationCapture(flags.showObservationCapture);
 
-      await processWeeklySweep();
-      const { workspace, storedSession } = await loadBootstrapWorkspace({
+      const bootstrap = await loadSafeBootstrapWorkspace({
         isPresentationMode: flags.isPresentationMode,
         scenarioId: flags.scenarioId,
       });
+      const { workspace, storedSession } = bootstrap;
       if (cancelled) return;
+
+      setMemoryMode(bootstrap.memoryMode);
+      memoryModeRef.current = bootstrap.memoryMode;
+      setMemoryDegradationReason(bootstrap.memoryDegradationReason);
 
       setRooms(workspace.rooms);
       setActiveRoomId(workspace.activeRoomId);
       let nextSession = storedSession;
       const activeRoomSession = workspace.rooms.find((room) => room.id === workspace.activeRoomId)?.session;
-      if (activeRoomSession && activeRoomSession !== storedSession) {
+      if (bootstrap.memoryMode === 'normal') {
+        await processWeeklySweep();
+      }
+
+      if (bootstrap.memoryMode === 'normal' && activeRoomSession && activeRoomSession !== storedSession) {
         await saveSession(storedSession);
       }
       const migratedSession = migrateLegacyActiveDumpContext(storedSession);
-      if (migratedSession) {
+      if (bootstrap.memoryMode === 'normal' && migratedSession) {
         nextSession = migratedSession;
         await saveSession(nextSession);
       }
@@ -465,7 +521,7 @@ export default function StateMachinePage() {
       });
 
       nextSession = resolvedBootstrap.session;
-      if (resolvedBootstrap.interceptRoute) {
+      if (bootstrap.memoryMode === 'normal' && resolvedBootstrap.interceptRoute) {
         await saveSession(nextSession);
       }
       if (cancelled) return;
@@ -475,7 +531,9 @@ export default function StateMachinePage() {
 
       await hydrateSessionState(nextSession);
       if (cancelled) return;
-      await refreshRooms();
+      if (bootstrap.memoryMode === 'normal') {
+        await refreshRooms();
+      }
     }
 
     void load();
@@ -500,6 +558,10 @@ export default function StateMachinePage() {
   }, [isCompactViewport, session?.uiRoute]);
 
   const persistSessionWithRooms = useCallback(async (nextSession: AppSession) => {
+    if (memoryModeRef.current === 'read_only_degraded') {
+      setAiOfflineNotice('Memory may be partially incompatible. Operating in View-Only mode. Resetting database is recommended only as a last resort.');
+      return;
+    }
     await saveSession(nextSession);
     const workspace = await refreshRooms();
     setRooms(workspace.rooms);
@@ -542,6 +604,7 @@ export default function StateMachinePage() {
   useEffect(() => {
     if (!session) return;
     if (isReentryLoading) return;
+    if (isAiOfflineManualMode(aiHealth) || memoryModeRef.current === 'read_only_degraded') return;
     if (session.uiRoute !== 'BOUNCE_BACK' && session.uiRoute !== 'MORNING_RITUAL') return;
     if (!hasResumableTask(session.task)) return;
     const existingBrief = session.task?.reentryBrief;
@@ -553,7 +616,7 @@ export default function StateMachinePage() {
     // We intentionally key this effect off task/session state instead of the helper identity
     // so dev-time HMR does not trip over callback reinitialization for reentry loading.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentActionState, isReentryLoading, session, session?.lastActive, session?.task?.id, session?.task?.reentryBrief?.createdAt, session?.uiRoute]);
+  }, [aiHealth, currentActionState, isReentryLoading, session, session?.lastActive, session?.task?.id, session?.task?.reentryBrief?.createdAt, session?.uiRoute]);
 
   useEffect(() => {
     if (!session?.task?.reentryBrief) return;
@@ -641,6 +704,10 @@ export default function StateMachinePage() {
       reentryUnderstoodRef.current = null;
       previousUiRouteRef.current = null;
     },
+    readOnly: memoryMode === 'read_only_degraded',
+    onReadOnlyBlocked: () => {
+      setAiOfflineNotice('Memory may be partially incompatible. Operating in View-Only mode. Resetting database is recommended only as a last resort.');
+    },
   });
 
   useEffect(() => {
@@ -667,6 +734,8 @@ export default function StateMachinePage() {
 
   if (!session) return null;
 
+  const aiOfflineManualMode = isAiOfflineManualMode(aiHealth);
+  const readOnlyMemory = memoryMode === 'read_only_degraded';
   const studioSnapshot = buildStudioSnapshot(session.task, currentActionState, currentPayload);
   const studioIntents = getStudioIntents(session, currentActionState, currentPayload);
   const isFocusMode = uiViewMode === 'FOCUS';
@@ -717,14 +786,140 @@ export default function StateMachinePage() {
     },
   ].filter((section) => section.items.length > 0);
 
+  const handleDumpSubmission = async (submission: RoomSubmission) => {
+    if (readOnlyMemory) {
+      setAiOfflineNotice('Memory may be partially incompatible. Operating in View-Only mode. Resetting database is recommended only as a last resort.');
+      return;
+    }
+
+    if (!aiOfflineManualMode) {
+      await controller.handleDump(submission);
+      return;
+    }
+
+    const base = sessionRef.current ?? session;
+    const createdAt = Date.now();
+    const sourcePreference = createAutoRoomSourcePreference(submission.sourceFiles, createdAt);
+    const preferredSourceContext = buildPreferredRoomSourceContext(
+      submission.text || submission.sourceText,
+      submission.sourceFiles,
+      sourcePreference,
+    );
+    const task = createTaskContext({
+      roomId: base.roomId,
+      sourceText: preferredSourceContext.sourceText || submission.sourceText,
+      sourceFiles: submission.sourceFiles,
+      sourcePreference,
+      extractedText: preferredSourceContext.extractedText || (sourcePreference ? submission.extractedText : ''),
+      createdAt,
+      lifecycleState: 'dumped',
+      lastAttemptAt: createdAt,
+      blockerSignals: [],
+    });
+    task.blockerSignals = deriveRoomBlockers(task);
+
+    const nextSession = normalizeSession({
+      ...base,
+      uiRoute: 'DUMP_ENTRY',
+      status: 'DUMP_ENTRY',
+      task,
+      activeDumpContext: {
+        text: task.sourceText,
+        createdAt,
+        lastAttemptAt: createdAt,
+      },
+      currentPayload: undefined,
+      currentActionId: null,
+      lastFailureReason: 'service_down',
+    });
+
+    sessionRef.current = nextSession;
+    setSession(nextSession);
+    setCurrentPayload(null);
+    setCurrentActionState(null);
+    setCurrentWhyThisNow('');
+    setCurrentRescueState(null);
+    setAiOfflineNotice(AI_OFFLINE_MANUAL_COPY);
+    trackEvent('task_opened', {
+      room_id: nextSession.roomId,
+      room_title: nextSession.roomTitle,
+      ui_route: nextSession.uiRoute,
+      assistant_mode: nextSession.task?.assistantMode,
+      outcome_label: 'manual_mode_dump_saved',
+    });
+    await persistSessionWithRooms(nextSession);
+  };
+
+  const handleFileExtractionComplete = async (submission: RoomSubmission) => {
+    if (readOnlyMemory) return;
+    const baseSession = sessionRef.current ?? session;
+    if (!baseSession.task) return;
+
+    const incomingById = new Map(submission.sourceFiles.map((file) => [file.id, file]));
+    const hasMatchingFile = baseSession.task.sourceFiles.some((file) => incomingById.has(file.id));
+    if (!hasMatchingFile) return;
+
+    const now = Date.now();
+    const nextSourceFiles = baseSession.task.sourceFiles.map((file) => incomingById.get(file.id) ?? file);
+    const existingPrimaryReady = baseSession.task.sourcePreference?.primarySourceId
+      ? nextSourceFiles.some((file) => file.status === 'ready' && getRoomSourceIdForFile(file) === baseSession.task?.sourcePreference?.primarySourceId)
+      : false;
+    const sourcePreference = existingPrimaryReady
+      ? baseSession.task.sourcePreference
+      : createAutoRoomSourcePreference(nextSourceFiles, now);
+    const preferredContext = buildPreferredRoomSourceContext(
+      stripRoomFileContext(baseSession.task.sourceText),
+      nextSourceFiles,
+      sourcePreference,
+    );
+    const taskWithContext = {
+      ...baseSession.task,
+      sourceFiles: nextSourceFiles,
+      sourcePreference,
+      extractedText: preferredContext.extractedText,
+      sourceText: preferredContext.sourceText,
+      lastAttemptAt: now,
+    };
+    const nextTask = {
+      ...taskWithContext,
+      blockerSignals: deriveRoomBlockers({
+        ...taskWithContext,
+        blockerSignals: taskWithContext.blockerSignals.filter((blocker) => blocker !== 'missing_file_or_context'),
+      }),
+    };
+    const nextSession = normalizeSession({
+      ...baseSession,
+      task: nextTask,
+      activeDumpContext: {
+        text: preferredContext.sourceText,
+        createdAt: baseSession.task.createdAt,
+        lastAttemptAt: now,
+        lastFailureReason: baseSession.task.lastFailureReason,
+      },
+    });
+
+    sessionRef.current = nextSession;
+    setSession(nextSession);
+    await persistSessionWithRooms(nextSession);
+  };
+
   const handleEditCurrentContext = async () => {
+    if (readOnlyMemory) {
+      setAiOfflineNotice('Memory may be partially incompatible. Operating in View-Only mode. Resetting database is recommended only as a last resort.');
+      return;
+    }
     await controller.openDumpWithCurrentContext();
   };
 
   const handleDeleteRoomSources = async (deleteTokens: string[]) => {
+    if (readOnlyMemory) {
+      setAiOfflineNotice('Memory may be partially incompatible. Operating in View-Only mode. Resetting database is recommended only as a last resort.');
+      return;
+    }
     const baseSession = sessionRef.current ?? session;
     if (!baseSession.task) return;
     const tokenSet = new Set(deleteTokens);
+    const roomId = baseSession.task.roomId ?? baseSession.roomId ?? baseSession.task.id;
     const removeManualText = tokenSet.has(`manual:${baseSession.task.id}`);
     const nextPendingInputs = baseSession.task.pendingInputs.filter((item, index) => (
       !tokenSet.has(`pending:${item.kind}:${index}`)
@@ -767,6 +962,12 @@ export default function StateMachinePage() {
     sessionRef.current = nextSession;
     setSession(nextSession);
     await persistSessionWithRooms(nextSession);
+    await Promise.all(deleteTokens.map((token) => markRoomMemoryRefDeleted({
+      roomId,
+      refId: token,
+      reason: 'user_deleted_source',
+      summary: 'Source was removed from this room by the user',
+    }).catch(() => undefined)));
   };
 
   const handleStudioIntent = async (intent: StudioIntent) => {
@@ -787,12 +988,34 @@ export default function StateMachinePage() {
       return;
     }
 
+    if (readOnlyMemory) {
+      setAiOfflineNotice('Memory may be partially incompatible. Operating in View-Only mode. Resetting database is recommended only as a last resort.');
+      trackEvent('studio_intent_blocked', {
+        ...baseProperties,
+        blockedReason: 'read_only_degraded_memory',
+      });
+      return;
+    }
+
+    if (aiOfflineManualMode && intent.id !== 'review_status') {
+      setAiOfflineNotice(AI_OFFLINE_MANUAL_COPY);
+      trackEvent('studio_intent_blocked', {
+        ...baseProperties,
+        blockedReason: 'ai_offline_manual_mode',
+      });
+      return;
+    }
+
     trackEvent('studio_intent_clicked', baseProperties);
     setActiveStudioIntent(intent.id);
 
     try {
       switch (intent.id) {
         case 'review_status': {
+          if (aiOfflineManualMode) {
+            setAiOfflineNotice(AI_OFFLINE_MANUAL_COPY);
+            break;
+          }
           if (session.task && hasResumableTask(session.task) && !hasFreshReentryBrief(session.task, session.lastActive)) {
             await controller.loadReentryBrief('bounce_back');
           }
@@ -833,8 +1056,8 @@ export default function StateMachinePage() {
     const nextSourceFiles = baseSession.task.sourceFiles.map((file) => (
       file.id === fileId
         ? {
-            ...file,
-            status: 'failed' as const,
+          ...file,
+            status: 'failed_extraction' as const,
             failureReason: failureReason ?? file.failureReason ?? 'file_extraction_unavailable',
             failureDetail,
             failureStage: file.failureStage ?? 'unknown',
@@ -876,9 +1099,13 @@ export default function StateMachinePage() {
   };
 
   const handleRetrySourceFile = async (fileId: string) => {
+    if (readOnlyMemory) {
+      setAiOfflineNotice('Memory may be partially incompatible. Operating in View-Only mode. Resetting database is recommended only as a last resort.');
+      return;
+    }
     const baseSession = sessionRef.current ?? session;
     const targetFile = baseSession.task?.sourceFiles.find((file) => file.id === fileId);
-    if (!baseSession.task || !targetFile) return;
+    if (!baseSession.task || !targetFile || targetFile.status === 'pending') return;
 
     setRetryingFileId(fileId);
     trackEvent('room_file_retry_started', {
@@ -923,7 +1150,11 @@ export default function StateMachinePage() {
       const now = Date.now();
       const nextSourceFiles: RoomSourceFile[] = latestSession.task.sourceFiles.map((fileItem) => {
         if (fileItem.id !== fileId) return fileItem;
-        const nextStatus = extractedFile.status ?? 'failed';
+        const nextStatus = extractedFile.status === 'failed'
+          ? extractedFile.failureReason === 'pdf_text_garbled_after_ocr' || extractedFile.failureReason === 'pdf_text_layer_garbled'
+            ? 'unreadable'
+            : 'failed_extraction'
+          : extractedFile.status ?? 'failed_extraction';
         return {
           ...fileItem,
           ...extractedFile,
@@ -1015,6 +1246,10 @@ export default function StateMachinePage() {
   };
 
   const handleSelectPrimarySourceFile = async (fileId: string) => {
+    if (readOnlyMemory) {
+      setAiOfflineNotice('Memory may be partially incompatible. Operating in View-Only mode. Resetting database is recommended only as a last resort.');
+      return;
+    }
     const baseSession = sessionRef.current ?? session;
     if (!baseSession.task) return;
     const targetFile = baseSession.task.sourceFiles.find((file) => file.id === fileId);
@@ -1091,6 +1326,12 @@ export default function StateMachinePage() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
+  const blockAiAction = () => {
+    setAiOfflineNotice(readOnlyMemory
+      ? 'Memory may be partially incompatible. Operating in View-Only mode. Resetting database is recommended only as a last resort.'
+      : AI_OFFLINE_MANUAL_COPY);
+  };
+
   const renderState = () => {
     switch (session.uiRoute) {
       case 'MORNING_RITUAL':
@@ -1099,9 +1340,13 @@ export default function StateMachinePage() {
             reentryBrief={session.task?.reentryBrief}
             snapshot={studioSnapshot}
             loading={isReentryLoading}
-            onResumeSuggested={session.task?.reentryBrief ? controller.resumeFromSuggestedReentry : undefined}
+            onResumeSuggested={session.task?.reentryBrief ? (aiActionsBlocked ? blockAiAction : controller.resumeFromSuggestedReentry) : undefined}
             onResumeCheckpoint={hasResumableTask(session.task)
               ? async () => {
+                  if (aiActionsBlocked) {
+                    blockAiAction();
+                    return;
+                  }
                   trackEvent('morning_ritual_reentry_checkpoint');
                   await controller.resumeTaskFromRoute(controller.deriveResumeRoute());
                 }
@@ -1126,12 +1371,20 @@ export default function StateMachinePage() {
             reentryBrief={session.task?.reentryBrief}
             snapshot={studioSnapshot}
             loading={isReentryLoading}
-            onUseSuggested={session.task?.reentryBrief ? controller.resumeFromSuggestedReentry : undefined}
+            onUseSuggested={session.task?.reentryBrief ? (aiActionsBlocked ? blockAiAction : controller.resumeFromSuggestedReentry) : undefined}
             onContinue={async () => {
+              if (aiActionsBlocked) {
+                blockAiAction();
+                return;
+              }
               trackEvent('bounce_back_resumed');
               await controller.resumeTaskFromRoute(controller.deriveResumeRoute());
             }}
             onStartFresh={async () => {
+              if (readOnlyMemory) {
+                blockAiAction();
+                return;
+              }
               await controller.resumeTaskFromRoute('DUMP_ENTRY');
             }}
             onEditContext={studioSnapshot ? handleEditCurrentContext : undefined}
@@ -1152,12 +1405,15 @@ export default function StateMachinePage() {
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <BrainDumpInput
-              onNext={controller.handleDump}
+              onNext={handleDumpSubmission}
+              onFileExtractionComplete={handleFileExtractionComplete}
               initialText={session.activeDumpContext?.text}
               presentationMode={presentationMode}
               defaultScenarioId={demoScenarioId}
               focusMode={isFocusMode}
               roomId={session.roomId}
+              disabled={readOnlyMemory}
+              disabledReason="View-Only mode"
             />
             {showResetBanner && (
               <div
@@ -1201,11 +1457,11 @@ export default function StateMachinePage() {
             constraints={session.task?.constraints}
             plan={session.task?.currentPlan}
             negotiationLoading={isNegotiatingAction}
-            onMarkAdjusted={controller.handleOneActionAdjustmentTouched}
-            onNegotiate={controller.handleActionNegotiation}
-            onAccept={controller.handleAcceptAction}
-            onReject={controller.handleRejectAction}
-            onNotLikeThis={controller.handleEnterRescue}
+            onMarkAdjusted={readOnlyMemory ? blockAiAction : controller.handleOneActionAdjustmentTouched}
+            onNegotiate={aiActionsBlocked ? blockAiAction : controller.handleActionNegotiation}
+            onAccept={aiActionsBlocked ? blockAiAction : controller.handleAcceptAction}
+            onReject={aiActionsBlocked ? blockAiAction : controller.handleRejectAction}
+            onNotLikeThis={aiActionsBlocked ? blockAiAction : controller.handleEnterRescue}
             focusMode={isFocusMode}
           />
         );
@@ -1234,12 +1490,12 @@ export default function StateMachinePage() {
             successSignal={session.task?.currentPlan?.successSignal}
             refineLoading={isScaffoldRefining}
             refineFeedback={scaffoldRefineFeedback}
-            onRescue={controller.handleEnterRescue}
-            onMakeSmaller={controller.handleMakeSmaller}
-            onComplete={controller.handleCompleteScaffold}
-            onEditStep={controller.handleEditCurrentPlanStep}
+            onRescue={aiActionsBlocked ? blockAiAction : controller.handleEnterRescue}
+            onMakeSmaller={aiActionsBlocked ? blockAiAction : controller.handleMakeSmaller}
+            onComplete={readOnlyMemory ? blockAiAction : controller.handleCompleteScaffold}
+            onEditStep={readOnlyMemory ? undefined : controller.handleEditCurrentPlanStep}
             onBackToSteps={controller.handleReturnToScaffoldSteps}
-            onStartNew={controller.handleStartNewFromCompletedScaffold}
+            onStartNew={readOnlyMemory ? blockAiAction : controller.handleStartNewFromCompletedScaffold}
             focusMode={isFocusMode}
           />
         );
@@ -1251,8 +1507,8 @@ export default function StateMachinePage() {
             rescueState={currentRescueState}
             refineLoading={isScaffoldRefining}
             refineFeedback={scaffoldRefineFeedback}
-            onMakeSmaller={controller.handleMakeSmaller}
-            onWalkAway={controller.handleWalkAwayFromRescue}
+            onMakeSmaller={aiActionsBlocked ? blockAiAction : controller.handleMakeSmaller}
+            onWalkAway={readOnlyMemory ? blockAiAction : controller.handleWalkAwayFromRescue}
             focusMode={isFocusMode}
           />
         );
@@ -1265,7 +1521,7 @@ export default function StateMachinePage() {
             onManualContinue={() => undefined}
             lastFailureReason={session.task?.lastFailureReason ?? session.lastFailureReason}
             suggestedActions={manualFallbackSuggestedActions.length > 0 ? manualFallbackSuggestedActions : aiHealth.actions}
-            retryable={manualFallbackRetryable}
+            retryable={manualFallbackRetryable && !aiOfflineManualMode && !readOnlyMemory}
             focusMode={isFocusMode}
           />
         );
@@ -1281,6 +1537,7 @@ export default function StateMachinePage() {
   const showPinButton = ['ONE_ACTION', 'SCAFFOLD'].includes(session.uiRoute) && !!currentActionState;
   const isPinned = currentActionState?.isPinned ?? false;
   const pinDisabled = !isPinned && pinnedCountLocal >= 3;
+  const aiActionsBlocked = aiOfflineManualMode || readOnlyMemory;
   const utilityButtonLabel = showUtilityMenu ? 'ซ่อนเครื่องมือ' : 'เครื่องมือ';
 
   const handleSelectRoomFromShell = async (roomId: string) => {
@@ -1455,6 +1712,37 @@ export default function StateMachinePage() {
           </div>
         )}
 
+        {readOnlyMemory && (
+          <div className="mind-inline-note" role="status" style={{ margin: '0.75rem 1rem 0' }}>
+            <p style={{ margin: 0, fontSize: '0.86rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+              Memory may be partially incompatible. Operating in View-Only mode. Resetting database is recommended only as a last resort.
+              {' '}({memoryDegradationCopy(memoryDegradationReason)})
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowTrust(true)}
+              style={{ background: 'transparent', fontSize: '0.8rem', padding: '0.2rem 0.4rem', color: 'var(--text-secondary)' }}
+            >
+              เปิดข้อมูลและ reset
+            </button>
+          </div>
+        )}
+
+        {aiOfflineNotice && (
+          <div className="mind-inline-note" role="status" style={{ margin: '0.75rem 1rem 0' }}>
+            <p style={{ margin: 0, fontSize: '0.86rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+              {aiOfflineNotice}
+            </p>
+            <button
+              type="button"
+              onClick={() => setAiOfflineNotice(null)}
+              style={{ background: 'transparent', fontSize: '0.8rem', padding: '0.2rem 0.4rem', color: 'var(--text-secondary)' }}
+            >
+              ซ่อน
+            </button>
+          </div>
+        )}
+
         {pinDisabled && showPinButton && (
           <p className="mind-shell-pin-note">ปักหมุดได้สูงสุด 3 รายการ</p>
         )}
@@ -1493,8 +1781,8 @@ export default function StateMachinePage() {
                   room={activeRoom}
                   onContinue={handleContinueFromRoomCard}
                   onMakeSmaller={handleMakeSmallerFromRoomCard}
-                  continueDisabled={!roomCardCanContinue}
-                  makeSmallerDisabled={!roomCardCanMakeSmaller}
+                  continueDisabled={!roomCardCanContinue || aiActionsBlocked}
+                  makeSmallerDisabled={!roomCardCanMakeSmaller || aiActionsBlocked}
                   focusMode={isFocusMode}
                 />
               )}

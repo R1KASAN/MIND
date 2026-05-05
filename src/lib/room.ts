@@ -1,7 +1,7 @@
 export type RoomFileKind = 'text' | 'pdf' | 'image' | 'table' | 'other';
-export type RoomFileStatus = 'ready' | 'failed' | 'unsupported';
-export type RoomFileFailureStage = 'pdf_text_layer' | 'pdf_ocr' | 'image_ocr' | 'text_read' | 'unknown';
-export type RoomFileUxState = 'ocr_failed' | 'ocr_garbled' | 'ready';
+export type RoomFileStatus = 'pending' | 'ready' | 'unreadable' | 'failed_extraction' | 'unsupported' | 'failed';
+export type RoomFileFailureStage = 'pending' | 'pdf_text_layer' | 'pdf_ocr' | 'image_ocr' | 'text_read' | 'route' | 'unknown';
+export type RoomFileUxState = 'pending' | 'ocr_failed' | 'ocr_garbled' | 'ready';
 export type RoomSourcePreferenceSelectedBy = 'auto' | 'user';
 
 export interface RoomFileOcrMetrics {
@@ -64,6 +64,14 @@ export interface RoomSubmission {
 }
 
 export const ROOM_FILE_UX_COPY: Record<RoomFileUxState, RoomFileUxCopy> = {
+  pending: {
+    state: 'pending',
+    title: 'กำลังอ่านไฟล์แนบ',
+    body: 'ไฟล์ถูกแนบเข้าห้องแล้ว MIND กำลังอ่านเนื้อหาอยู่เบื้องหลัง',
+    cta: 'กำลังอ่าน',
+    detail: 'ไฟล์นี้ถูกเก็บเป็น metadata และ blob ในเครื่องก่อน แล้วจะเติมข้อความเมื่อ extraction สำเร็จ',
+    reasonLabel: 'กำลังอ่านไฟล์แนบ',
+  },
   ocr_failed: {
     state: 'ocr_failed',
     title: 'ไฟล์แนบอ่านไม่สำเร็จ',
@@ -94,6 +102,9 @@ export function getRoomFileUxCopy(fileOrReason?: Pick<RoomSourceFile, 'status' |
   const status = typeof fileOrReason === 'object' && fileOrReason ? fileOrReason.status : undefined;
 
   if (status === 'ready') return ROOM_FILE_UX_COPY.ready;
+  if (status === 'pending') return ROOM_FILE_UX_COPY.pending;
+  if (status === 'unreadable') return ROOM_FILE_UX_COPY.ocr_garbled;
+  if (status === 'failed_extraction') return ROOM_FILE_UX_COPY.ocr_failed;
 
   switch (failureReason) {
     case 'pdf_text_garbled_after_ocr':
@@ -125,6 +136,32 @@ export function describeRoomFileFailureReason(failureReason?: string): string | 
   }
   const copy = getRoomFileUxCopy(failureReason);
   return copy.reasonLabel ?? copy.title;
+}
+
+function normalizeRoomFileStatus(status: unknown, failureReason?: string): RoomFileStatus {
+  if (
+    status === 'pending' ||
+    status === 'ready' ||
+    status === 'unreadable' ||
+    status === 'failed_extraction' ||
+    status === 'unsupported'
+  ) {
+    return status;
+  }
+
+  if (status === 'failed') {
+    return failureReason === 'pdf_text_garbled_after_ocr' || failureReason === 'pdf_text_layer_garbled'
+      ? 'unreadable'
+      : 'failed_extraction';
+  }
+
+  if (failureReason) {
+    return failureReason === 'pdf_text_garbled_after_ocr' || failureReason === 'pdf_text_layer_garbled'
+      ? 'unreadable'
+      : 'failed_extraction';
+  }
+
+  return 'ready';
 }
 
 export function inferRoomFileKind(name: string, mimeType: string): RoomFileKind {
@@ -164,9 +201,13 @@ export function summarizeRoomFile(file: RoomSourceFile): string {
   const statusLabel =
     file.status === 'ready'
       ? 'ready'
-      : file.status === 'failed'
-        ? 'failed'
-        : 'unsupported';
+      : file.status === 'pending'
+        ? 'pending'
+        : file.status === 'unreadable'
+          ? 'unreadable'
+          : file.status === 'failed_extraction' || file.status === 'failed'
+            ? 'failed_extraction'
+            : 'unsupported';
   const parts = [
     file.name,
     file.kind,
@@ -250,10 +291,12 @@ export function normalizeRoomSourceFile(value: unknown): RoomSourceFile | undefi
   const failureReason = typeof record.failureReason === 'string' && record.failureReason.trim() ? record.failureReason.trim() : undefined;
   const failureDetail = typeof record.failureDetail === 'string' && record.failureDetail.trim() ? record.failureDetail.trim() : undefined;
   const failureStage =
+    record.failureStage === 'pending' ||
     record.failureStage === 'pdf_text_layer' ||
     record.failureStage === 'pdf_ocr' ||
     record.failureStage === 'image_ocr' ||
     record.failureStage === 'text_read' ||
+    record.failureStage === 'route' ||
     record.failureStage === 'unknown'
       ? record.failureStage
       : undefined;
@@ -276,14 +319,7 @@ export function normalizeRoomSourceFile(value: unknown): RoomSourceFile | undefi
       ? record.kind
       : inferredKind;
 
-  const status =
-    record.status === 'ready' ||
-    record.status === 'failed' ||
-    record.status === 'unsupported'
-      ? record.status
-      : failureReason
-        ? 'failed'
-        : 'ready';
+  const status = normalizeRoomFileStatus(record.status, failureReason);
 
   return {
     id,

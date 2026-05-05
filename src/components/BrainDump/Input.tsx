@@ -13,12 +13,15 @@ import { createRoomFileStorageKey, saveRoomFileBlob } from '@/lib/store/idb';
 
 interface Props {
   onNext: (dump: RoomSubmission) => void | Promise<void>;
+  onFileExtractionComplete?: (dump: RoomSubmission) => void | Promise<void>;
   initialText?: string;
   studioPanel?: ReactNode;
   presentationMode?: boolean;
   defaultScenarioId?: DemoScenarioId;
   focusMode?: boolean;
   roomId?: string;
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
 type DemoScenarioId = 'client_project_restart' | 'sales_inquiry_demo_request';
@@ -52,12 +55,15 @@ const ADVANCED_SCENARIO: DemoScenario = {
 
 export function BrainDumpInput({
   onNext,
+  onFileExtractionComplete,
   initialText,
   studioPanel,
   presentationMode = false,
   defaultScenarioId = 'client_project_restart',
   focusMode = true,
   roomId,
+  disabled = false,
+  disabledReason,
 }: Props) {
   const [val, setVal] = useState(() => initialText ?? '');
   const [files, setFiles] = useState<File[]>([]);
@@ -121,7 +127,7 @@ export function BrainDumpInput({
   };
 
   const hasFiles = files.length > 0;
-  const canSubmit = !isSubmitting && (val.trim().length > 0 || hasFiles);
+  const canSubmit = !disabled && !isSubmitting && (val.trim().length > 0 || hasFiles);
 
   const applyScenario = (scenario: DemoScenario) => {
     setActiveScenarioId(scenario.id);
@@ -130,21 +136,23 @@ export function BrainDumpInput({
   };
 
   const buildFallbackSubmission = (
+    fileSnapshot: File[] = files,
     storageKeys: Array<string | undefined> = [],
     failureDetail?: string,
+    pendingFiles: RoomSourceFile[] = [],
   ): RoomSubmission => {
     const now = Date.now();
-    const sourceFiles: RoomSourceFile[] = files.map((file, index) => ({
-      id: `${Date.now()}-${file.name}`,
+    const sourceFiles: RoomSourceFile[] = fileSnapshot.map((file, index) => ({
+      id: pendingFiles[index]?.id ?? `${now}-${file.name}`,
       name: file.name,
       kind: inferRoomFileKind(file.name, file.type),
       mimeType: file.type || 'application/octet-stream',
       size: file.size,
-      status: 'failed',
+      status: 'failed_extraction',
       createdAt: now,
       failureReason: 'file_extraction_unavailable',
       failureDetail,
-      failureStage: 'unknown',
+      failureStage: 'route',
       storageKey: storageKeys[index],
       lastExtractAttemptAt: now,
       extractAttemptCount: 1,
@@ -159,8 +167,36 @@ export function BrainDumpInput({
     };
   };
 
+  const buildPendingSubmission = (
+    textSnapshot: string,
+    fileSnapshot: File[],
+    storageKeys: Array<string | undefined> = [],
+  ): RoomSubmission => {
+    const now = Date.now();
+    const sourceFiles: RoomSourceFile[] = fileSnapshot.map((file, index) => ({
+      id: `${now}-${index}-${file.name}`,
+      name: file.name,
+      kind: inferRoomFileKind(file.name, file.type),
+      mimeType: file.type || 'application/octet-stream',
+      size: file.size,
+      status: 'pending',
+      createdAt: now,
+      failureReason: 'file_extraction_pending',
+      failureStage: 'pending',
+      storageKey: storageKeys[index],
+      lastExtractAttemptAt: now,
+      extractAttemptCount: 0,
+    }));
+    return {
+      text: textSnapshot,
+      sourceText: composeRoomSourceText(textSnapshot, '', sourceFiles),
+      extractedText: '',
+      sourceFiles,
+    };
+  };
+
   const buildExtractionWarning = (sourceFiles: RoomSourceFile[]) => {
-    const failedFiles = sourceFiles.filter((file) => file.status === 'failed');
+    const failedFiles = sourceFiles.filter((file) => file.status !== 'ready');
     if (failedFiles.length === 0) return null;
     if (failedFiles.length === 1) {
       const file = failedFiles[0];
@@ -204,25 +240,34 @@ export function BrainDumpInput({
   };
 
   const attachRetryMetadata = (
+    fileSnapshot: File[],
     extractedFiles: unknown[],
     storageKeys: Array<string | undefined>,
+    pendingFiles: RoomSourceFile[] = [],
   ): RoomSourceFile[] => {
     const now = Date.now();
-    return files.map((file, index) => {
+    return fileSnapshot.map((file, index) => {
       const extracted = extractedFiles[index] as Partial<RoomSourceFile> | undefined;
+      const pending = pendingFiles[index];
+      const failureReason = extracted?.failureReason;
+      const extractedStatus = extracted?.status === 'failed'
+        ? failureReason === 'pdf_text_garbled_after_ocr' || failureReason === 'pdf_text_layer_garbled'
+          ? 'unreadable'
+          : 'failed_extraction'
+        : extracted?.status;
       return {
-        id: extracted?.id || `${now}-${file.name}`,
+        id: pending?.id || extracted?.id || `${now}-${file.name}`,
         name: extracted?.name || file.name,
         kind: extracted?.kind || inferRoomFileKind(file.name, file.type),
         mimeType: extracted?.mimeType || file.type || 'application/octet-stream',
         size: typeof extracted?.size === 'number' ? extracted.size : file.size,
-        status: extracted?.status || 'failed',
+        status: extractedStatus || 'failed_extraction',
         createdAt: typeof extracted?.createdAt === 'number' ? extracted.createdAt : now,
         extractedText: extracted?.extractedText,
-        failureReason: extracted?.failureReason,
+        failureReason,
         failureDetail: extracted?.failureDetail,
         failureStage: extracted?.failureStage,
-        storageKey: extracted?.storageKey || storageKeys[index],
+        storageKey: extracted?.storageKey || pending?.storageKey || storageKeys[index],
         lastExtractAttemptAt: extracted?.lastExtractAttemptAt ?? now,
         extractAttemptCount: extracted?.extractAttemptCount ?? 1,
         ocrEngine: extracted?.ocrEngine,
@@ -231,8 +276,57 @@ export function BrainDumpInput({
     });
   };
 
+  const runBackgroundExtraction = async (
+    textSnapshot: string,
+    fileSnapshot: File[],
+    pendingFiles: RoomSourceFile[],
+    storageKeys: Array<string | undefined>,
+  ) => {
+    try {
+      const formData = new FormData();
+      formData.append('text', textSnapshot);
+      fileSnapshot.forEach((file) => formData.append('files', file, file.name));
+
+      const response = await fetch('/api/file-room/extract', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.ok) {
+        throw new Error(data?.error?.message || `extract_failed_${response.status}`);
+      }
+
+      const sourceFiles = attachRetryMetadata(
+        fileSnapshot,
+        Array.isArray(data.sourceFiles) ? data.sourceFiles : [],
+        storageKeys,
+        pendingFiles,
+      );
+      const extractedText = sourceFiles
+        .map((file) => file.status === 'ready' ? file.extractedText?.trim() : undefined)
+        .filter((value): value is string => Boolean(value))
+        .join('\n\n');
+      const submission: RoomSubmission = {
+        text: typeof data.text === 'string' ? data.text : textSnapshot,
+        sourceText: composeRoomSourceText(textSnapshot, extractedText, sourceFiles),
+        extractedText,
+        sourceFiles,
+      };
+      trackSourceFileExtracts(submission.sourceFiles);
+      setUploadError(buildExtractionWarning(submission.sourceFiles));
+      await onFileExtractionComplete?.(submission);
+    } catch (error) {
+      const failureDetail = error instanceof Error ? error.message : 'extract_request_failed';
+      const fallbackSubmission = buildFallbackSubmission(fileSnapshot, storageKeys, failureDetail, pendingFiles);
+      setUploadError('ไฟล์แนบยังสกัดไม่ได้ MIND จะใช้ข้อความที่มีอยู่ต่อให้ก่อน');
+      trackSourceFileExtracts(fallbackSubmission.sourceFiles);
+      await onFileExtractionComplete?.(fallbackSubmission);
+    }
+  };
+
   const submit = async () => {
-    if (submitLockRef.current || isSubmitting || (!val.trim() && files.length === 0)) return;
+    if (disabled || submitLockRef.current || isSubmitting || (!val.trim() && files.length === 0)) return;
     submitLockRef.current = true;
     setIsSubmitting(true);
     setUploadError(null);
@@ -240,39 +334,17 @@ export function BrainDumpInput({
 
     try {
       let submission: RoomSubmission;
+      const textSnapshot = val;
+      const fileSnapshot = [...files];
 
-      if (files.length > 0) {
+      if (fileSnapshot.length > 0) {
         savedStorageKeys = await saveFilesForRetry();
-        const formData = new FormData();
-        formData.append('text', val);
-        files.forEach((file) => formData.append('files', file, file.name));
-
-        const response = await fetch('/api/file-room/extract', {
-          method: 'POST',
-          body: formData,
-        });
-
-        const data = await response.json().catch(() => null);
-        if (!response.ok || !data?.ok) {
-          throw new Error(data?.error?.message || `extract_failed_${response.status}`);
-        }
-
-        submission = {
-          text: typeof data.text === 'string' ? data.text : val,
-          sourceText: typeof data.sourceText === 'string' ? data.sourceText : val,
-          extractedText: typeof data.extractedText === 'string' ? data.extractedText : '',
-          sourceFiles: attachRetryMetadata(
-            Array.isArray(data.sourceFiles) ? data.sourceFiles : [],
-            savedStorageKeys,
-          ),
-        };
-        submission.sourceText = composeRoomSourceText(submission.text, submission.extractedText, submission.sourceFiles);
-        trackSourceFileExtracts(submission.sourceFiles);
+        submission = buildPendingSubmission(textSnapshot, fileSnapshot, savedStorageKeys);
         setUploadError(buildExtractionWarning(submission.sourceFiles));
       } else {
         submission = {
-          text: val,
-          sourceText: val.trim(),
+          text: textSnapshot,
+          sourceText: textSnapshot.trim(),
           extractedText: '',
           sourceFiles: [],
         };
@@ -284,9 +356,13 @@ export function BrainDumpInput({
       setVal('');
       setFiles([]);
       if (fileInputRef.current) fileInputRef.current.value = '';
+
+      if (fileSnapshot.length > 0) {
+        void runBackgroundExtraction(textSnapshot, fileSnapshot, submission.sourceFiles, savedStorageKeys);
+      }
     } catch (error) {
       const failureDetail = error instanceof Error ? error.message : 'extract_request_failed';
-      const fallbackSubmission = buildFallbackSubmission(savedStorageKeys, failureDetail);
+      const fallbackSubmission = buildFallbackSubmission(files, savedStorageKeys, failureDetail);
       setUploadError('ไฟล์แนบยังสกัดไม่ได้ MIND จะใช้ข้อความที่มีอยู่ต่อให้ก่อน');
       trackSourceFileExtracts(fallbackSubmission.sourceFiles);
       trackEvent('dump_submitted');
@@ -363,6 +439,7 @@ export function BrainDumpInput({
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
+            disabled={disabled}
             style={{
               background: 'rgba(255,255,255,0.08)',
               border: '1px solid rgba(255,255,255,0.1)',
@@ -384,6 +461,7 @@ export function BrainDumpInput({
             if (event.target.files) pushFiles(event.target.files);
             event.currentTarget.value = '';
           }}
+          disabled={disabled}
         />
 
         <div style={{
@@ -415,7 +493,7 @@ export function BrainDumpInput({
             padding: '1rem 1.05rem',
           }}
           autoFocus
-          disabled={isSubmitting}
+          disabled={disabled || isSubmitting}
         />
 
         {hasFiles && (
@@ -442,7 +520,7 @@ export function BrainDumpInput({
                     {formatFileKind(file.name, file.type)} · {formatBytes(file.size)}
                   </span>
                 </div>
-                <button type="button" onClick={() => removeFileAt(index)}>
+                <button type="button" onClick={() => removeFileAt(index)} disabled={disabled}>
                   ลบ
                 </button>
               </div>
@@ -458,7 +536,7 @@ export function BrainDumpInput({
         </div>
 
         <button className="primary" onClick={submit} disabled={!canSubmit} style={{ width: '100%' }}>
-          {isSubmitting ? 'กำลังสรุป...' : 'ไปต่อ'}
+          {disabled ? disabledReason ?? 'ใช้งานไม่ได้ชั่วคราว' : isSubmitting ? 'กำลังสรุป...' : 'ไปต่อ'}
         </button>
 
         <details

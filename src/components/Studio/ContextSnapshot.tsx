@@ -37,6 +37,7 @@ export function ContextSnapshot({
         : 'มั่นใจต่ำ';
   const readyCount = snapshot.readyFiles.length;
   const issueCount = snapshot.fileIssues.length;
+  const pendingCount = snapshot.fileIssues.filter((file) => file.status === 'pending').length;
 
   return (
     <section
@@ -82,7 +83,7 @@ export function ContextSnapshot({
             <div className="studio-snapshot-status studio-snapshot-status-failed">
               <span className="studio-snapshot-status-kicker">ต้องลองใหม่</span>
               <strong>{issueCount} ไฟล์</strong>
-              <p>อ่านไม่ชัดหรือยังไม่สำเร็จ แต่ยัง retry ได้</p>
+              <p>{pendingCount > 0 ? 'บางไฟล์กำลังอ่านอยู่ ไฟล์ที่ล้มเหลวยัง retry ได้' : 'อ่านไม่ชัดหรือยังไม่สำเร็จ แต่ยัง retry ได้'}</p>
             </div>
           )}
         </div>
@@ -218,7 +219,7 @@ export function ContextSnapshot({
             <div className="studio-file-group-copy">
               <p className="studio-eyebrow" style={{ marginBottom: 0 }}>ไฟล์ที่ยังอ่านไม่สำเร็จ</p>
               <p className="studio-inline-note" style={{ margin: 0 }}>
-                MIND จะใช้ข้อความเดิมและไฟล์ที่อ่านได้ต่อไปก่อน
+                MIND จะใช้ข้อความเดิมและไฟล์ที่อ่านได้ต่อไปก่อน ไฟล์ที่กำลังอ่านจะอัปเดตเองเมื่อเสร็จ
               </p>
             </div>
             <span className="studio-chip studio-chip-danger">{issueCount} ไฟล์</span>
@@ -226,6 +227,7 @@ export function ContextSnapshot({
           <div className="studio-file-stack">
             {snapshot.fileIssues.map((file) => {
               const retrying = retryingFileId === file.id;
+              const pending = file.status === 'pending';
               return (
                 <article key={file.id} className="studio-file-row studio-file-row-failed">
                   <div className="studio-file-row-main">
@@ -243,14 +245,14 @@ export function ContextSnapshot({
                   <button
                     type="button"
                     className="studio-context-button"
-                    disabled={!onRetryFile || !file.storageKey || retrying}
+                    disabled={pending || !onRetryFile || !file.storageKey || retrying}
                     onClick={() => {
-                      if (!onRetryFile || !file.storageKey) return;
+                      if (!onRetryFile || !file.storageKey || pending) return;
                       void onRetryFile(file.id);
                     }}
-                    title={file.storageKey ? undefined : 'ไม่มีไฟล์ต้นฉบับในเครื่องสำหรับลองอ่านซ้ำ'}
+                    title={pending ? 'ไฟล์นี้กำลังถูกอ่านอยู่เบื้องหลัง' : file.storageKey ? undefined : 'ไม่มีไฟล์ต้นฉบับในเครื่องสำหรับลองอ่านซ้ำ'}
                   >
-                    {retrying ? 'กำลังลองอ่านไฟล์อีกครั้ง...' : file.copy.cta}
+                    {pending ? 'กำลังอ่านไฟล์...' : retrying ? 'กำลังลองอ่านไฟล์อีกครั้ง...' : file.copy.cta}
                   </button>
                   <p className="studio-file-row-detail">{file.copy.detail}</p>
                   {(file.failureDetail || file.failureStage || file.failureReason || file.extractAttemptCount) && (

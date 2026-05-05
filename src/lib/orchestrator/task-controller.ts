@@ -1578,12 +1578,36 @@ export function createTaskController(bindings: TaskControllerBindings) {
     bindings.setIsNegotiatingAction(false);
     bindings.setIsReentryLoading(false);
     clearScaffoldRefineState();
+
+    // Preserve completed task context so Studio still has data to display.
+    // Without this, both task and activeDumpContext are cleared and Studio
+    // shows an empty "ยังไม่มีบริบท" state even though the room has history.
+    const preservedDumpContext = completedTask?.sourceText
+      ? {
+          text: completedTask.sourceText,
+          createdAt: completedTask.createdAt,
+          lastAttemptAt: completedTask.lastAttemptAt,
+          lastFailureReason: completedTask.lastFailureReason,
+        }
+      : undefined;
+
+    const preservedTask: TaskContext | null = completedTask
+      ? {
+          ...completedTask,
+          lifecycleState: 'done',
+          assistantMode: undefined,
+          currentActionId: null,
+          currentStepIndex: 0,
+          lastFailureReason: undefined,
+        }
+      : null;
+
     await updateStatus('DUMP_ENTRY', {
       currentActionId: null,
       currentPayload: undefined,
-      activeDumpContext: undefined,
+      activeDumpContext: preservedDumpContext,
       lastFailureReason: undefined,
-    }, null);
+    }, preservedTask);
     if (completedTask) {
       trackEvent('task_completed', buildAnalyticsBase(completedTask, {
         outcome_label: 'completed_and_reset',

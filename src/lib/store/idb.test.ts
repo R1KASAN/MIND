@@ -8,8 +8,28 @@ import {
   buildRoomRecordFromSession,
   createDefaultSession,
   hydrateRoomSessionFromRecord,
+  inspectRawMemoryState,
   normalizeSession,
 } from './idb';
+
+test('inspectRawMemoryState enters read-only degraded mode on future schema mismatch', () => {
+  const result = inspectRawMemoryState({ schemaVersion: 999 });
+
+  assert.equal(result.mode, 'read_only_degraded');
+  assert.equal(result.reason, 'schema_mismatch');
+});
+
+test('inspectRawMemoryState enters read-only degraded mode on critical workspace validation failure', () => {
+  const result = inspectRawMemoryState({
+    rawWorkspace: {
+      activeRoomId: null,
+      rooms: [],
+    },
+  });
+
+  assert.equal(result.mode, 'read_only_degraded');
+  assert.equal(result.reason, 'critical_validation_failed');
+});
 
 test('normalizeSession preserves reentry brief and action explanation on task state', () => {
   const session = normalizeSession({
