@@ -254,6 +254,7 @@ async function safeAppendLiveSourceAddedEvents(
       refs: [ref],
       payload: { sourceRef: ref },
       actor: 'system',
+      intent: { kind: 'context_entered', reason: sourceOperationId, confidence: 'medium' },
       sourceOperationId,
       dedupeKey: `live:${roomId}:source_added:${ref.id}`,
     }));
@@ -267,6 +268,7 @@ function buildLiveRoomMemoryEvent(input: {
   refs?: RoomMemoryRef[];
   payload?: Record<string, unknown>;
   actor?: RoomMemoryEvent['actor'];
+  intent?: RoomMemoryEvent['intent'];
   sourceOperationId?: string;
   dedupeKey?: string;
 }): RoomMemoryEvent {
@@ -284,6 +286,7 @@ function buildLiveRoomMemoryEvent(input: {
     payloadVersion: 1,
     sourceOperationId: input.sourceOperationId,
     dedupeKey: input.dedupeKey,
+    intent: input.intent,
     payload: input.payload,
   };
 }
@@ -334,6 +337,7 @@ export async function requestIntake(task: TaskContext): Promise<AiIntakeResponse
       summary: `Current blockers: ${intake.blockers.join(', ')}`,
       refs,
       payload: { blockers: intake.blockers },
+      intent: { kind: 'ai_detected_blocker', reason: intake.blockers.join(', '), confidence: 'medium' },
       sourceOperationId: 'intake',
     }));
   }
@@ -370,6 +374,11 @@ export async function requestAction(options: {
         rationale: action.chosenAction.rationale,
         successSignal: action.chosenAction.successSignal,
       },
+    },
+    intent: {
+      kind: options.negotiation ? 'user_selected_action' : 'ai_recommended_start',
+      reason: options.negotiation?.userNote ?? action.chosenAction.rationale,
+      confidence: 'medium',
     },
     sourceOperationId: 'action',
   }));
@@ -417,6 +426,9 @@ export async function requestScaffold(
         steps: scaffold.steps,
       },
     },
+    intent: options?.strategy === 'structural_retry'
+      ? { kind: 'user_adjusted_plan', reason: 'structural_retry', confidence: 'medium' }
+      : undefined,
     sourceOperationId: 'scaffold',
   }));
   return scaffold;
@@ -490,6 +502,11 @@ export async function requestRescue(task: TaskContext, action: Action | null, cu
             createdAt: Date.now(),
           },
         },
+        intent: {
+          kind: 'ai_created_rescue',
+          reason: parsed.diagnosis.primaryReason,
+          confidence: parsed.diagnosis.primaryReason === 'unknown' ? 'low' : 'medium',
+        },
         sourceOperationId: 'rescue',
       }));
       await safeAppendLiveRoomMemoryEvent(buildLiveRoomMemoryEvent({
@@ -498,6 +515,11 @@ export async function requestRescue(task: TaskContext, action: Action | null, cu
         summary: `Current blockers: ${parsed.diagnosis.primaryReason}`,
         refs,
         payload: { blockers: [parsed.diagnosis.primaryReason] },
+        intent: {
+          kind: 'ai_detected_blocker',
+          reason: parsed.diagnosis.primaryReason,
+          confidence: parsed.diagnosis.primaryReason === 'unknown' ? 'low' : 'medium',
+        },
         sourceOperationId: 'rescue',
       }));
 
@@ -599,7 +621,9 @@ export async function requestRescue(task: TaskContext, action: Action | null, cu
             steps: fallbackRescue.rescuePlan.steps,
             createdAt: Date.now(),
           },
+          fallback: true,
         },
+        intent: { kind: 'ai_created_rescue', reason: 'unknown', confidence: 'low' },
         sourceOperationId: 'rescue:fallback',
       }));
       await safeAppendLiveRoomMemoryEvent(buildLiveRoomMemoryEvent({
@@ -608,6 +632,7 @@ export async function requestRescue(task: TaskContext, action: Action | null, cu
         summary: `Current blockers: ${fallbackRescue.diagnosis.primaryReason}`,
         refs,
         payload: { blockers: [fallbackRescue.diagnosis.primaryReason] },
+        intent: { kind: 'ai_detected_blocker', reason: fallbackRescue.diagnosis.primaryReason, confidence: 'low' },
         sourceOperationId: 'rescue:fallback',
       }));
       return fallbackRescue;
@@ -680,6 +705,15 @@ export async function requestReentry(
             roomMemoryReplay.snapshot.currentBlockers.length > 0
               ? `blockers: ${roomMemoryReplay.snapshot.currentBlockers.join(', ')}`
               : undefined,
+            roomMemoryReplay.snapshot.cognitiveState
+              ? `preferredStartFormat: ${roomMemoryReplay.snapshot.cognitiveState.preferredStartFormat}`
+              : undefined,
+            roomMemoryReplay.snapshot.cognitiveState
+              ? `lastStuckSignal: ${roomMemoryReplay.snapshot.cognitiveState.lastStuckSignal}`
+              : undefined,
+            roomMemoryReplay.snapshot.cognitiveState?.driftWarnings.length
+              ? `driftWarnings: ${roomMemoryReplay.snapshot.cognitiveState.driftWarnings.join(' | ')}`
+              : undefined,
             roomMemoryReplay.snapshot.latestRescue
               ? `latestRescue: ${roomMemoryReplay.snapshot.latestRescue.reason}`
               : undefined,
@@ -736,6 +770,7 @@ export async function requestReentry(
           createdAt: Date.now(),
         },
       },
+      intent: { kind: 'ai_created_reentry', reason: scope, confidence: 'medium' },
       sourceOperationId: 'reentry',
     }));
     return reentry;
@@ -780,7 +815,9 @@ export async function requestReentry(
           topActions: fallbackReentry.topActions,
           createdAt: Date.now(),
         },
+        fallback: true,
       },
+      intent: { kind: 'ai_created_reentry', reason: scope, confidence: 'low' },
       sourceOperationId: 'reentry:fallback',
     }));
     return fallbackReentry;

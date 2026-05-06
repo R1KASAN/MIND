@@ -21,6 +21,29 @@ export type RoomMemoryEventType =
 export type RoomMemoryActor = 'user' | 'ai' | 'system';
 export type RoomMemoryOrigin = 'live' | 'backfill' | 'repair' | 'retry' | 'import';
 export type RoomMemoryRefStatus = 'available' | 'tombstone' | 'missing';
+export type RoomMemoryIntentKind =
+  | 'context_entered'
+  | 'ai_detected_blocker'
+  | 'ai_recommended_start'
+  | 'user_selected_action'
+  | 'user_adjusted_plan'
+  | 'ai_created_rescue'
+  | 'ai_created_reentry';
+export type RoomMemoryIntentConfidence = 'low' | 'medium' | 'high';
+export type RoomMemoryStartFormat = 'bullet' | 'draft' | 'question' | 'outline' | 'direct_reply' | 'unknown';
+export type RoomMemoryStuckSignal =
+  | 'scope_unclear'
+  | 'waiting_client'
+  | 'energy_low'
+  | 'missing_context'
+  | 'too_big'
+  | 'unknown';
+
+export interface RoomMemoryIntent {
+  kind: RoomMemoryIntentKind;
+  reason?: string;
+  confidence?: RoomMemoryIntentConfidence;
+}
 
 export interface RoomMemoryRef {
   id: string;
@@ -48,6 +71,7 @@ export interface RoomMemoryEvent {
   dedupeKey?: string;
   sourceOperationId?: string;
   backfilledFrom?: string;
+  intent?: RoomMemoryIntent;
   payload?: Record<string, unknown>;
 }
 
@@ -85,6 +109,14 @@ export interface RoomMemoryReentrySnapshot {
   createdAt: number;
 }
 
+export interface RoomMemoryCognitiveState {
+  preferredStartFormat: RoomMemoryStartFormat;
+  lastStuckSignal: RoomMemoryStuckSignal;
+  commitments: string[];
+  openQuestions: string[];
+  driftWarnings: string[];
+}
+
 export interface RoomMemorySnapshot {
   roomId: string;
   currentSummary?: string;
@@ -96,6 +128,7 @@ export interface RoomMemorySnapshot {
   sourceRefs: RoomMemoryRef[];
   lastEventAt?: number;
   version: number;
+  cognitiveState?: RoomMemoryCognitiveState;
 }
 
 export interface RoomMemoryRefTombstone {
@@ -120,10 +153,26 @@ export interface RoomMemoryExport {
 }
 
 const DB_NAME = 'mind_room_memory_v1';
-export const ROOM_MEMORY_SNAPSHOT_VERSION = 1;
+export const ROOM_MEMORY_SNAPSHOT_VERSION = 2;
 const EVENT_PAYLOAD_VERSION = 1;
 const DEFAULT_REPLAY_EVENT_LIMIT = 10;
 const DEFAULT_REPLAY_REF_LIMIT = 5;
+const ROOM_MEMORY_INTENT_KINDS = new Set<RoomMemoryIntentKind>([
+  'context_entered',
+  'ai_detected_blocker',
+  'ai_recommended_start',
+  'user_selected_action',
+  'user_adjusted_plan',
+  'ai_created_rescue',
+  'ai_created_reentry',
+]);
+const DEFAULT_COGNITIVE_STATE: RoomMemoryCognitiveState = {
+  preferredStartFormat: 'unknown',
+  lastStuckSignal: 'unknown',
+  commitments: [],
+  openQuestions: [],
+  driftWarnings: [],
+};
 
 export class RoomMemoryDexie extends Dexie {
   roomEvents!: Table<RoomMemoryEvent, string>;
@@ -170,6 +219,10 @@ function uniqueById(refs: RoomMemoryRef[]) {
   return [...map.values()];
 }
 
+function uniqueStrings(values: string[]) {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
 function makeEventId(roomId: string, type: RoomMemoryEventType, createdAt: number, suffix: string) {
   return `${roomId}:${type}:${createdAt}:${suffix}`.replace(/[^a-zA-Z0-9:_-]/g, '_');
 }
@@ -182,6 +235,123 @@ function readStringArray(value: unknown) {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
     : [];
+}
+
+function readRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function readStartFormat(value: unknown): RoomMemoryStartFormat | undefined {
+  if (
+    value === 'bullet' ||
+    value === 'draft' ||
+    value === 'question' ||
+    value === 'outline' ||
+    value === 'direct_reply' ||
+    value === 'unknown'
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function readStuckSignal(value: unknown): RoomMemoryStuckSignal | undefined {
+  if (
+    value === 'scope_unclear' ||
+    value === 'waiting_client' ||
+    value === 'energy_low' ||
+    value === 'missing_context' ||
+    value === 'too_big' ||
+    value === 'unknown'
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function normalizeSignalText(value: string) {
+  return value.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function inferStartFormatFromText(value: string): RoomMemoryStartFormat | undefined {
+  const text = normalizeSignalText(value);
+  if (!text) return undefined;
+  if (/\b(bullet|bullets|list|checklist)\b/.test(text) || /ข้อ ๆ|เป็นข้อ/.test(text)) return 'bullet';
+  if (/\b(reply|email)\b/.test(text) || /ข้อความตอบ/.test(text)) return 'direct_reply';
+  if (/\b(draft)\b/.test(text) || /ร่างตอบ/.test(text)) return 'draft';
+  if (/\b(ask|clarify|question)\b/.test(text) || /ถามลูกค้า|ขอข้อมูล/.test(text)) return 'question';
+  if (/\b(outline|structure|plan)\b/.test(text) || /โครง/.test(text)) return 'outline';
+  return undefined;
+}
+
+function inferStartFormatFromPayload(payload: Record<string, unknown> | undefined): RoomMemoryStartFormat | undefined {
+  if (!payload) return undefined;
+  const explicit = readStartFormat(payload.startFormat);
+  if (explicit) return explicit;
+  const action = readRecord(payload.action);
+  const actionExplicit = readStartFormat(action?.startFormat);
+  if (actionExplicit) return actionExplicit;
+  return inferStartFormatFromText([
+    readString(action?.title),
+    readString(action?.rationale),
+    readString(payload.summary),
+  ].filter(Boolean).join(' '));
+}
+
+function inferStuckSignalFromText(value: string): RoomMemoryStuckSignal | undefined {
+  const text = normalizeSignalText(value);
+  if (!text) return undefined;
+  if (text.includes('unclear_scope') || text.includes('scope unclear') || text.includes('scope ไม่ชัด')) return 'scope_unclear';
+  if (text.includes('dependency') || text.includes('waiting') || text.includes('รอลูกค้า')) return 'waiting_client';
+  if (text.includes('low_energy') || text.includes('low energy') || text.includes('พลังงานต่ำ')) return 'energy_low';
+  if (text.includes('missing_context') || text.includes('missing context') || text.includes('ข้อมูลไม่ครบ')) return 'missing_context';
+  if (
+    text.includes('too_big') ||
+    text.includes('too big') ||
+    text.includes('ใหญ่เกิน') ||
+    text.includes('ซับซ้อน') ||
+    text.includes('complex') ||
+    text.includes('ไม่รู้จะเริ่มจากไหน')
+  ) {
+    return 'too_big';
+  }
+  return undefined;
+}
+
+function inferStuckSignalFromPayload(payload: Record<string, unknown> | undefined, summary: string): RoomMemoryStuckSignal | undefined {
+  const explicit = readStuckSignal(payload?.stuckSignal);
+  if (explicit) return explicit;
+  const blockerSignal = readStringArray(payload?.blockers)
+    .map((blocker) => readStuckSignal(blocker) ?? inferStuckSignalFromText(blocker))
+    .find(Boolean);
+  if (blockerSignal) return blockerSignal;
+  return inferStuckSignalFromText(summary);
+}
+
+function readCognitiveStringArray(payload: Record<string, unknown> | undefined, key: string) {
+  return uniqueStrings(readStringArray(payload?.[key]));
+}
+
+function rescueDriftWarnings(event: RoomMemoryEvent) {
+  if (event.intent?.kind !== 'ai_created_rescue') return [];
+  const payload = event.payload ?? {};
+  const reason = readString(event.intent.reason);
+  const fallback =
+    payload.fallback === true ||
+    payload.isFallback === true ||
+    payload.fallbackPath === true ||
+    event.sourceOperationId?.includes('fallback') === true;
+
+  const warnings: string[] = [];
+  if (!reason || reason.toLowerCase() === 'unknown') {
+    warnings.push('Rescue reason was missing or unknown; avoid assuming the blocker diagnosis is stable.');
+  }
+  if (fallback) {
+    warnings.push('Rescue used fallback output; avoid treating the diagnosis as fully verified.');
+  }
+  return warnings;
 }
 
 function readAction(value: unknown): RoomMemoryActionSnapshot | undefined {
@@ -275,6 +445,7 @@ function emptySnapshot(roomId: string): RoomMemorySnapshot {
     currentBlockers: [],
     sourceRefs: [],
     version: ROOM_MEMORY_SNAPSHOT_VERSION,
+    cognitiveState: { ...DEFAULT_COGNITIVE_STATE },
   };
 }
 
@@ -291,6 +462,20 @@ export function validateRoomMemoryEvent(event: RoomMemoryEvent) {
   if (typeof event.summary !== 'string') throw new Error('Room memory event summary is required');
   if (!Array.isArray(event.refs)) throw new Error('Room memory event refs must be an array');
   if (!Number.isFinite(event.payloadVersion)) throw new Error('Room memory event payloadVersion is required');
+  if (event.intent) {
+    if (!event.intent.kind) throw new Error('Room memory event intent.kind is required when intent is present');
+    if (!ROOM_MEMORY_INTENT_KINDS.has(event.intent.kind)) {
+      throw new Error('Room memory event intent.kind is invalid');
+    }
+    if (
+      event.intent.confidence &&
+      event.intent.confidence !== 'low' &&
+      event.intent.confidence !== 'medium' &&
+      event.intent.confidence !== 'high'
+    ) {
+      throw new Error('Room memory event intent.confidence is invalid');
+    }
+  }
 }
 
 export function projectRoomMemorySnapshot(roomId: string, events: RoomMemoryEvent[]) {
@@ -302,6 +487,25 @@ export function projectRoomMemorySnapshot(roomId: string, events: RoomMemoryEven
   for (const event of orderedEvents) {
     snapshot.lastEventAt = Math.max(snapshot.lastEventAt ?? 0, event.createdAt);
     snapshot.sourceRefs = uniqueById([...snapshot.sourceRefs, ...event.refs]);
+    const cognitiveState = snapshot.cognitiveState ?? { ...DEFAULT_COGNITIVE_STATE };
+    const payload = event.payload;
+    const explicitStartFormat = readStartFormat(payload?.startFormat);
+    const explicitStuckSignal = readStuckSignal(payload?.stuckSignal);
+    const commitments = readCognitiveStringArray(payload, 'commitments');
+    const openQuestions = readCognitiveStringArray(payload, 'openQuestions');
+
+    if (explicitStartFormat && explicitStartFormat !== 'unknown') {
+      cognitiveState.preferredStartFormat = explicitStartFormat;
+    }
+    if (explicitStuckSignal && explicitStuckSignal !== 'unknown') {
+      cognitiveState.lastStuckSignal = explicitStuckSignal;
+    }
+    if (commitments.length > 0) {
+      cognitiveState.commitments = uniqueStrings([...cognitiveState.commitments, ...commitments]);
+    }
+    if (openQuestions.length > 0) {
+      cognitiveState.openQuestions = uniqueStrings([...cognitiveState.openQuestions, ...openQuestions]);
+    }
 
     switch (event.type) {
       case 'source_added':
@@ -312,18 +516,30 @@ export function projectRoomMemorySnapshot(roomId: string, events: RoomMemoryEven
       }
       case 'blocker_updated': {
         snapshot.currentBlockers = readStringArray(event.payload?.blockers);
+        const signal = inferStuckSignalFromPayload(event.payload, event.summary);
+        if (signal && signal !== 'unknown') cognitiveState.lastStuckSignal = signal;
         break;
       }
       case 'action_selected': {
         snapshot.currentAction = readAction(event.payload?.action);
+        const signal = inferStartFormatFromPayload(event.payload);
+        if (signal && signal !== 'unknown') cognitiveState.preferredStartFormat = signal;
         break;
       }
       case 'plan_updated': {
         snapshot.currentPlan = readPlan(event.payload?.plan);
+        const plan = snapshot.currentPlan;
+        if (plan?.actionTitle) {
+          cognitiveState.commitments = uniqueStrings([...cognitiveState.commitments, plan.actionTitle]);
+        }
         break;
       }
       case 'rescue_created': {
         snapshot.latestRescue = readRescue(event.payload?.rescue, event.createdAt);
+        const warnings = rescueDriftWarnings(event);
+        if (warnings.length > 0) {
+          cognitiveState.driftWarnings = uniqueStrings([...cognitiveState.driftWarnings, ...warnings]);
+        }
         break;
       }
       case 'reentry_created': {
@@ -333,6 +549,7 @@ export function projectRoomMemorySnapshot(roomId: string, events: RoomMemoryEven
         break;
       }
     }
+    snapshot.cognitiveState = cognitiveState;
   }
 
   return snapshot;
@@ -347,6 +564,55 @@ async function loadRoomEvents(roomId: string, db: RoomMemoryDexie) {
 
 export async function getRoomMemorySnapshot(roomId: string, db = getRoomMemoryDb()) {
   return db.roomSnapshots.get(roomId);
+}
+
+function isRoomMemorySnapshotShape(value: unknown): value is RoomMemorySnapshot {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Partial<RoomMemorySnapshot>;
+  return (
+    typeof record.roomId === 'string' &&
+    Array.isArray(record.currentBlockers) &&
+    Array.isArray(record.sourceRefs) &&
+    typeof record.version === 'number'
+  );
+}
+
+function isCognitiveStateShape(value: unknown): value is RoomMemoryCognitiveState {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Partial<RoomMemoryCognitiveState>;
+  return (
+    Boolean(readStartFormat(record.preferredStartFormat)) &&
+    Boolean(readStuckSignal(record.lastStuckSignal)) &&
+    Array.isArray(record.commitments) &&
+    Array.isArray(record.openQuestions) &&
+    Array.isArray(record.driftWarnings)
+  );
+}
+
+function isSnapshotHealthy(
+  snapshot: RoomMemorySnapshot | undefined,
+  roomId: string,
+  latestEventAt?: number,
+): snapshot is RoomMemorySnapshot {
+  if (!isRoomMemorySnapshotShape(snapshot)) return false;
+  if (snapshot.roomId !== roomId) return false;
+  if (snapshot.version < ROOM_MEMORY_SNAPSHOT_VERSION) return false;
+  if (!isCognitiveStateShape(snapshot.cognitiveState)) return false;
+  if (latestEventAt !== undefined && (snapshot.lastEventAt ?? 0) < latestEventAt) return false;
+  return true;
+}
+
+export async function getHealthyRoomMemorySnapshot(roomId: string, db = getRoomMemoryDb()) {
+  const [snapshot, events] = await Promise.all([
+    getRoomMemorySnapshot(roomId, db).catch(() => undefined),
+    loadRoomEvents(roomId, db),
+  ]);
+  const latestEventAt = events.at(-1)?.createdAt;
+  if (isSnapshotHealthy(snapshot, roomId, latestEventAt)) return snapshot;
+
+  const rebuilt = projectRoomMemorySnapshot(roomId, events);
+  await db.roomSnapshots.put(rebuilt).catch(() => undefined);
+  return rebuilt;
 }
 
 async function projectAndSaveRoomSnapshot(roomId: string, db: RoomMemoryDexie) {
@@ -658,7 +924,7 @@ export async function buildRoomMemoryReplayContext(input: {
   const eventLimit = input.eventLimit ?? DEFAULT_REPLAY_EVENT_LIMIT;
   const refLimit = input.refLimit ?? DEFAULT_REPLAY_REF_LIMIT;
   const [snapshot, recentEventsDescending] = await Promise.all([
-    getRoomMemorySnapshot(input.roomId, db),
+    getHealthyRoomMemorySnapshot(input.roomId, db),
     db.roomEvents
       .where('roomId')
       .equals(input.roomId)

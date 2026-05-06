@@ -158,6 +158,8 @@ test('requestRescue fallback appends blocker_updated with fallback diagnosis', a
     assert.deepEqual(snapshot?.currentBlockers, ['unknown']);
     assert.ok(events.some((event) => event.type === 'rescue_created' && event.sourceOperationId === 'rescue:fallback'));
     assert.ok(events.some((event) => event.type === 'blocker_updated' && event.sourceOperationId === 'rescue:fallback'));
+    assert.ok(events.some((event) => event.type === 'rescue_created' && event.intent?.kind === 'ai_created_rescue'));
+    assert.equal(snapshot?.cognitiveState?.driftWarnings.length, 2);
   } finally {
     global.fetch = originalFetch;
     await clearRoomMemoryData();
@@ -243,6 +245,8 @@ test('requestIntake appends source_added events for live room sources', async ()
     assert.ok(sourceEvents.some((event) => event.refs.some((ref) => ref.id === 'manual:task-1')));
     assert.ok(sourceEvents.some((event) => event.refs.some((ref) => ref.id === 'file:file-1')));
     assert.equal(sourceEvents.every((event) => event.actor === 'system'), true);
+    assert.equal(sourceEvents.every((event) => event.intent?.kind === 'context_entered'), true);
+    assert.ok(events.some((event) => event.type === 'blocker_updated' && event.intent?.kind === 'ai_detected_blocker'));
   } finally {
     global.fetch = originalFetch;
     await clearRoomMemoryData();

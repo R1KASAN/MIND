@@ -10,6 +10,7 @@ import {
   clearRoomMemoryData,
   createRoomMemoryDb,
   ensureRoomMemoryBackfilled,
+  getHealthyRoomMemorySnapshot,
   getRoomMemorySnapshot,
   markRoomMemoryRefDeleted,
   projectRoomMemorySnapshot,
@@ -75,7 +76,8 @@ test('appendRoomMemoryEvent dedupes by dedupeKey and projects snapshot from even
 
   assert.equal(events.length, 1);
   assert.equal(snapshot?.currentSummary, 'summary one');
-  assert.equal(snapshot?.version, 1);
+  assert.equal(snapshot?.version, 2);
+  assert.equal(snapshot?.cognitiveState?.preferredStartFormat, 'unknown');
 
   await clearRoomMemoryData(db);
   db.close();
@@ -92,6 +94,345 @@ test('projectRoomMemorySnapshot makes blocker_updated first-class without rescue
 
   assert.deepEqual(snapshot.currentBlockers, ['missing_context', 'too_big']);
   assert.equal(snapshot.latestRescue, undefined);
+  assert.equal(snapshot.cognitiveState?.lastStuckSignal, 'missing_context');
+});
+
+test('legacy events without intent still project into v2 cognitive snapshot', () => {
+  const snapshot = projectRoomMemorySnapshot('room-1', [
+    event({
+      type: 'summary_updated',
+      summary: 'Legacy summary',
+      payload: { summary: 'Legacy summary' },
+    }),
+  ]);
+
+  assert.equal(snapshot.version, 2);
+  assert.equal(snapshot.currentSummary, 'Legacy summary');
+  assert.equal(snapshot.cognitiveState?.preferredStartFormat, 'unknown');
+  assert.equal(snapshot.cognitiveState?.lastStuckSignal, 'unknown');
+});
+
+test('getHealthyRoomMemorySnapshot rebuilds legacy v1 snapshot into v2', async () => {
+  const db = testDb();
+  await appendRoomMemoryEvent(event({
+    id: 'legacy-v1-event',
+    roomId: 'room-legacy',
+    createdAt: 10,
+    summary: 'new summary',
+    payload: { summary: 'new summary' },
+  }), db);
+  await db.roomSnapshots.put({
+    roomId: 'room-legacy',
+    currentSummary: 'old summary',
+    currentBlockers: [],
+    sourceRefs: [],
+    lastEventAt: 10,
+    version: 1,
+  });
+
+  const snapshot = await getHealthyRoomMemorySnapshot('room-legacy', db);
+  const saved = await getRoomMemorySnapshot('room-legacy', db);
+
+  assert.equal(snapshot.version, 2);
+  assert.equal(snapshot.currentSummary, 'new summary');
+  assert.equal(saved?.version, 2);
+
+  await clearRoomMemoryData(db);
+  db.close();
+});
+
+test('getHealthyRoomMemorySnapshot rebuilds stale snapshot from latest event', async () => {
+  const db = testDb();
+  await db.roomEvents.bulkAdd([
+    event({
+      id: 'stale-event-1',
+      roomId: 'room-stale',
+      createdAt: 10,
+      summary: 'first',
+      payload: { summary: 'first' },
+    }),
+    event({
+      id: 'stale-event-2',
+      roomId: 'room-stale',
+      createdAt: 20,
+      summary: 'latest',
+      payload: { summary: 'latest' },
+    }),
+  ]);
+  await db.roomSnapshots.put({
+    roomId: 'room-stale',
+    currentSummary: 'first',
+    currentBlockers: [],
+    sourceRefs: [],
+    lastEventAt: 10,
+    version: 2,
+    cognitiveState: {
+      preferredStartFormat: 'unknown',
+      lastStuckSignal: 'unknown',
+      commitments: [],
+      openQuestions: [],
+      driftWarnings: [],
+    },
+  });
+
+  const snapshot = await getHealthyRoomMemorySnapshot('room-stale', db);
+
+  assert.equal(snapshot.currentSummary, 'latest');
+  assert.equal(snapshot.lastEventAt, 20);
+
+  await clearRoomMemoryData(db);
+  db.close();
+});
+
+test('getHealthyRoomMemorySnapshot returns rebuilt in-memory snapshot when repair save fails', async () => {
+  const db = testDb();
+  await db.roomEvents.add(event({
+    id: 'save-fail-event',
+    roomId: 'room-save-fail',
+    createdAt: 10,
+    summary: 'rebuild me',
+    payload: { summary: 'rebuild me' },
+  }));
+  const originalPut = db.roomSnapshots.put.bind(db.roomSnapshots);
+  (db.roomSnapshots as never as { put: () => Promise<never> }).put = async () => {
+    throw new Error('save failed');
+  };
+
+  const snapshot = await getHealthyRoomMemorySnapshot('room-save-fail', db);
+
+  assert.equal(snapshot.currentSummary, 'rebuild me');
+  assert.equal(snapshot.version, 2);
+
+  (db.roomSnapshots as never as { put: typeof originalPut }).put = originalPut;
+  await clearRoomMemoryData(db);
+  db.close();
+});
+
+test('getHealthyRoomMemorySnapshot rebuilds malformed snapshot shape', async () => {
+  const db = testDb();
+  await db.roomEvents.add(event({
+    id: 'malformed-event',
+    roomId: 'room-malformed',
+    createdAt: 10,
+    summary: 'valid projection',
+    payload: { summary: 'valid projection' },
+  }));
+  await db.roomSnapshots.put({
+    roomId: 'room-malformed',
+    currentSummary: 'bad projection',
+    currentBlockers: [],
+    sourceRefs: [],
+    lastEventAt: 10,
+    version: 2,
+    cognitiveState: {
+      preferredStartFormat: 'unknown',
+      lastStuckSignal: 'unknown',
+      commitments: 'not-array',
+      openQuestions: [],
+      driftWarnings: [],
+    },
+  } as never);
+
+  const snapshot = await getHealthyRoomMemorySnapshot('room-malformed', db);
+
+  assert.equal(snapshot.currentSummary, 'valid projection');
+  assert.deepEqual(snapshot.cognitiveState?.commitments, []);
+
+  await clearRoomMemoryData(db);
+  db.close();
+});
+
+test('projectRoomMemorySnapshot infers stuck signals including too_big Thai and English keywords', () => {
+  const snapshot = projectRoomMemorySnapshot('room-1', [
+    event({
+      type: 'blocker_updated',
+      createdAt: 1,
+      summary: 'Current blockers: unclear_scope',
+      payload: { blockers: ['unclear_scope'] },
+    }),
+    event({
+      type: 'blocker_updated',
+      createdAt: 2,
+      summary: 'งานนี้ซับซ้อนและไม่รู้จะเริ่มจากไหน',
+      payload: { blockers: ['This feels too big and complex'] },
+    }),
+  ]);
+
+  assert.deepEqual(snapshot.currentBlockers, ['This feels too big and complex']);
+  assert.equal(snapshot.cognitiveState?.lastStuckSignal, 'too_big');
+});
+
+test('projectRoomMemorySnapshot infers preferred start format from explicit payload and action text', () => {
+  const explicit = projectRoomMemorySnapshot('room-1', [
+    event({
+      type: 'action_selected',
+      summary: 'Start with checklist',
+      payload: {
+        action: {
+          title: 'Start with checklist',
+          startFormat: 'bullet',
+        },
+      },
+    }),
+  ]);
+  const inferred = projectRoomMemorySnapshot('room-1', [
+    event({
+      type: 'action_selected',
+      summary: 'ถามลูกค้าหนึ่งคำถาม',
+      payload: {
+        action: {
+          title: 'Ask one clarify question to the client',
+        },
+      },
+    }),
+  ]);
+  const reply = projectRoomMemorySnapshot('room-1', [
+    event({
+      type: 'action_selected',
+      summary: 'เขียนข้อความตอบลูกค้า',
+      payload: {
+        action: {
+          title: 'เขียนข้อความตอบลูกค้า',
+        },
+      },
+    }),
+  ]);
+
+  assert.equal(explicit.cognitiveState?.preferredStartFormat, 'bullet');
+  assert.equal(inferred.cognitiveState?.preferredStartFormat, 'question');
+  assert.equal(reply.cognitiveState?.preferredStartFormat, 'direct_reply');
+});
+
+test('unclear action_selected and reentry_created do not overwrite existing CCS signal', () => {
+  const snapshot = projectRoomMemorySnapshot('room-1', [
+    event({
+      type: 'action_selected',
+      createdAt: 1,
+      summary: 'Start as bullets',
+      payload: {
+        action: {
+          title: 'Make a checklist first',
+        },
+      },
+    }),
+    event({
+      type: 'action_selected',
+      createdAt: 2,
+      summary: 'Do the thing',
+      payload: {
+        action: {
+          title: 'Do the thing',
+        },
+      },
+    }),
+    event({
+      type: 'reentry_created',
+      createdAt: 3,
+      summary: 'Resume from latest state',
+      payload: {
+        reentry: {
+          summary: 'Resume from latest state',
+          topActions: [],
+          createdAt: 3,
+        },
+      },
+      intent: { kind: 'ai_created_reentry', reason: 'bounce_back', confidence: 'medium' },
+    }),
+  ]);
+
+  assert.equal(snapshot.cognitiveState?.preferredStartFormat, 'bullet');
+});
+
+test('ai_created_rescue drift warnings only trigger for missing unknown reason or fallback payload', () => {
+  const missingReason = projectRoomMemorySnapshot('room-1', [
+    event({
+      type: 'rescue_created',
+      summary: 'Rescue: unknown',
+      payload: {
+        rescue: {
+          reason: 'unknown',
+          mode: 'shrink',
+          steps: [],
+          createdAt: 1,
+        },
+      },
+      intent: { kind: 'ai_created_rescue', confidence: 'low' },
+    }),
+  ]);
+  const fallback = projectRoomMemorySnapshot('room-1', [
+    event({
+      type: 'rescue_created',
+      summary: 'Rescue fallback',
+      payload: {
+        fallback: true,
+        rescue: {
+          reason: 'unknown',
+          mode: 'shrink',
+          steps: [],
+          createdAt: 1,
+        },
+      },
+      intent: { kind: 'ai_created_rescue', reason: 'unknown', confidence: 'low' },
+    }),
+  ]);
+  const otherEventType = projectRoomMemorySnapshot('room-1', [
+    event({
+      type: 'reentry_created',
+      summary: 'Fallback reentry',
+      payload: { fallback: true },
+      intent: { kind: 'ai_created_reentry', reason: 'unknown', confidence: 'low' },
+    }),
+  ]);
+
+  assert.equal(missingReason.cognitiveState?.driftWarnings.length, 1);
+  assert.equal(fallback.cognitiveState?.driftWarnings.length, 2);
+  assert.deepEqual(otherEventType.cognitiveState?.driftWarnings, []);
+});
+
+test('projectRoomMemorySnapshot is idempotent and stable-dedupes arrays', () => {
+  const events = [
+    event({
+      id: 'dedupe-plan',
+      type: 'plan_updated',
+      createdAt: 1,
+      refs: [
+        { id: 'source-1', kind: 'manual', label: 'Source 1' },
+        { id: 'source-1', kind: 'manual', label: 'Source 1 duplicate' },
+      ],
+      payload: {
+        commitments: ['Send client reply', 'Send client reply'],
+        openQuestions: ['Need scope?', 'Need scope?'],
+        plan: {
+          actionTitle: 'Send client reply',
+          steps: [{ id: 'step-1', text: 'Draft reply' }],
+        },
+      },
+    }),
+    event({
+      id: 'dedupe-rescue',
+      type: 'rescue_created',
+      createdAt: 2,
+      payload: {
+        fallback: true,
+        rescue: {
+          reason: 'unknown',
+          mode: 'shrink',
+          steps: [],
+          createdAt: 2,
+        },
+      },
+      intent: { kind: 'ai_created_rescue', reason: 'unknown', confidence: 'low' },
+    }),
+  ];
+
+  const once = projectRoomMemorySnapshot('room-1', events);
+  const duplicated = projectRoomMemorySnapshot('room-1', [...events, ...events]);
+
+  assert.deepEqual(duplicated, once);
+  assert.deepEqual(once.sourceRefs.map((ref) => ref.id), ['source-1']);
+  assert.deepEqual(once.cognitiveState?.commitments, ['Send client reply']);
+  assert.deepEqual(once.cognitiveState?.openQuestions, ['Need scope?']);
+  assert.equal(once.cognitiveState?.driftWarnings.length, 2);
 });
 
 test('lazy backfill creates backfill events and a snapshot from legacy task context', async () => {
