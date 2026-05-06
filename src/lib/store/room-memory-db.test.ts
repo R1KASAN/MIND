@@ -303,7 +303,7 @@ test('projectRoomMemorySnapshot infers preferred start format from explicit payl
   assert.equal(reply.cognitiveState?.preferredStartFormat, 'direct_reply');
 });
 
-test('unclear action_selected and reentry_created do not overwrite existing CCS signal', () => {
+test('unclear action_selected and repeated reentry_created events do not overwrite existing CCS signal', () => {
   const snapshot = projectRoomMemorySnapshot('room-1', [
     event({
       type: 'action_selected',
@@ -337,6 +337,33 @@ test('unclear action_selected and reentry_created do not overwrite existing CCS 
         },
       },
       intent: { kind: 'ai_created_reentry', reason: 'bounce_back', confidence: 'medium' },
+    }),
+    event({
+      type: 'reentry_created',
+      createdAt: 4,
+      summary: 'Resume again from latest state',
+      payload: {
+        reentry: {
+          summary: 'Resume again from latest state',
+          topActions: [],
+          createdAt: 4,
+        },
+      },
+      intent: { kind: 'ai_created_reentry', reason: 'morning_ritual', confidence: 'medium' },
+    }),
+    event({
+      type: 'reentry_created',
+      createdAt: 5,
+      summary: 'Fallback reentry should not change start format',
+      payload: {
+        fallback: true,
+        reentry: {
+          summary: 'Fallback reentry should not change start format',
+          topActions: [],
+          createdAt: 5,
+        },
+      },
+      intent: { kind: 'ai_created_reentry', reason: 'unknown', confidence: 'low' },
     }),
   ]);
 
