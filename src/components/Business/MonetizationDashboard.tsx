@@ -238,13 +238,14 @@ export function MonetizationDashboard() {
       }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', maxWidth: '42rem' }}>
           <p style={{ margin: 0, color: 'var(--text-secondary)', letterSpacing: '0.14em', textTransform: 'uppercase', fontSize: '0.78rem' }}>
-            Business model enforcement
+            Internal reference only
           </p>
           <h1 style={{ margin: 0, fontSize: 'clamp(2rem, 5vw, 2.7rem)', lineHeight: 1.05 }}>
             MIND outcome-first loop
           </h1>
           <p style={{ margin: 0, color: 'var(--text-secondary)', lineHeight: 1.65, maxWidth: '44rem' }}>
-            {buildOutcomePitch()} เป้าหมายคือ capture value 10–20% จากเวลาที่ประหยัดได้ และบังคับ roadmap ให้ชนกับ metric จริง ไม่ใช่ฟีเจอร์สวย ๆ
+            หน้านี้เป็น dashboard ภายในสำหรับทีม ไม่ใช่ workflow หลักของ prototype. Demo path หลักยังเป็น Room → attach file → evidence → summary/next action.
+            {' '}{buildOutcomePitch()} เป้าหมายคือ capture value 10–20% จากเวลาที่ประหยัดได้ และบังคับ roadmap ให้ชนกับ metric จริง ไม่ใช่ฟีเจอร์สวย ๆ
           </p>
         </div>
         <Link
@@ -271,6 +272,7 @@ export function MonetizationDashboard() {
         <SummaryCard label="Positioning" value={settings.positioning ?? DEFAULT_MONETIZATION_HYPOTHESIS.positioning} helper="Overlay-first คือ default จนกว่าจะมีหลักฐานว่าคนยอมย้าย workflow เข้า hub" />
         <SummaryCard label="Reentry confirm" value={formatMetric(summary.reentryToConfirmedActionRate5m, '%')} helper="สัดส่วน reentry ที่พาไปสู่ confirmed action ภายใน 5 นาที" />
         <SummaryCard label="AI mismatch" value={formatMetric(summary.notLikeThisRate, '%')} helper="Not like this ต่อ draft ทั้งหมด ยิ่งต่ำยิ่ง grounded" />
+        <SummaryCard label="Evidence-backed" value={formatMetric(summary.evidenceBackedActionRate, '%')} helper="สัดส่วน confirmed action ที่มี retrieved evidence จริง" />
         <SummaryCard label="Evidence trust" value={formatMetric(summary.evidenceClickRate, '%')} helper="อัตรากดดูหลักฐานของ step ที่ MIND เสนอ" />
         <SummaryCard label="Confirmed action" value={formatMetric(summary.timeToFirstConfirmedActionMs.median, 'ms')} helper="เวลาจากเปิดงานจนยืนยันก้าวถัดไปจริง" />
       </section>

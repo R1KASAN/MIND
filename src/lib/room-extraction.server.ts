@@ -7,6 +7,7 @@ import { extractText, getDocumentProxy } from 'unpdf';
 import {
   composeRoomSourceText,
   inferRoomFileKind,
+  normalizeRoomFileText,
   type RoomFileFailureStage,
   type RoomFileOcrMetrics,
   type RoomSourceFile,
@@ -68,13 +69,7 @@ export interface OcrEngineAdapter {
 }
 
 export function normalizeFileText(text: string): string {
-  return text
-    .replace(/\u0000/g, '')
-    .replace(/\r\n?/g, '\n')
-    .replace(/[ \t\f\v]+/g, ' ')
-    .replace(/ *\n */g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  return normalizeRoomFileText(text);
 }
 
 function buildTextQualityMetrics(
@@ -457,6 +452,20 @@ async function extractSingleFile(file: File, deps: RoomExtractionDeps = {}): Pro
     } else if (kind === 'image') {
       try {
         extractedText = await extractImageTextFn(file);
+        const imageAssessment = assessExtractedTextQuality(extractedText);
+        if (imageAssessment.usable) {
+          return buildReadySourceFile(base, imageAssessment.normalizedText, {
+            ocrEngine: 'tesseract',
+            ocrMetrics: imageAssessment.metrics,
+          });
+        }
+        return buildFailedSourceFile(file, 'image_ocr_failed', {
+          failureDetail: imageAssessment.reason ?? 'ocr_text_quality_failed',
+          failureStage: 'image_ocr',
+          createdAt,
+          ocrEngine: 'tesseract',
+          ocrMetrics: imageAssessment.metrics,
+        });
       } catch (error) {
         return buildFailedSourceFile(file, 'image_ocr_failed', {
           failureDetail: errorDetail(error),

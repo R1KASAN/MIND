@@ -6,6 +6,7 @@ import type { Action, TaskContext } from '../store/idb';
 import {
   buildActionSuccessArtifacts,
   buildScaffoldSuccessArtifacts,
+  buildReentryTaskArtifacts,
   deriveBounceBackRoute,
   deriveRoomBlockers,
   hasResumableTask,
@@ -104,6 +105,74 @@ test('buildActionSuccessArtifacts keeps continuity and persists durable negotiat
   assert.equal(result.nextTask.currentPlan?.steps.length, 3);
   assert.equal(result.nextTask.taskShape?.deliverableType, 'reply');
   assert.equal(result.payload.task_shape?.immediateNeed, 'send_reply_now');
+});
+
+test('buildActionSuccessArtifacts carries retrieved evidence into plan provenance', () => {
+  const task = makeTask();
+  const intake: AiIntakeResponse = {
+    workflowType: 'client_response',
+    taskShape: {
+      deliverableType: 'reply',
+      immediateNeed: 'send_reply_now',
+      missingInputs: [],
+      workContext: 'ลูกค้ารอคำตอบเรื่อง timeline อยู่',
+      confidence: 0.92,
+    },
+    roomDigest: 'ลูกค้ารอ timeline',
+    taskFrame: {
+      objective: 'ตอบลูกค้าเรื่อง timeline',
+      stage: 'awaiting_reply',
+      stakeholders: ['client'],
+    },
+    blockers: ['timeline_unclear'],
+    requiresClarification: false,
+    clarificationQuestion: undefined,
+    candidateActions: [],
+    meta: {
+      model: 'qwen2.5:3b',
+      usedRoomFiles: [],
+      repairUsed: false,
+    },
+  };
+  const actionResponse: AiActionResponse = {
+    chosenAction: {
+      title: 'ส่ง reply สั้นเพื่อยืนยัน deadline ใหม่',
+      rationale: 'ลดแรงกดดันจาก client ก่อน',
+      successSignal: 'ลูกค้ารู้ timeline ใหม่แล้ว',
+    },
+    alternatives: [],
+    whyThisNow: 'ตอนนี้ควรเคลียร์ expectation ของลูกค้าก่อน',
+    replyDraft: 'ผมจะส่งอัปเดต timeline ภายในวันนี้ครับ',
+    situationSummary: 'งานยังไปต่อได้ถ้าล็อก timeline ก่อน',
+    meta: {
+      model: 'qwen2.5:3b',
+      usedRoomFiles: [],
+      repairUsed: false,
+    },
+  };
+
+  const result = buildActionSuccessArtifacts({
+    task,
+    intake,
+    actionResponse,
+    evidenceContext: {
+      summaryText: '[file:brief] brief: ลูกค้ารอ timeline ใหม่',
+      selectionMethod: 'retrieval',
+      evidenceChips: [
+        {
+          sourceId: 'file:brief',
+          label: 'brief.txt',
+          excerpt: 'ลูกค้ารอ timeline ใหม่',
+          sourceKindLabel: 'retrieved',
+        },
+      ],
+    },
+  });
+
+  const firstStep = result.nextTask.currentPlan?.steps[0];
+  assert.equal(firstStep?.evidence?.[0]?.sourceId, 'file:brief');
+  assert.deepEqual(firstStep?.provenance?.sourceIds, ['file:brief']);
+  assert.equal(firstStep?.confidence?.supportingSourceCount, 1);
 });
 
 test('buildActionSuccessArtifacts keeps proposal-start tasks resume-first and removes reply draft from payload', () => {
@@ -221,6 +290,35 @@ test('buildScaffoldSuccessArtifacts updates payload and step checkpoint', () => 
   assert.equal(result.nextPayload.recommended_action.title, scaffold.planTitle);
   assert.equal(result.nextTask.currentStepIndex, 1);
   assert.equal(result.nextTask.currentPlan?.steps[1].text, 'แก้แค่บรรทัดแรกของ reply');
+});
+
+test('buildReentryTaskArtifacts stores a reentry save point brief', () => {
+  const task = makeTask({
+    lifecycleState: 'stalled',
+    sourceText: 'งานค้างต้องกลับเข้ามาใหม่',
+  });
+  const reentry = {
+    reentrySummary: 'กลับมาทำต่อจากจุดที่ใกล้ที่สุด',
+    topActions: [
+      {
+        roomId: 'task-1',
+        title: 'กลับไปเปิดบริบทล่าสุด',
+        rationale: 'ช่วยกลับเข้าจังหวะเดิมได้เร็ว',
+        impact: 'high' as const,
+        effort: 'low' as const,
+        resumeTarget: 'ONE_ACTION' as const,
+      },
+    ],
+    ignoredNoise: ['งานเก่า'],
+  };
+
+  const result = buildReentryTaskArtifacts(task, reentry);
+
+  assert.equal(result.nextTask.assistantMode, 'reentry_brief');
+  assert.equal(result.nextTask.lastAiOperation, 'reentry');
+  assert.equal(result.nextTask.reentryBrief?.summary, reentry.reentrySummary);
+  assert.equal(result.nextTask.reentryBrief?.topActions[0]?.title, 'กลับไปเปิดบริบทล่าสุด');
+  assert.equal(result.nextTask.reentryBrief?.ignoredNoise[0], 'งานเก่า');
 });
 
 test('bounce-back route helpers prefer real checkpoints', () => {

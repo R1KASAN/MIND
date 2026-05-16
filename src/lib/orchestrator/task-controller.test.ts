@@ -1877,6 +1877,106 @@ test('handleAcceptAction emits one_action_accepted_first_try when no alternative
   }
 });
 
+test('handleAcceptAction marks retrieval analytics only when current step has retrieved evidence', async () => {
+  const payload = makePayload();
+  const task = makeTask({
+    lifecycleState: 'has_one_action',
+    currentActionId: 'action-1',
+    lastSynthesis: payload,
+    currentPlan: {
+      actionTitle: payload.recommended_action.title,
+      steps: [
+        {
+          id: 'step-1',
+          text: payload.recommended_action.micro_steps[0],
+          evidence: [
+            {
+              sourceId: 'file:brief',
+              label: 'brief.txt',
+              excerpt: 'ลูกค้ารอ timeline ใหม่',
+              sourceKindLabel: 'retrieved',
+            },
+          ],
+          provenance: {
+            generatedAt: 1,
+            generatedBy: 'action',
+            sourceIds: ['file:brief'],
+          },
+        },
+      ],
+    },
+    oneActionTracking: {
+      hasViewedAlternative: true,
+      hasAdjusted: false,
+    },
+  });
+  const session = normalizeSession({
+    lastActive: 100,
+    uiRoute: 'ONE_ACTION',
+    notThisCount: 0,
+    currentActionId: task.currentActionId,
+    currentPayload: payload,
+    task,
+  });
+  const sessionRef = { current: session };
+  const originalConsoleLog = console.log;
+  const events: Array<{ name: string; properties: Record<string, unknown> }> = [];
+  console.log = (...args: unknown[]) => {
+    const first = args[0];
+    if (typeof first === 'string' && first.startsWith('[EVENT] ')) {
+      events.push({
+        name: first.replace('[EVENT] ', '').trim(),
+        properties: args[1] && typeof args[1] === 'object'
+          ? args[1] as Record<string, unknown>
+          : {},
+      });
+    }
+  };
+
+  try {
+    const controller = createTaskController({
+      session,
+      sessionRef,
+      currentPayload: payload,
+      currentActionState: makeAction(),
+      clarificationPrompt: '',
+      dumpStartTime: null,
+      aiModel: 'qwen2.5:3b',
+      setSession: (value) => {
+        if (value) sessionRef.current = value;
+      },
+      setCurrentPayload: () => undefined,
+      setCurrentActionState: () => undefined,
+      setManualFallbackSuggestedActions: () => undefined,
+      setManualFallbackRetryable: () => undefined,
+      setClarificationPrompt: () => undefined,
+      setCurrentWhyThisNow: () => undefined,
+      setCurrentRescueState: () => undefined,
+      setIsRescueLoading: () => undefined,
+      setIsNegotiatingAction: () => undefined,
+      setIsReentryLoading: () => undefined,
+      isScaffoldRefining: false,
+      setIsScaffoldRefining: () => undefined,
+      setScaffoldRefineFeedback: () => undefined,
+      setDumpStartTime: () => undefined,
+      recordAiOpsEntry: () => undefined,
+      persistSession: async () => undefined,
+      persistActionSave: async () => undefined,
+      persistActionUpdate: async () => undefined,
+    });
+
+    await controller.handleAcceptAction();
+
+    const confirmed = events.find((event) => event.name === 'step_confirmed');
+    assert.equal(confirmed?.properties.retrieval_enabled, true);
+    assert.equal(confirmed?.properties.retrieval_selection_method, 'retrieval');
+    assert.equal(confirmed?.properties.retrieved_source_count, 1);
+    assert.deepEqual(confirmed?.properties.source_ids, ['file:brief']);
+  } finally {
+    console.log = originalConsoleLog;
+  }
+});
+
 test('handleEnterRescue falls back with safe-copy language when rescue fails', async () => {
   const payload = makePayload();
   const task = makeTask({

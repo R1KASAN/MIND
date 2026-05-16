@@ -9,6 +9,11 @@ import {
 } from './room';
 
 test('getRoomFileUxCopy maps the three UX states', () => {
+  const pending = getRoomFileUxCopy({ status: 'pending', failureReason: 'file_extraction_pending' });
+  assert.equal(pending.state, 'pending');
+  assert.equal(pending.title, 'กำลังสกัดข้อความ');
+  assert.equal(pending.cta, 'กำลังอ่านไฟล์');
+
   const ready = getRoomFileUxCopy({ status: 'ready', failureReason: undefined });
   assert.equal(ready.state, 'ready');
   assert.equal(ready.title, 'อ่านไฟล์ได้แล้ว');
@@ -16,18 +21,18 @@ test('getRoomFileUxCopy maps the three UX states', () => {
 
   const failed = getRoomFileUxCopy('pdf_ocr_failed');
   assert.equal(failed.state, 'ocr_failed');
-  assert.equal(failed.title, 'ไฟล์แนบอ่านไม่สำเร็จ');
-  assert.equal(failed.body, 'MIND ลองอ่านไฟล์แล้ว แต่ OCR ยังดึงข้อความออกมาไม่ได้');
+  assert.equal(failed.title, 'อ่านไม่สำเร็จ');
+  assert.equal(failed.body, 'MIND ลองอ่านไฟล์นี้แล้ว แต่ยังดึงข้อความออกมาใช้ไม่ได้');
 
   const garbled = getRoomFileUxCopy('pdf_text_garbled_after_ocr');
   assert.equal(garbled.state, 'ocr_garbled');
-  assert.equal(garbled.title, 'อ่านข้อความใน PDF ไม่ชัดพอ');
+  assert.equal(garbled.title, 'อ่านได้ไม่ชัดพอ');
   assert.equal(garbled.cta, 'ลองอ่านไฟล์อีกครั้ง');
 });
 
 test('describeRoomFileFailureReason preserves concise labels for file warnings', () => {
-  assert.equal(describeRoomFileFailureReason('pdf_ocr_failed'), 'ลอง OCR แล้วแต่ยังอ่าน PDF ไม่สำเร็จ');
-  assert.equal(describeRoomFileFailureReason('pdf_text_garbled_after_ocr'), 'ลอง OCR แล้วแต่ข้อความ PDF ยังไม่ชัดพอ');
+  assert.equal(describeRoomFileFailureReason('pdf_ocr_failed'), 'ลอง OCR แล้วแต่ยังอ่านข้อความไม่สำเร็จ');
+  assert.equal(describeRoomFileFailureReason('pdf_text_garbled_after_ocr'), 'ลอง OCR แล้วแต่ข้อความยังไม่ชัดพอ');
   assert.equal(describeRoomFileFailureReason('unsupported_file_type'), 'ชนิดไฟล์นี้ยังไม่รองรับ');
 });
 
@@ -45,7 +50,7 @@ test('getRoomFileUxCopy accepts full file records', () => {
 
   const copy = getRoomFileUxCopy(file);
   assert.equal(copy.state, 'ocr_garbled');
-  assert.match(copy.detail, /fragmented_word_runs/);
+  assert.match(copy.detail, /สแกนหรือภาพ/);
 });
 
 test('buildPreferredRoomSourceContext does not merge multiple ready files without primary selection', () => {
@@ -137,7 +142,7 @@ test('buildPreferredRoomSourceContext keeps unreadable file text out of source c
   const context = buildPreferredRoomSourceContext('ข้อความเดิม', files);
 
   assert.match(context.sourceText, /scan.pdf/);
-  assert.match(context.sourceText, /ลอง OCR แล้วแต่ข้อความ PDF ยังไม่ชัดพอ/);
+  assert.match(context.sourceText, /ลอง OCR แล้วแต่ข้อความยังไม่ชัดพอ/);
   assert.doesNotMatch(context.sourceText, /M I N D D E M O/);
   assert.equal(context.extractedText, '');
 });

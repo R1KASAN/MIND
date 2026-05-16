@@ -6,6 +6,10 @@ import { AiSynthesisResponse } from '@/lib/ai/schema';
 import type { Action, CurrentPlan, CurrentPlanStep, PlanGeneratedBy, PlanSourceKindLabel, TaskConstraints } from '@/lib/store/idb';
 import type { ActionNegotiationInput } from '@/lib/orchestrator/task-controller';
 import { formatConfidenceLabel } from '@/lib/orchestrator/plan-provenance';
+import { AIProcessingIndicator } from '@/components/AI/AIProcessingIndicator';
+import { StepEvidencePanel } from './StepEvidencePanel';
+import { hasRetrievedEvidence } from '@/lib/orchestrator/step-evidence-display';
+import { getRoomFileUxCopy, type RoomSourceFile } from '@/lib/room';
 
 interface Props {
   data: AiSynthesisResponse;
@@ -13,6 +17,7 @@ interface Props {
   whyThisNow?: string;
   constraints?: TaskConstraints;
   plan?: CurrentPlan;
+  sourceFiles?: RoomSourceFile[];
   negotiationLoading?: boolean;
   onAccept: () => void;
   onReject: () => void;
@@ -22,170 +27,6 @@ interface Props {
   focusMode?: boolean;
 }
 
-function hasRetrievedEvidence(step?: CurrentPlanStep) {
-  return Boolean(step?.evidence?.some((item) => item.sourceKindLabel === 'retrieved'));
-}
-
-function formatTimestamp(timestamp?: number) {
-  if (!timestamp) return undefined;
-  return new Intl.DateTimeFormat('th-TH', {
-    day: 'numeric',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(timestamp));
-}
-
-function formatSourceKindLabel(value?: PlanSourceKindLabel) {
-  if (value === 'manual_summary') return 'สรุปด้วยมือ';
-  if (value === 'extracted') return 'ดึงจากไฟล์';
-  if (value === 'retrieved') return 'ดึงจากหลักฐาน';
-  return 'หลักฐานในห้อง';
-}
-
-function formatGeneratedByLabel(value?: PlanGeneratedBy) {
-  if (value === 'action') return 'แผนหลัก';
-  if (value === 'scaffold') return 'ย่อยงาน';
-  if (value === 'rescue') return 'ช่วยตอนติด';
-  if (value === 'reentry') return 'กลับเข้าห้อง';
-  return value ?? '';
-}
-
-function StepEvidence({ step }: { step?: CurrentPlanStep }) {
-  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
-  if (!step) return null;
-  const evidence = step.evidence ?? [];
-  const safety = step.safety;
-  const selectedEvidence = evidence.find((item) => item.sourceId === selectedSourceId) ?? evidence[0];
-  const generatedLabel = formatTimestamp(step.provenance?.generatedAt);
-  const confirmedLabel = formatTimestamp(step.provenance?.confirmedAt);
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem', width: '100%', maxWidth: '42rem' }}>
-      <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'center' }}>
-        <span
-          style={{
-            border: '1px solid rgba(255,255,255,0.12)',
-            borderRadius: '999px',
-            padding: '0.28rem 0.58rem',
-            fontSize: '0.74rem',
-            color: 'var(--text-secondary)',
-          }}
-        >
-          ร่างจาก MIND
-        </span>
-        <span
-          style={{
-            border: '1px solid rgba(94,106,210,0.34)',
-            background: 'rgba(94,106,210,0.12)',
-            borderRadius: '999px',
-            padding: '0.28rem 0.58rem',
-            fontSize: '0.74rem',
-            color: 'var(--text-primary)',
-          }}
-        >
-          {formatConfidenceLabel(step.confidence)}
-        </span>
-        {safety?.manualOnly && (
-          <span
-            style={{
-              border: '1px solid rgba(255,99,132,0.3)',
-              background: 'rgba(255,99,132,0.1)',
-              borderRadius: '999px',
-              padding: '0.28rem 0.58rem',
-              fontSize: '0.74rem',
-              color: 'var(--danger)',
-            }}
-          >
-            ทำด้วยมือเท่านั้น · ไม่รันอัตโนมัติ
-          </span>
-        )}
-        {step.provenance?.userEdited && (
-          <span
-            style={{
-              border: '1px solid rgba(87,210,162,0.24)',
-              background: 'rgba(87,210,162,0.08)',
-              borderRadius: '999px',
-              padding: '0.28rem 0.58rem',
-              fontSize: '0.74rem',
-              color: 'var(--text-primary)',
-            }}
-          >
-            Edited by you
-          </span>
-        )}
-      </div>
-      {evidence.length > 0 && (
-        <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-          {evidence.map((item) => (
-            <button
-              key={`${item.sourceId}-${item.label}`}
-              type="button"
-              onClick={() => {
-                setSelectedSourceId(item.sourceId);
-                trackEvent('step_evidence_clicked', {
-                  step_id: step.id,
-                  source_ids: [item.sourceId],
-                  confidence_level: step.confidence?.level,
-                  confidence_score: step.confidence?.score,
-                  destructive_risk: step.safety?.risk,
-                  retrieval_enabled: hasRetrievedEvidence(step),
-                });
-              }}
-              style={{
-                background: selectedSourceId === item.sourceId ? 'rgba(94,106,210,0.16)' : 'rgba(255,255,255,0.04)',
-                border: selectedSourceId === item.sourceId ? '1px solid rgba(94,106,210,0.35)' : '1px solid rgba(255,255,255,0.09)',
-                color: selectedSourceId === item.sourceId ? 'var(--text-primary)' : 'var(--text-secondary)',
-                padding: '0.34rem 0.58rem',
-                fontSize: '0.76rem',
-              }}
-              title={item.excerpt}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-      )}
-      {(selectedEvidence || generatedLabel || confirmedLabel || step.provenance?.overrideNote) && (
-        <details className="supporting-panel" style={{ padding: '0.85rem' }}>
-          <summary
-            style={{
-              cursor: 'pointer',
-              color: 'var(--text-secondary)',
-              fontSize: '0.84rem',
-              fontWeight: 600,
-              listStyle: 'none',
-            }}
-          >
-            เหตุผล / ประวัติ
-          </summary>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem', marginTop: '0.7rem' }}>
-            {selectedEvidence && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                <span className="supporting-label" style={{ marginBottom: 0 }}>
-                  {formatSourceKindLabel(selectedEvidence.sourceKindLabel)} · {selectedEvidence.label}
-                </span>
-                <p className="supporting-summary" style={{ margin: 0 }}>
-                  {selectedEvidence.excerpt || 'ยังไม่มี excerpt สั้น ๆ จาก source นี้'}
-                </p>
-              </div>
-            )}
-            <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-              {generatedLabel && <span className="studio-chip">สร้างเมื่อ {generatedLabel}</span>}
-              {confirmedLabel && <span className="studio-chip">ยืนยันเมื่อ {confirmedLabel}</span>}
-              {step.provenance?.generatedBy && <span className="studio-chip">{formatGeneratedByLabel(step.provenance.generatedBy)}</span>}
-              {step.safety?.risk && <span className="studio-chip">ความเสี่ยง: {step.safety.risk}</span>}
-            </div>
-            {step.provenance?.overrideNote && (
-              <p className="studio-inline-note" style={{ margin: 0 }}>
-                แก้ไข: {step.provenance.overrideNote}
-              </p>
-            )}
-          </div>
-        </details>
-      )}
-    </div>
-  );
-}
 
 export function OneAction({
   data,
@@ -193,6 +34,7 @@ export function OneAction({
   whyThisNow,
   constraints,
   plan,
+  sourceFiles = [],
   negotiationLoading = false,
   onAccept,
   onReject,
@@ -202,7 +44,8 @@ export function OneAction({
   focusMode = true,
 }: Props) {
   useTrackMountEvent('action_shown');
-  const [showTunePanel, setShowTunePanel] = useState(false);
+  const workflowType = action?.workflowType || data.workflow_type;
+  const [showTunePanel, setShowTunePanel] = useState(workflowType === 'client_resume');
   const [replyDraftValue, setReplyDraftValue] = useState(action?.replyDraft || data.reply_draft || '');
   const replyDraftRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -211,12 +54,11 @@ export function OneAction({
     action?.workflowType === 'client_resume'
       ? ''
       : action?.replyDraft || data.reply_draft || '';
-  const workflowType = action?.workflowType || data.workflow_type;
   const selectedTimeBudget = constraints?.timeBudgetMin;
   const selectedEnergy = constraints?.energyLevel;
   const hasConstraintSelection = typeof selectedTimeBudget === 'number' || typeof selectedEnergy === 'string';
   const primaryActionLabel = 'ใช้ก้าวนี้';
-  const secondaryActionLabel = 'ลองอีกทาง';
+  const secondaryActionLabel = 'ขอก้าวอื่น';
   const heroReason =
     whyThisNow
     || situationSummary
@@ -227,14 +69,20 @@ export function OneAction({
         : 'ก้าวนี้ใกล้การลงมือที่สุด และแตกเป็นขั้นตอนเล็ก ๆ ต่อได้ทันที');
   const [showReplyDraft, setShowReplyDraft] = useState(false);
   const primaryStep = plan?.steps[0];
+  const fileLifecycleItems = sourceFiles.slice(0, 3).map((file) => ({
+    id: file.id,
+    name: file.name,
+    status: file.status,
+    copy: getRoomFileUxCopy(file),
+  }));
 
   useEffect(() => {
     setReplyDraftValue(replyDraft);
   }, [replyDraft]);
 
   useEffect(() => {
-    setShowTunePanel(false);
-  }, [data.recommended_action.title]);
+    setShowTunePanel(workflowType === 'client_resume');
+  }, [data.recommended_action.title, workflowType]);
 
   useEffect(() => {
     setShowReplyDraft(false);
@@ -305,7 +153,48 @@ export function OneAction({
         <p className="action-hero-rationale">{data.recommended_action.rationale}</p>
       </div>
 
-      <StepEvidence step={primaryStep} />
+      <StepEvidencePanel step={primaryStep} />
+
+      {fileLifecycleItems.length > 0 && (
+        <div
+          className="supporting-panel"
+          style={{ width: '100%', maxWidth: '42rem', padding: '0.75rem 0.85rem' }}
+          aria-label="สถานะไฟล์แนบในห้องนี้"
+        >
+          <p className="supporting-label" style={{ marginBottom: '0.45rem' }}>
+            สถานะไฟล์แนบ
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+            {fileLifecycleItems.map((file) => (
+              <div
+                key={file.id}
+                style={{ display: 'flex', justifyContent: 'space-between', gap: '0.65rem', alignItems: 'center' }}
+              >
+                <span
+                  style={{
+                    minWidth: 0,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    color: 'var(--text-secondary)',
+                    fontSize: '0.84rem',
+                  }}
+                >
+                  {file.name}
+                </span>
+                <span className={file.status === 'ready' ? 'studio-chip studio-chip-success' : 'studio-chip'}>
+                  {file.copy.title}
+                </span>
+              </div>
+            ))}
+          </div>
+          {sourceFiles.length > fileLifecycleItems.length && (
+            <p className="studio-inline-note" style={{ margin: '0.5rem 0 0' }}>
+              อีก {sourceFiles.length - fileLifecycleItems.length} ไฟล์อยู่ในบริบทห้องนี้
+            </p>
+          )}
+        </div>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.7rem', width: '100%', maxWidth: '42rem' }}>
         <button className="primary" onClick={onAccept}>{primaryActionLabel}</button>
@@ -314,7 +203,7 @@ export function OneAction({
             onClick={onNotLikeThis}
             style={{ background: 'transparent', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}
           >
-            ไม่ใช่แบบนี้
+            ช่วยแก้ก้าวนี้
           </button>
         )}
         <button
@@ -420,35 +309,50 @@ export function OneAction({
               })}
             </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem' }}>
+          {workflowType === 'client_response' ? (
             <button onClick={() => {
               markAdjustmentIntent();
-              onNegotiate({ mode: 'smaller' });
-            }} disabled={negotiationLoading}>เล็กลง</button>
+              onNegotiate({ mode: 'reply_first' });
+            }} disabled={negotiationLoading}>ตอบลูกค้าก่อน</button>
+          ) : (
             <button onClick={() => {
               markAdjustmentIntent();
-              onNegotiate({ mode: 'faster' });
-            }} disabled={negotiationLoading}>เร็วขึ้น</button>
-            <button onClick={() => {
-              markAdjustmentIntent();
-              onNegotiate({ mode: 'safer' });
-            }} disabled={negotiationLoading}>ปลอดภัยขึ้น</button>
-            {workflowType === 'client_response' ? (
+              onNegotiate({ mode: 'resume_first' });
+            }} disabled={negotiationLoading}>เริ่มงานก่อน</button>
+          )}
+          <details open={!focusMode}>
+            <summary
+              style={{
+                cursor: 'pointer',
+                color: 'var(--text-secondary)',
+                fontSize: '0.84rem',
+                fontWeight: 600,
+                listStyle: 'none',
+                textAlign: 'left',
+              }}
+            >
+              ปรับเพิ่ม
+            </summary>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem', marginTop: '0.75rem' }}>
               <button onClick={() => {
                 markAdjustmentIntent();
-                onNegotiate({ mode: 'reply_first' });
-              }} disabled={negotiationLoading}>ตอบลูกค้าก่อน</button>
-            ) : (
+                onNegotiate({ mode: 'smaller' });
+              }} disabled={negotiationLoading}>เล็กลง</button>
               <button onClick={() => {
                 markAdjustmentIntent();
-                onNegotiate({ mode: 'resume_first' });
-              }} disabled={negotiationLoading}>เริ่มงานก่อน</button>
-            )}
-          </div>
+                onNegotiate({ mode: 'faster' });
+              }} disabled={negotiationLoading}>เร็วขึ้น</button>
+              <button onClick={() => {
+                markAdjustmentIntent();
+                onNegotiate({ mode: 'safer' });
+              }} disabled={negotiationLoading}>ปลอดภัยขึ้น</button>
+            </div>
+          </details>
           {negotiationLoading && (
-            <p aria-live="polite" className="supporting-summary" style={{ color: 'var(--text-secondary)', margin: 0 }}>
-              MIND กำลังปรับก้าวนี้ให้เข้ากับเวลา พลังงาน และบริบทของงานนี้…
-            </p>
+            <AIProcessingIndicator
+              label="กำลังปรับ next move"
+              detail="MIND กำลังปรับก้าวนี้ให้เข้ากับเวลา พลังงาน และบริบทของงานนี้"
+            />
           )}
         </div>
       </details>

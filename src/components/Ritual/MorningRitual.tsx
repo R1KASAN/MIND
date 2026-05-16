@@ -3,6 +3,7 @@
 import { useTrackMountEvent, trackEvent } from '@/lib/instrumentation';
 import type { ReentryBrief } from '@/lib/store/idb';
 import type { StudioSnapshot } from '@/lib/orchestrator/studio';
+import { AIProcessingIndicator } from '@/components/AI/AIProcessingIndicator';
 import { ContextSnapshot } from '@/components/Studio/ContextSnapshot';
 
 interface Props {
@@ -49,18 +50,18 @@ export function MorningRitual({
     <div className="reentry-hero-shell">
       <div className="reentry-hero-header">
         <p className="reentry-hero-kicker">กลับมาทำต่อ</p>
-        <h1 className="reentry-hero-title">{reentryBrief ? 'Catch up in 2 minutes' : `${greeting}.`}</h1>
+        <h1 className="reentry-hero-title">{reentryBrief ? 'กลับมาทำต่อใน 2 นาที' : `${greeting}.`}</h1>
       </div>
       {reentryBrief ? (
         <>
           <div className="reentry-hero-support">
-            <p className="reentry-hero-support-title">What is this work about?</p>
+            <p className="reentry-hero-support-title">งานนี้เกี่ยวกับอะไร</p>
             <p className="reentry-hero-card-copy">{reentryBrief.summary}</p>
-            <p className="reentry-hero-support-title">Where did I leave off last time?</p>
+            <p className="reentry-hero-support-title">ครั้งก่อนค้างตรงไหน</p>
             <p className="reentry-hero-card-copy">
               {primaryTopAction ? primaryTopAction.rationale : 'MIND เก็บ save point ล่าสุดของห้องนี้ไว้แล้ว'}
             </p>
-            <p className="reentry-hero-support-title">What is a safe next step now?</p>
+            <p className="reentry-hero-support-title">ตอนนี้ควรเริ่มตรงไหน</p>
             <p className="reentry-hero-card-copy">
               {primaryTopAction ? primaryTopAction.title : 'กลับไปต่อจากจุดเดิม'}
             </p>
@@ -82,7 +83,7 @@ export function MorningRitual({
                   onResumeSuggested?.();
                 }}
               >
-                Okay, continue here
+                ต่อจากก้าวนี้
               </button>
             ) : (
               <button
@@ -184,9 +185,11 @@ export function MorningRitual({
       )}
 
       {loading && (
-        <p className="reentry-hero-loading">
-          MIND กำลังคัดว่าควรกลับไปเริ่มจากตรงไหนดี
-        </p>
+        <AIProcessingIndicator
+          size="panel"
+          label="กำลังคัดทางเริ่มวันนี้"
+          detail="MIND กำลังคัดว่าควรกลับไปเริ่มจากตรงไหนดี"
+        />
       )}
 
       {!reentryBrief && (

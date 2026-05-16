@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { StudioIntent, StudioIntentId, StudioSnapshot } from '@/lib/orchestrator/studio';
+import { AIProcessingIndicator } from '@/components/AI/AIProcessingIndicator';
 import { ContextSnapshot } from './ContextSnapshot';
 
 type StudioMode = 'dump' | 'action' | 'scaffold' | 'rescue' | 'reentry';
@@ -26,8 +27,8 @@ const PANEL_COPY: Record<StudioMode, { title: string; detail: string }> = {
     detail: 'ดูจุดล่าสุดก่อน แล้วค่อยเลือกตัวช่วย',
   },
   action: {
-    title: 'ช่วยก้าวนี้',
-    detail: 'ดูเหตุผลสั้น ๆ หรือปรับทางต่อ',
+    title: 'บริบทที่ใช้กับก้าวนี้',
+    detail: 'ดูที่มาและเหตุผลก่อนปรับทางต่อ',
   },
   scaffold: {
     title: 'ช่วยย่อยงาน',
@@ -38,8 +39,8 @@ const PANEL_COPY: Record<StudioMode, { title: string; detail: string }> = {
     detail: 'ดูทางออกสั้น ๆ ก่อนเริ่มใหม่',
   },
   reentry: {
-    title: 'กลับเข้าห้องเดิม',
-    detail: 'สรุปค้างและทางเริ่มที่สั้นสุด',
+    title: 'บริบทที่ใช้กลับมาต่อ',
+    detail: 'ดูสถานะค้างและเหตุผลของทางเริ่ม',
   },
 };
 
@@ -61,10 +62,14 @@ export function StudioPanel({
   const [blockedMessage, setBlockedMessage] = useState<string | null>(null);
   const [blockedIntentId, setBlockedIntentId] = useState<StudioIntentId | null>(null);
   const [snapshotEmphasized, setSnapshotEmphasized] = useState(false);
-  const primaryIntents = intents.slice(0, 2);
-  const extraIntents = intents.slice(2);
   const snapshotRef = useRef<HTMLDivElement | null>(null);
   const copy = PANEL_COPY[mode];
+  const prioritizeContextOnMobile = isCompactViewport && (mode === 'action' || mode === 'reentry');
+  const primaryIntents = prioritizeContextOnMobile
+    ? intents.filter((intent) => intent.id === 'review_status').slice(0, 1)
+    : intents.slice(0, 2);
+  const primaryIntentIds = new Set(primaryIntents.map((intent) => intent.id));
+  const extraIntents = intents.filter((intent) => !primaryIntentIds.has(intent.id));
   const showAllDesktopIntents = !focusMode || expandDesktopIntents;
   const showAllMobileIntents = !focusMode || expandMobileIntents;
 
@@ -104,12 +109,18 @@ export function StudioPanel({
           className={`studio-intent-button ${intent.active ? 'is-active' : 'is-blocked'}`}
         >
           <span style={{ fontWeight: 600, textAlign: 'left' }}>
-            {isLoading ? 'กำลังใช้บริบทเดิม…' : intent.label}
+            {intent.label}
           </span>
           <span style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', textAlign: 'left', lineHeight: 1.5 }}>
             {intent.active ? intent.description : intent.blockedReason ?? intent.description}
           </span>
         </button>
+        {isLoading ? (
+          <AIProcessingIndicator
+            label="กำลังใช้บริบทเดิม"
+            detail="MIND กำลังใช้บริบทล่าสุดของห้องนี้"
+          />
+        ) : null}
         {showBlockedMessage ? <p className="studio-inline-note">{blockedMessage}</p> : null}
       </div>
     );
@@ -119,7 +130,7 @@ export function StudioPanel({
     <aside className="studio-panel">
       <div className="studio-panel-intro">
         <div className="studio-panel-intro-copy">
-          <p className="studio-eyebrow">Studio / ตัวช่วย</p>
+          <p className="studio-eyebrow">บริบทที่ใช้ช่วยคุณ</p>
           <h2 className="studio-panel-title">{copy.title}</h2>
         </div>
         <p className="studio-panel-detail">

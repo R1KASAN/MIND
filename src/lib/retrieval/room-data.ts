@@ -28,6 +28,9 @@ export interface RoomDataSource extends RetrievalSourceItem {
   deleteToken: string;
   deletable?: boolean;
   refStatus?: RoomMemoryRefStatus;
+  memoryRefIds?: string[];
+  refStatuses?: RoomMemoryRefStatus[];
+  recentEventTypes?: string[];
 }
 
 export interface RoomDataSearchInput {
@@ -189,7 +192,7 @@ export function buildRoomDataSources(task: TaskContext, now = Date.now()): RoomD
       kind: 'manual_summary',
       title: 'Manual context',
       status: 'ready',
-      label: `Manual summary · ${formatShortDate(task.createdAt)}`,
+      label: `ใช้ข้อความที่คุณวางไว้ · ${formatShortDate(task.createdAt)}`,
       summary: task.lastStableSummary ?? task.lastSynthesis?.situation_summary ?? excerpt,
       rawText: manualText,
       excerpt,

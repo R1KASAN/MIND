@@ -7,6 +7,10 @@ function makePdfFile(name = 'brief.pdf') {
   return new File(['placeholder'], name, { type: 'application/pdf' });
 }
 
+function makeImageFile(name = 'scan.png') {
+  return new File(['placeholder'], name, { type: 'image/png' });
+}
+
 test('normalizeFileText strips NUL characters and collapses whitespace', () => {
   const normalized = normalizeFileText('A\u0000\r\n\r\n  B   C\t\tD');
   assert.equal(normalized, 'A\n\nB C D');
@@ -104,6 +108,59 @@ test('extractRoomSubmission marks PDF failed when OCR runtime fails', async () =
   assert.equal(submission.sourceFiles[0]?.failureDetail, 'pdf_ocr_timeout');
   assert.equal(submission.extractedText, '');
   assert.equal(submission.sourceText.includes('ไฟล์แนบ'), true);
+});
+
+test('extractRoomSubmission keeps txt ready when PDF OCR fails', async () => {
+  const textFile = new File(['Client asked for Friday deadline and CRM scope confirmation.'], 'client-note.txt', {
+    type: 'text/plain',
+  });
+  const submission = await extractRoomSubmission('', [textFile, makePdfFile('scanned.pdf')], {
+    extractPdfTextLayer: async () => '',
+    extractPdfTextViaOcr: async () => {
+      throw new Error('ocr_unavailable');
+    },
+  });
+
+  assert.equal(submission.sourceFiles[0]?.status, 'ready');
+  assert.equal(submission.sourceFiles[0]?.kind, 'text');
+  assert.equal(submission.sourceFiles[0]?.extractedText, 'Client asked for Friday deadline and CRM scope confirmation.');
+  assert.equal(submission.sourceFiles[1]?.status, 'failed_extraction');
+  assert.equal(submission.sourceFiles[1]?.failureReason, 'pdf_ocr_failed');
+  assert.equal(submission.sourceFiles[1]?.failureStage, 'pdf_ocr');
+  assert.equal(submission.sourceFiles[1]?.failureDetail, 'ocr_unavailable');
+  assert.equal(submission.extractedText, 'Client asked for Friday deadline and CRM scope confirmation.');
+  assert.equal(submission.sourceText.includes('บริบทจากไฟล์แนบ'), true);
+});
+
+test('extractRoomSubmission extracts image text through OCR adapter', async () => {
+  const submission = await extractRoomSubmission('', [makeImageFile()], {
+    extractImageText: async () => 'ลูกค้าส่งรูป brief และขอให้ยืนยันขอบเขตงานก่อนเริ่ม',
+  });
+
+  assert.equal(submission.sourceFiles[0]?.status, 'ready');
+  assert.equal(submission.sourceFiles[0]?.kind, 'image');
+  assert.equal(submission.sourceFiles[0]?.extractedText, 'ลูกค้าส่งรูป brief และขอให้ยืนยันขอบเขตงานก่อนเริ่ม');
+  assert.equal(submission.sourceFiles[0]?.ocrEngine, 'tesseract');
+  assert.equal(submission.extractedText.includes('ยืนยันขอบเขตงาน'), true);
+});
+
+test('extractRoomSubmission keeps other files when image OCR fails', async () => {
+  const textFile = new File(['Use the pasted launch notes as the source of truth.'], 'launch-notes.md', {
+    type: 'text/markdown',
+  });
+  const submission = await extractRoomSubmission('', [textFile, makeImageFile('receipt.png')], {
+    extractImageText: async () => {
+      throw new Error('image_ocr_unavailable');
+    },
+  });
+
+  assert.equal(submission.sourceFiles[0]?.status, 'ready');
+  assert.equal(submission.sourceFiles[0]?.extractedText, 'Use the pasted launch notes as the source of truth.');
+  assert.equal(submission.sourceFiles[1]?.status, 'failed_extraction');
+  assert.equal(submission.sourceFiles[1]?.failureReason, 'image_ocr_failed');
+  assert.equal(submission.sourceFiles[1]?.failureStage, 'image_ocr');
+  assert.equal(submission.sourceFiles[1]?.failureDetail, 'image_ocr_unavailable');
+  assert.equal(submission.extractedText, 'Use the pasted launch notes as the source of truth.');
 });
 
 test('extractRoomSubmission treats markdown demo companion as ready text source', async () => {

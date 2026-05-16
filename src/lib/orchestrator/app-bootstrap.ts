@@ -54,7 +54,7 @@ export function parseBootstrapFlags(searchParams: URLSearchParams | null, nodeEn
     scenarioId: searchParams?.get('scenario') === 'sales'
       ? 'sales_inquiry_demo_request'
       : 'client_project_restart',
-    allowAiDebug: nodeEnv !== 'production' || searchParams?.get('debug') === 'ai',
+    allowAiDebug: searchParams?.get('debug') === 'ai',
     showAiOpsDebug: searchParams?.get('debug') === 'ai',
     allowObservationCapture: searchParams?.get('observe') === '1',
     showObservationCapture: searchParams?.get('observe') === '1',

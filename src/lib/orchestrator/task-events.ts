@@ -20,6 +20,10 @@ import { trackEvent } from '@/lib/instrumentation';
 import { composeRoomSourceText } from '@/lib/room';
 import { buildRoomDataSources, createMetadataRetrievalEngine, type RoomDataSource } from '@/lib/retrieval/room-data';
 import {
+  buildActionEvidenceContext,
+  type ActionEvidenceContext,
+} from '@/lib/orchestrator/evidence-context';
+import {
   appendRoomMemoryEvent,
   buildRoomMemoryReplayContext,
   ensureRoomMemoryBackfilled,
@@ -47,6 +51,11 @@ type IntakeRequestTask = Pick<TaskContext, 'sourceText'> & Partial<Pick<
   | 'assistantMode'
   | 'lastAiOperation'
 >>;
+
+export interface ActionRequestResult {
+  actionResponse: AiActionResponse;
+  evidenceContext: ActionEvidenceContext;
+}
 
 function sourceTextIsCanonicalMergedRoomText(task: TaskContext) {
   const normalizedSourceText = task.sourceText.trim();
@@ -261,6 +270,15 @@ async function safeAppendLiveSourceAddedEvents(
   }
 }
 
+export async function recordTaskSourcesInRoomMemory(
+  task: TaskContext,
+  sourceOperationId = 'source_update',
+): Promise<RoomMemoryRef[]> {
+  const refs = roomMemoryRefsFromSources(buildRoomDataSources(task).filter((source) => source.status === 'ready'));
+  await safeAppendLiveSourceAddedEvents(task, refs, sourceOperationId);
+  return refs;
+}
+
 function buildLiveRoomMemoryEvent(input: {
   task: TaskContext;
   type: RoomMemoryEventType;
@@ -320,8 +338,7 @@ export async function requestIntake(task: TaskContext): Promise<AiIntakeResponse
     `AI intake ไม่สำเร็จ (${response.status})`,
     'intake',
   );
-  const refs = roomMemoryRefsFromSources(buildRoomDataSources(task).filter((source) => source.status === 'ready'));
-  await safeAppendLiveSourceAddedEvents(task, refs, 'intake');
+  const refs = await recordTaskSourcesInRoomMemory(task, 'intake');
   await safeAppendLiveRoomMemoryEvent(buildLiveRoomMemoryEvent({
     task,
     type: 'summary_updated',
@@ -348,11 +365,12 @@ export async function requestAction(options: {
   task: TaskContext;
   preferredCandidate?: AiIntakeResponse['candidateActions'][number];
   negotiation?: { mode: AiActionNegotiationMode; userNote?: string };
-}): Promise<AiActionResponse> {
+}): Promise<ActionRequestResult> {
+  const evidenceContext = await buildActionEvidenceContext(options);
   const response = await fetch('/api/ai/action', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(options),
+    body: JSON.stringify({ ...options, evidenceContext }),
   });
 
   const action = await parseOperationResponse(
@@ -392,7 +410,7 @@ export async function requestAction(options: {
       sourceOperationId: 'action',
     }));
   }
-  return action;
+  return { actionResponse: action, evidenceContext };
 }
 
 export async function requestScaffold(
@@ -836,6 +854,7 @@ export async function runIntakeActionFlow(task: TaskContext): Promise<
       intake: AiIntakeResponse;
       intakeTask: TaskContext;
       actionResponse: AiActionResponse;
+      evidenceContext: ActionEvidenceContext;
     }
 > {
   const intake = await requestIntake(task);
@@ -858,7 +877,7 @@ export async function runIntakeActionFlow(task: TaskContext): Promise<
     };
   }
 
-  const actionResponse = await requestAction({
+  const { actionResponse, evidenceContext } = await requestAction({
     task: intakeTask,
     preferredCandidate: intake.candidateActions[0],
   });
@@ -868,5 +887,6 @@ export async function runIntakeActionFlow(task: TaskContext): Promise<
     intake,
     intakeTask,
     actionResponse,
+    evidenceContext,
   };
 }

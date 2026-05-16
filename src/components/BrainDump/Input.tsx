@@ -6,6 +6,7 @@ import {
   composeRoomSourceText,
   getRoomFileUxCopy,
   inferRoomFileKind,
+  normalizeRoomFileText,
   type RoomSubmission,
   type RoomSourceFile,
 } from '@/lib/room';
@@ -22,6 +23,7 @@ interface Props {
   roomId?: string;
   disabled?: boolean;
   disabledReason?: string;
+  entryVariant?: 'default' | 'get_started' | 'active_context';
 }
 
 type DemoScenarioId = 'client_project_restart' | 'sales_inquiry_demo_request';
@@ -64,6 +66,7 @@ export function BrainDumpInput({
   roomId,
   disabled = false,
   disabledReason,
+  entryVariant = 'default',
 }: Props) {
   const [val, setVal] = useState(() => initialText ?? '');
   const [files, setFiles] = useState<File[]>([]);
@@ -79,6 +82,41 @@ export function BrainDumpInput({
   const selectedScenario: DemoScenario = activeScenarioId === ADVANCED_SCENARIO.id
     ? ADVANCED_SCENARIO
     : FEATURED_SCENARIO;
+  const copy = entryVariant === 'get_started'
+    ? {
+        kicker: 'เริ่มตรงนี้',
+        title: 'วางบริบทงานค้างตรงนี้',
+        detail: 'พิมพ์งานที่ค้างอยู่ หรือวางอีเมล note แชต ตารางงาน แล้วให้ MIND ช่วยหา next move',
+        boxTitle: 'เริ่มจากบริบทที่มี',
+        boxDetail: 'ถ้าข้อมูลยังไม่พอ MIND จะถามเพิ่มแค่ 1 คำถาม',
+        placeholder: 'วางอีเมล note บทสนทนา ตารางงาน หรือเล่าให้ฟังว่างานนี้ค้างอยู่ตรงไหน...',
+        submitLabel: 'ไปต่อ',
+        submittingLabel: 'กำลังสรุป...',
+        showExamples: true,
+      }
+    : entryVariant === 'active_context'
+      ? {
+          kicker: 'เพิ่มบริบท',
+          title: 'เพิ่มบริบทงานนี้ถ้าก้าวถัดไปยังไม่พอ',
+          detail: 'ใช้ช่องนี้เมื่อมีแชต ไฟล์ หรือรายละเอียดใหม่ ไม่ต้องเริ่มงานใหม่จากศูนย์',
+          boxTitle: 'เพิ่มข้อมูลให้ห้องนี้',
+          boxDetail: 'ก้าวหลักอยู่ด้านบน ช่องนี้เป็นบริบทเสริม',
+          placeholder: 'เพิ่มข้อมูลใหม่ของงานนี้ เช่น ลูกค้าเพิ่งตอบกลับ / scope เปลี่ยน / มีไฟล์หรือ note เพิ่ม...',
+          submitLabel: 'เพิ่มบริบท',
+          submittingLabel: 'กำลังเพิ่มบริบท...',
+          showExamples: false,
+        }
+      : {
+          kicker: presentationMode ? 'เล่างานใน 30 วินาที' : 'เริ่มงานนี้',
+          title: 'พิมพ์งานก่อน แล้วค่อยแนบไฟล์ถ้ามี',
+          detail: 'พิมพ์สิ่งที่ค้างอยู่ตรง ๆ แล้วกดไปต่อได้เลย ถ้ามีไฟล์ค่อยแนบเพิ่มทีหลัง',
+          boxTitle: 'วางงานตรงนี้ก่อน',
+          boxDetail: 'ไฟล์เป็นบริบทเสริม ไม่จำเป็นต้องมีตั้งแต่รอบแรก',
+          placeholder: 'พิมพ์สภาพงานตอนนี้ตรง ๆ ได้เลย เช่น ลูกค้าส่ง feedback มา / งานค้างไปหลายวัน / รอไฟล์จากลูกค้า...',
+          submitLabel: 'ไปต่อ',
+          submittingLabel: 'กำลังสรุป...',
+          showExamples: true,
+        };
 
   const acceptedFileTypes = useMemo(
     () => 'application/pdf,image/*,.txt,.md,.markdown,.csv,.tsv,.json,.yaml,.yml',
@@ -167,32 +205,72 @@ export function BrainDumpInput({
     };
   };
 
-  const buildPendingSubmission = (
+  const buildSubmissionFromSourceFiles = (
+    textSnapshot: string,
+    sourceFiles: RoomSourceFile[],
+  ): RoomSubmission => {
+    const extractedText = sourceFiles
+      .map((file) => file.status === 'ready' ? file.extractedText?.trim() : undefined)
+      .filter((value): value is string => Boolean(value))
+      .join('\n\n');
+    return {
+      text: textSnapshot,
+      sourceText: composeRoomSourceText(textSnapshot, extractedText, sourceFiles),
+      extractedText,
+      sourceFiles,
+    };
+  };
+
+  const buildInitialFileSubmission = async (
     textSnapshot: string,
     fileSnapshot: File[],
     storageKeys: Array<string | undefined> = [],
-  ): RoomSubmission => {
+  ): Promise<RoomSubmission> => {
     const now = Date.now();
-    const sourceFiles: RoomSourceFile[] = fileSnapshot.map((file, index) => ({
-      id: `${now}-${index}-${file.name}`,
-      name: file.name,
-      kind: inferRoomFileKind(file.name, file.type),
-      mimeType: file.type || 'application/octet-stream',
-      size: file.size,
-      status: 'pending',
-      createdAt: now,
-      failureReason: 'file_extraction_pending',
-      failureStage: 'pending',
-      storageKey: storageKeys[index],
-      lastExtractAttemptAt: now,
-      extractAttemptCount: 0,
+    const sourceFiles = await Promise.all(fileSnapshot.map(async (file, index): Promise<RoomSourceFile> => {
+      const kind = inferRoomFileKind(file.name, file.type);
+      const base: RoomSourceFile = {
+        id: `${now}-${index}-${file.name}`,
+        name: file.name,
+        kind,
+        mimeType: file.type || 'application/octet-stream',
+        size: file.size,
+        status: 'pending',
+        createdAt: now,
+        failureReason: 'file_extraction_pending',
+        failureStage: 'pending',
+        storageKey: storageKeys[index],
+        lastExtractAttemptAt: now,
+        extractAttemptCount: 0,
+      };
+
+      if (kind !== 'text' && kind !== 'table') return base;
+
+      try {
+        const extractedText = normalizeRoomFileText(await file.text());
+        return {
+          ...base,
+          status: 'ready',
+          extractedText,
+          failureReason: undefined,
+          failureStage: undefined,
+          lastExtractAttemptAt: now,
+          extractAttemptCount: 1,
+        };
+      } catch (error) {
+        return {
+          ...base,
+          status: 'failed_extraction',
+          failureReason: 'text_read_failed',
+          failureDetail: error instanceof Error ? error.message : 'text_read_failed',
+          failureStage: 'text_read',
+          lastExtractAttemptAt: now,
+          extractAttemptCount: 1,
+        };
+      }
     }));
-    return {
-      text: textSnapshot,
-      sourceText: composeRoomSourceText(textSnapshot, '', sourceFiles),
-      extractedText: '',
-      sourceFiles,
-    };
+
+    return buildSubmissionFromSourceFiles(textSnapshot, sourceFiles);
   };
 
   const buildExtractionWarning = (sourceFiles: RoomSourceFile[]) => {
@@ -339,7 +417,7 @@ export function BrainDumpInput({
 
       if (fileSnapshot.length > 0) {
         savedStorageKeys = await saveFilesForRetry();
-        submission = buildPendingSubmission(textSnapshot, fileSnapshot, savedStorageKeys);
+        submission = await buildInitialFileSubmission(textSnapshot, fileSnapshot, savedStorageKeys);
         setUploadError(buildExtractionWarning(submission.sourceFiles));
       } else {
         submission = {
@@ -358,7 +436,19 @@ export function BrainDumpInput({
       if (fileInputRef.current) fileInputRef.current.value = '';
 
       if (fileSnapshot.length > 0) {
-        void runBackgroundExtraction(textSnapshot, fileSnapshot, submission.sourceFiles, savedStorageKeys);
+        const pendingExtractionItems = submission.sourceFiles
+          .map((sourceFile, index) => ({ sourceFile, file: fileSnapshot[index], storageKey: savedStorageKeys[index] }))
+          .filter((item): item is { sourceFile: RoomSourceFile; file: File; storageKey: string | undefined } => (
+            item.sourceFile.status === 'pending' && Boolean(item.file)
+          ));
+        if (pendingExtractionItems.length > 0) {
+          void runBackgroundExtraction(
+            textSnapshot,
+            pendingExtractionItems.map((item) => item.file),
+            pendingExtractionItems.map((item) => item.sourceFile),
+            pendingExtractionItems.map((item) => item.storageKey),
+          );
+        }
       }
     } catch (error) {
       const failureDetail = error instanceof Error ? error.message : 'extract_request_failed';
@@ -378,7 +468,7 @@ export function BrainDumpInput({
 
   return (
     <div
-      className="dump-stage-layout"
+      className={`dump-stage-layout dump-stage-layout-${entryVariant}`}
       style={{
         gap: 'clamp(0.8rem, 2.2vw, 1.15rem)',
         paddingTop: 'clamp(0.85rem, 3vw, 1.5rem)',
@@ -406,13 +496,13 @@ export function BrainDumpInput({
       <div className="dump-stage-main">
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', letterSpacing: '0.18em', textTransform: 'uppercase' }}>
-            {presentationMode ? '30-second story' : 'เริ่มงานนี้'}
+            {copy.kicker}
           </p>
           <h1 style={{ fontSize: '2rem', fontWeight: 650, lineHeight: 1.08 }}>
-            พิมพ์งานก่อน แล้วค่อยแนบไฟล์ถ้ามี
+            {copy.title}
           </h1>
           <p style={{ color: 'var(--text-secondary)', maxWidth: '36rem' }}>
-            พิมพ์สิ่งที่ค้างอยู่ตรง ๆ แล้วกดไปต่อได้เลย ถ้ามีไฟล์ค่อยแนบเพิ่มทีหลัง
+            {copy.detail}
           </p>
         </div>
 
@@ -431,9 +521,9 @@ export function BrainDumpInput({
         }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
-            <p style={{ margin: 0, fontWeight: 600 }}>วางงานตรงนี้ก่อน</p>
+            <p style={{ margin: 0, fontWeight: 600 }}>{copy.boxTitle}</p>
             <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.86rem' }}>
-              ไฟล์เป็นบริบทเสริม ไม่จำเป็นต้องมีตั้งแต่รอบแรก
+              {copy.boxDetail}
             </p>
           </div>
           <button
@@ -474,7 +564,7 @@ export function BrainDumpInput({
           fontSize: '0.84rem',
         }}>
           <span>ลากไฟล์มาวางในกล่องนี้ได้ ถ้าต้องใช้</span>
-          <span>{hasFiles ? `${files.length} ไฟล์พร้อมใช้` : 'ไฟล์เป็นบริบทเสริมเท่านั้น'}</span>
+          <span>{hasFiles ? `${files.length} ไฟล์พร้อมแนบ` : 'ไฟล์เป็นบริบทเสริมเท่านั้น'}</span>
         </div>
 
         <textarea
@@ -482,7 +572,7 @@ export function BrainDumpInput({
           name="brainDumpText"
           value={val}
           onChange={e => setVal(e.target.value)}
-          placeholder="พิมพ์สภาพงานตอนนี้ตรง ๆ ได้เลย เช่น ลูกค้าส่ง feedback มา / งานค้างไปหลายวัน / รอไฟล์จากลูกค้า..."
+          placeholder={copy.placeholder}
           aria-label="พิมพ์สภาพงานของคุณ"
           style={{
             flex: 1,
@@ -536,9 +626,10 @@ export function BrainDumpInput({
         </div>
 
         <button className="primary" onClick={submit} disabled={!canSubmit} style={{ width: '100%' }}>
-          {disabled ? disabledReason ?? 'ใช้งานไม่ได้ชั่วคราว' : isSubmitting ? 'กำลังสรุป...' : 'ไปต่อ'}
+          {disabled ? disabledReason ?? 'ใช้งานไม่ได้ชั่วคราว' : isSubmitting ? copy.submittingLabel : copy.submitLabel}
         </button>
 
+        {copy.showExamples && (
         <details
           open={showAdvancedScenario}
           onToggle={(event) => setShowAdvancedScenario(event.currentTarget.open)}
@@ -586,6 +677,7 @@ export function BrainDumpInput({
             </div>
           </div>
         </details>
+        )}
       </div>
 
       {studioPanel && (

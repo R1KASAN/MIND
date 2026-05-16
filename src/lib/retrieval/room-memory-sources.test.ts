@@ -2,8 +2,12 @@ import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { answerRoomReviewQuestion, searchRoomDataSources } from '@/lib/retrieval/room-data';
-import { buildRoomDataSourcesWithMemory } from '@/lib/retrieval/room-memory-sources';
+import { searchRoomDataSources } from '@/lib/retrieval/room-data';
+import {
+  answerRoomTrustReviewQuestion,
+  buildRoomDataSourcesWithMemory,
+  buildRoomTrustReviewModel,
+} from '@/lib/retrieval/room-memory-sources';
 import {
   appendRoomMemoryEvent,
   clearRoomMemoryData,
@@ -74,14 +78,21 @@ test('buildRoomDataSourcesWithMemory exposes available, tombstone, and missing r
     deletedAt: 2500,
   }, db);
 
-  const sources = await buildRoomDataSourcesWithMemory(makeTask(), { db, now: 3000 });
-  const available = sources.find((source) => source.id === 'memory-ref:file:brief');
+  const model = await buildRoomTrustReviewModel(makeTask(), { db, now: 3000 });
+  const sources = model.sources;
+  const available = sources.find((source) => source.id === 'file:brief');
   const tombstone = sources.find((source) => source.id === 'memory-ref:file:deleted');
   const missing = sources.find((source) => source.id === 'memory-ref:file:missing');
 
-  assert.equal(available?.refStatus, 'available');
+  assert.equal(model.evidenceHealth.available, 1);
+  assert.equal(model.evidenceHealth.tombstone, 1);
+  assert.equal(model.evidenceHealth.missing, 1);
+  assert.deepEqual(available?.memoryRefIds, ['file:brief']);
+  assert.deepEqual(available?.refStatuses, ['available']);
   assert.equal(tombstone?.status, 'tombstone');
+  assert.equal(tombstone?.deletable, false);
   assert.equal(missing?.status, 'missing');
+  assert.equal(missing?.deletable, false);
   assert.equal(tombstone?.rawText, '');
   assert.doesNotMatch([tombstone?.summary, tombstone?.excerpt].join(' '), /SECRET DELETED RAW CONTENT/);
 
@@ -94,8 +105,39 @@ test('buildRoomDataSourcesWithMemory exposes available, tombstone, and missing r
   });
   assert.deepEqual(tombstoneResults.map((source) => source.id), ['memory-ref:file:deleted']);
 
-  const answer = answerRoomReviewQuestion('missing source', sources, 'room-1');
+  const answer = answerRoomTrustReviewQuestion('missing source', model, 'room-1');
   assert.equal(answer.sources.some((source) => source.status === 'missing'), true);
+
+  const legacySources = await buildRoomDataSourcesWithMemory(makeTask(), { db, now: 3000 });
+  assert.deepEqual(legacySources.map((source) => source.id), sources.map((source) => source.id));
+
+  await clearRoomMemoryData(db);
+  db.close();
+});
+
+test('buildRoomTrustReviewModel keeps replay bounded to the last 10 events and links event refs to evidence cards', async () => {
+  const db = createRoomMemoryDb(`mind_room_memory_trust_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+  for (let index = 0; index < 12; index += 1) {
+    await appendRoomMemoryEvent(event({
+      id: `event-${index}`,
+      type: index === 11 ? 'blocker_updated' : 'summary_updated',
+      createdAt: 2000 + index,
+      summary: index === 11 ? 'Budget blocker changed' : `Summary ${index}`,
+      refs: [{ id: 'file:brief', kind: 'pdf', label: 'Brief.pdf', excerpt: 'Budget evidence.' }],
+      payload: index === 11 ? { blockers: ['dependency'] } : { summary: `Summary ${index}` },
+    }), db);
+  }
+
+  const model = await buildRoomTrustReviewModel(makeTask(), { db, now: 3000 });
+
+  assert.equal(model.recentEvents.length, 10);
+  assert.equal(model.recentEvents[0]?.id, 'event-2');
+  assert.equal(model.recentEvents.at(-1)?.id, 'event-11');
+  assert.equal(model.snapshot?.currentBlockers[0], 'dependency');
+  assert.deepEqual(model.sources.find((source) => source.id === 'file:brief')?.recentEventTypes?.sort(), ['blocker_updated', 'summary_updated']);
+
+  const answer = answerRoomTrustReviewQuestion('Budget blocker', model, 'room-1');
+  assert.equal(answer.sources.some((source) => source.id === 'file:brief'), true);
 
   await clearRoomMemoryData(db);
   db.close();

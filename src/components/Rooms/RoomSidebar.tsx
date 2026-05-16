@@ -1,10 +1,10 @@
 "use client";
 
+import type { RoomSidebarItemView } from '@/lib/orchestrator/home-entry';
 import type { RoomRecord } from '@/lib/store/idb';
 
 interface Props {
-  rooms: RoomRecord[];
-  activeRoomId: string | null;
+  items?: RoomSidebarItemView[];
   onSelectRoom: (roomId: string) => void | Promise<void>;
   onCreateRoom: () => void | Promise<void>;
   collapsed?: boolean;
@@ -13,15 +13,15 @@ interface Props {
 }
 
 function scenarioLabel(room: RoomRecord) {
-  if (room.scenarioType === 'sales_inquiry_demo_request') return 'Urgent reply';
-  if (room.scenarioType === 'client_project_restart') return 'Project restart';
-  return 'Client room';
+  if (room.scenarioType === 'sales_inquiry_demo_request') return 'ต้องตอบลูกค้า';
+  if (room.scenarioType === 'client_project_restart') return 'งานค้างของลูกค้า';
+  return 'ห้องงานลูกค้า';
 }
 
 function freshnessCopy(room: RoomRecord) {
   if (room.aiFreshness === 'fallback') {
     return {
-      label: 'ใช้ brief ล่าสุด',
+      label: 'กลับมาทำต่อ',
       tone: 'fallback',
     };
   }
@@ -34,7 +34,7 @@ function freshnessCopy(room: RoomRecord) {
   }
 
   return {
-    label: 'AI สด',
+    label: 'พร้อมใช้',
     tone: 'fresh',
   };
 }
@@ -51,8 +51,7 @@ function roomInitial(title: string) {
 }
 
 export function RoomSidebar({
-  rooms,
-  activeRoomId,
+  items = [],
   onSelectRoom,
   onCreateRoom,
   collapsed = false,
@@ -62,7 +61,7 @@ export function RoomSidebar({
     <aside className={`room-sidebar ${collapsed ? 'is-collapsed' : ''}`}>
       <div className="room-sidebar-header">
         <div className="room-sidebar-header-copy">
-          <p className="studio-eyebrow">Rooms</p>
+          <p className="studio-eyebrow">ห้องงาน</p>
           {!collapsed && <h2 style={{ fontSize: '1.02rem', lineHeight: 1.3 }}>ห้องงานลูกค้า</h2>}
         </div>
         <div className="room-sidebar-header-actions">
@@ -78,19 +77,27 @@ export function RoomSidebar({
       </div>
 
       <div className="room-sidebar-list">
-        {rooms.map((room, index) => {
-          const active = room.id === activeRoomId;
+        {items.length === 0 && !collapsed ? (
+          <div className="room-sidebar-empty" role="status">
+            <p>ยังไม่มีห้องงาน</p>
+            <span>วางบริบทงานแรก แล้ว MIND จะสร้างห้องให้เอง</span>
+          </div>
+        ) : null}
+        {items.map((item, index) => {
+          const { room } = item;
+          const active = item.isActive;
           const freshness = freshnessCopy(room);
           const summary = room.lastKnownGoodBrief?.trim() || room.contextSummary.trim();
+          const statusLine = item.headline ?? roomStatusLine(room);
 
           return (
             <button
               key={room.id}
               type="button"
               onClick={() => void onSelectRoom(room.id)}
-              className={`room-sidebar-item ${active ? 'is-active' : ''}`}
+              className={`room-sidebar-item ${active ? 'is-active' : ''} ${item.isRecommended ? 'is-recommended' : ''}`}
               aria-pressed={active}
-              aria-label={`${room.title} ${roomStatusLine(room)}`}
+              aria-label={`${room.title} ${statusLine}`}
             >
               <div className="room-sidebar-item-top">
                 <span className="room-sidebar-avatar" aria-hidden="true">
@@ -100,7 +107,7 @@ export function RoomSidebar({
                   <>
                     <div className="room-sidebar-item-copy">
                       <strong style={{ fontSize: '0.92rem', lineHeight: 1.3, textAlign: 'left' }}>{room.title}</strong>
-                      <span className="room-sidebar-status-line">{roomStatusLine(room)}</span>
+                      <span className="room-sidebar-status-line">{statusLine}</span>
                     </div>
                     <span className="room-sidebar-index">{index + 1}</span>
                   </>
@@ -110,21 +117,33 @@ export function RoomSidebar({
               {collapsed ? (
                 <>
                   <div className="room-sidebar-collapsed-markers" aria-hidden="true">
+                    {item.isRecommended && <span className="room-sidebar-mini-dot room-sidebar-mini-dot-recommended" />}
                     <span className={`room-sidebar-mini-dot room-sidebar-mini-dot-${freshness.tone}`} />
                     {room.unread && <span className="room-sidebar-mini-dot room-sidebar-mini-dot-hot" />}
                     {room.stale && <span className="room-sidebar-mini-dot room-sidebar-mini-dot-warn" />}
                   </div>
-                  <span className={`room-sidebar-mini-active room-sidebar-mini-active-${active ? 'active' : room.unread ? 'unread' : room.stale ? 'stale' : 'idle'}`} aria-hidden="true" />
+                  <span className={`room-sidebar-mini-active room-sidebar-mini-active-${active ? 'active' : item.isRecommended ? 'recommended' : room.unread ? 'unread' : room.stale ? 'stale' : 'idle'}`} aria-hidden="true" />
                   <span className="room-sidebar-collapsed-index" aria-hidden="true">{index + 1}</span>
                 </>
               ) : (
                 <>
                   <div className="room-sidebar-meta room-sidebar-meta-compact">
+                    {item.isRecommended && (
+                      <span className="room-sidebar-chip room-sidebar-chip-recommended">
+                        {item.headline ?? 'ต่อได้เลย'}
+                      </span>
+                    )}
                     <span className={`room-sidebar-chip room-sidebar-chip-${freshness.tone}`}>{freshness.label}</span>
                     {room.unread && <span className="room-sidebar-chip room-sidebar-chip-hot">ยังมีของค้าง</span>}
                     {room.stale && <span className="room-sidebar-dot room-sidebar-dot-warn">ค้าง</span>}
                     {active && <span className="room-sidebar-dot room-sidebar-dot-active">กำลังทำ</span>}
                   </div>
+
+                  {item.nextAction && (
+                    <p className="room-sidebar-next-action">
+                      ก้าวถัดไป: {item.nextAction}
+                    </p>
+                  )}
 
                   {!focusMode && summary && <p className="room-sidebar-summary">{summary}</p>}
 

@@ -1,5 +1,6 @@
 import type { TaskContext } from '@/lib/store/idb';
 import { AiActionNegotiationModeSchema } from '@/lib/ai/operations';
+import type { ActionEvidenceContext } from '@/lib/orchestrator/evidence-context';
 import { parseAiActionResponse } from '@/lib/ai/operation-contract';
 import type { AiIntakeResponse } from '@/lib/ai/operations';
 import {
@@ -36,6 +37,7 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
   const task = body?.task as TaskContext | undefined;
   const preferredCandidate = body?.preferredCandidate as AiIntakeResponse['candidateActions'][number] | undefined;
+  const evidenceContext = body?.evidenceContext as ActionEvidenceContext | undefined;
   const negotiationParsed = AiActionNegotiationModeSchema.safeParse(body?.negotiation?.mode ?? 'default');
   const negotiation = negotiationParsed.success
     ? {
@@ -75,7 +77,7 @@ export async function POST(req: Request) {
     operationName: 'action',
     systemPrompt: ACTION_SYSTEM_PROMPT,
     repairPrompt: AI_OPERATION_REPAIR_PROMPT,
-    userPrompt: buildActionUserPrompt(task, preferredCandidate ?? null, negotiation ?? null),
+    userPrompt: buildActionUserPrompt(task, preferredCandidate ?? null, negotiation ?? null, evidenceContext ?? null),
     buildRepairUserPrompt: (invalidOutput, failureDetail) =>
       buildOperationRepairUserPrompt('action', taskContext, invalidOutput, failureDetail),
     parse: (raw) => parseAiActionResponse(raw, {

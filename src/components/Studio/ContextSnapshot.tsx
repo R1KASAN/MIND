@@ -38,6 +38,7 @@ export function ContextSnapshot({
   const readyCount = snapshot.readyFiles.length;
   const issueCount = snapshot.fileIssues.length;
   const pendingCount = snapshot.fileIssues.filter((file) => file.status === 'pending').length;
+  const failedCount = issueCount - pendingCount;
 
   return (
     <section
@@ -81,9 +82,9 @@ export function ContextSnapshot({
           )}
           {issueCount > 0 && (
             <div className="studio-snapshot-status studio-snapshot-status-failed">
-              <span className="studio-snapshot-status-kicker">ต้องลองใหม่</span>
+              <span className="studio-snapshot-status-kicker">{failedCount > 0 ? 'อ่านไม่สำเร็จ' : 'กำลังสกัดข้อความ'}</span>
               <strong>{issueCount} ไฟล์</strong>
-              <p>{pendingCount > 0 ? 'บางไฟล์กำลังอ่านอยู่ ไฟล์ที่ล้มเหลวยัง retry ได้' : 'อ่านไม่ชัดหรือยังไม่สำเร็จ แต่ยัง retry ได้'}</p>
+              <p>{pendingCount > 0 ? 'PDF/รูปภาพกำลังอ่านข้อความอยู่ ห้องยังไปต่อได้ด้วยบริบทที่พร้อมแล้ว' : 'ไฟล์ที่อ่านไม่สำเร็จยัง retry ได้ โดยไม่บล็อกไฟล์อื่น'}</p>
             </div>
           )}
         </div>
@@ -217,12 +218,18 @@ export function ContextSnapshot({
         <div className="studio-file-group studio-file-group-failed">
           <div className="studio-file-group-head">
             <div className="studio-file-group-copy">
-              <p className="studio-eyebrow" style={{ marginBottom: 0 }}>ไฟล์ที่ยังอ่านไม่สำเร็จ</p>
+              <p className="studio-eyebrow" style={{ marginBottom: 0 }}>
+                {failedCount > 0 ? 'ไฟล์ที่อ่านไม่สำเร็จ' : 'ไฟล์ที่กำลังสกัดข้อความ'}
+              </p>
               <p className="studio-inline-note" style={{ margin: 0 }}>
-                MIND จะใช้ข้อความเดิมและไฟล์ที่อ่านได้ต่อไปก่อน ไฟล์ที่กำลังอ่านจะอัปเดตเองเมื่อเสร็จ
+                MIND จะใช้ข้อความเดิมและไฟล์ที่อ่านได้ต่อไปก่อน ไฟล์ที่กำลังอ่านจะเปลี่ยนเป็นอ่านได้แล้วหรืออ่านไม่สำเร็จเมื่อเสร็จ
               </p>
             </div>
-            <span className="studio-chip studio-chip-danger">{issueCount} ไฟล์</span>
+            <span className="studio-chip studio-chip-danger">
+              {pendingCount > 0 && failedCount > 0
+                ? `${pendingCount} กำลังอ่าน · ${failedCount} อ่านไม่สำเร็จ`
+                : `${issueCount} ไฟล์`}
+            </span>
           </div>
           <div className="studio-file-stack">
             {snapshot.fileIssues.map((file) => {

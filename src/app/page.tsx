@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   getActions, AppSession, saveSession,
@@ -26,6 +26,16 @@ import {
   deriveRoomBlockers,
   hasResumableTask,
 } from '@/lib/orchestrator/task-machine';
+import {
+  buildRoomSidebarItems,
+  rankResumeRooms,
+  selectActiveRoomReentry,
+  resolveHomeEntryState,
+  selectRankedResumeRooms,
+  selectResumeRoom,
+  type ActiveRoomReentryState,
+  type RankedResumeRoom,
+} from '@/lib/orchestrator/home-entry';
 import {
   buildPreferredRoomSourceContext,
   createAutoRoomSourcePreference,
@@ -58,6 +68,7 @@ import {
   hasSeenValuePulse,
   type ValuePulseContext,
 } from '@/lib/value-pulse';
+import { recordTaskSourcesInRoomMemory } from '@/lib/orchestrator/task-events';
 import { markRoomMemoryRefDeleted } from '@/lib/store/room-memory-db';
 
 import { BrainDumpInput } from '@/components/BrainDump/Input';
@@ -80,6 +91,10 @@ import { DataReviewPanel } from '@/components/Studio/DataReviewPanel';
 import { ValuePulse } from '@/components/ValuePulse/ValuePulse';
 import { RoomSidebar } from '@/components/Rooms/RoomSidebar';
 import { RoomCanvasHeader } from '@/components/Rooms/RoomCanvasHeader';
+import { AIProcessingIndicator } from '@/components/AI/AIProcessingIndicator';
+import { GetStartedHome } from '@/components/Home/GetStartedHome';
+import { ResumePrompt } from '@/components/Home/ResumePrompt';
+import { ActiveRoomReentryCard } from '@/components/Home/ActiveRoomReentryCard';
 
 const DEFAULT_AI_HEALTH: HealthCheckResult = {
   status: 'checking',
@@ -314,6 +329,9 @@ export default function StateMachinePage() {
   const [session, setSession] = useState<AppSession | null>(null);
   const [rooms, setRooms] = useState<RoomRecord[]>([]);
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
+  const [resumeHomeRoom, setResumeHomeRoom] = useState<RankedResumeRoom | null>(null);
+  const [rankedSidebarRooms, setRankedSidebarRooms] = useState<RankedResumeRoom[]>([]);
+  const [activeRoomReentry, setActiveRoomReentry] = useState<ActiveRoomReentryState | null>(null);
   const sessionRef = useRef<AppSession | null>(null);
   const aiStatusRef = useRef<HealthCheckResult['status']>('checking');
   const [currentPayload, setCurrentPayload] = useState<AiSynthesisResponse | null>(null);
@@ -336,7 +354,7 @@ export default function StateMachinePage() {
   const [showWalkthrough, setShowWalkthrough] = useState(false);
   const [showDataReview, setShowDataReview] = useState<'manage' | 'review' | null>(null);
   const [aiOpsEntries, setAiOpsEntries] = useState<AiOpsDebugEntry[]>([]);
-  const [allowAiDebug, setAllowAiDebug] = useState(process.env.NODE_ENV !== 'production');
+  const [allowAiDebug, setAllowAiDebug] = useState(false);
   const [showAiOpsDebug, setShowAiOpsDebug] = useState(false);
   const [allowObservationCapture, setAllowObservationCapture] = useState(false);
   const [showObservationCapture, setShowObservationCapture] = useState(false);
@@ -365,6 +383,7 @@ export default function StateMachinePage() {
   const [uiViewMode, setUiViewMode] = useState<'FOCUS' | 'POWER'>('FOCUS');
   const reentryUnderstoodRef = useRef<string | null>(null);
   const previousUiRouteRef = useRef<UIRoute | null>(null);
+  const previousActiveRoomIdRef = useRef<string | null>(null);
   const memoryModeRef = useRef<MemoryMode>('normal');
   const valuePulseAnchorRef = useRef<ValuePulseContext | null>(null);
   const [activeValuePulseContext, setActiveValuePulseContext] = useState<ValuePulseContext | null>(null);
@@ -486,10 +505,25 @@ export default function StateMachinePage() {
       setAllowObservationCapture(flags.allowObservationCapture);
       setShowObservationCapture(flags.showObservationCapture);
 
-      const bootstrap = await loadSafeBootstrapWorkspace({
-        isPresentationMode: flags.isPresentationMode,
-        scenarioId: flags.scenarioId,
-      });
+      let bootstrap;
+      try {
+        bootstrap = await loadSafeBootstrapWorkspace({
+          isPresentationMode: flags.isPresentationMode,
+          scenarioId: flags.scenarioId,
+        });
+      } catch (error) {
+        console.error('[MIND] bootstrap failed; falling back to in-memory start state', error);
+        const fallbackSession = createDefaultSession();
+        if (cancelled) return;
+        setRooms([]);
+        setActiveRoomId(null);
+        setMemoryMode('normal');
+        memoryModeRef.current = 'normal';
+        setMemoryDegradationReason(undefined);
+        setAiOfflineNotice('โหลด memory ไม่สำเร็จชั่วคราว เปิดหน้าเริ่มงานแบบ in-memory ให้ก่อน');
+        await hydrateSessionState(fallbackSession);
+        return;
+      }
       const { workspace, storedSession } = bootstrap;
       if (cancelled) return;
 
@@ -682,6 +716,56 @@ export default function StateMachinePage() {
     setActiveValuePulseContext(null);
   }, [session?.uiRoute]);
 
+  const fallbackResumeHomeRoom = useMemo(() => {
+    if (!session || session.uiRoute !== 'DUMP_ENTRY' || hasResumableTask(session.task)) return null;
+    return rankResumeRooms(
+      rooms
+        .map((room) => ({ room })),
+    )[0] ?? null;
+  }, [rooms, session]);
+
+  const fallbackRankedSidebarRooms = useMemo(
+    () => rankResumeRooms(rooms.map((room) => ({ room }))),
+    [rooms],
+  );
+  const effectiveRankedSidebarRooms = rankedSidebarRooms.length > 0
+    ? rankedSidebarRooms
+    : fallbackRankedSidebarRooms;
+  const roomSidebarItems = useMemo(() => buildRoomSidebarItems({
+    rooms,
+    activeRoomId,
+    rankedResumeRooms: effectiveRankedSidebarRooms,
+  }), [activeRoomId, effectiveRankedSidebarRooms, rooms]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRankedSidebarRooms([]);
+    void selectRankedResumeRooms({ rooms }).then((ranked) => {
+      if (!cancelled) setRankedSidebarRooms(ranked);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [rooms]);
+
+  useEffect(() => {
+    if (!session || session.uiRoute !== 'DUMP_ENTRY' || hasResumableTask(session.task)) {
+      setResumeHomeRoom(null);
+      return;
+    }
+
+    let cancelled = false;
+    setResumeHomeRoom(null);
+    void selectResumeRoom({ rooms }).then((candidate) => {
+      if (!cancelled) setResumeHomeRoom(candidate);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [rooms, session]);
+
   const {
     activeRoom,
     roomCardCanContinue,
@@ -711,6 +795,23 @@ export default function StateMachinePage() {
   });
 
   useEffect(() => {
+    if (!session || session.uiRoute !== 'DUMP_ENTRY' || !activeRoom) {
+      setActiveRoomReentry(null);
+      return;
+    }
+
+    let cancelled = false;
+    setActiveRoomReentry(null);
+    void selectActiveRoomReentry({ room: activeRoom }).then((state) => {
+      if (!cancelled) setActiveRoomReentry(state);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRoom, session]);
+
+  useEffect(() => {
     if (!session || !activeRoom) return;
     if (isNegotiatingAction || isReentryLoading || isRescueLoading || isScaffoldRefining) return;
 
@@ -732,10 +833,40 @@ export default function StateMachinePage() {
     session,
   ]);
 
+  const resetRoomViewport = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, behavior: 'auto' });
+      if (session?.uiRoute !== 'DUMP_ENTRY') return;
+      window.requestAnimationFrame(() => {
+        const input = document.getElementById('brain-dump-text') as HTMLTextAreaElement | null;
+        if (!input) return;
+        input.focus();
+      });
+    });
+  }, [session?.uiRoute]);
+
+  useEffect(() => {
+    if (previousActiveRoomIdRef.current === null) {
+      previousActiveRoomIdRef.current = activeRoomId;
+      return;
+    }
+
+    if (previousActiveRoomIdRef.current === activeRoomId) return;
+    previousActiveRoomIdRef.current = activeRoomId;
+    resetRoomViewport();
+  }, [activeRoomId, resetRoomViewport]);
+
   if (!session) return null;
 
   const aiOfflineManualMode = isAiOfflineManualMode(aiHealth);
   const readOnlyMemory = memoryMode === 'read_only_degraded';
+  const homeEntryState = resolveHomeEntryState({
+    rooms,
+    activeSession: session,
+    resumeRoom: resumeHomeRoom ?? fallbackResumeHomeRoom,
+    activeRoomId,
+  });
   const studioSnapshot = buildStudioSnapshot(session.task, currentActionState, currentPayload);
   const studioIntents = getStudioIntents(session, currentActionState, currentPayload);
   const isFocusMode = uiViewMode === 'FOCUS';
@@ -746,29 +877,44 @@ export default function StateMachinePage() {
     activeRoom?.title ?? session.roomTitle,
   );
   const studioMode = getStudioMode(session.uiRoute);
+  const activeRoomHasSavedContext = Boolean(
+    activeRoom?.session.task?.sourceText?.trim() ||
+      activeRoom?.session.activeDumpContext?.text?.trim(),
+  );
+  const showDumpOnlyFirstView = isFocusMode && session.uiRoute === 'DUMP_ENTRY' && !activeRoomHasSavedContext;
+  const showInternalReferenceTools = allowAiDebug;
   const utilitySections = [
     {
-      title: 'ดูบริบท',
+      title: 'บริบทของงาน',
       items: [
         ...(session.task
           ? [
-              { key: 'manage-data', label: 'Manage Data', onClick: () => setShowDataReview('manage' as const) },
-              { key: 'review-room', label: 'Review Room', onClick: () => setShowDataReview('review' as const) },
+              { key: 'manage-data', label: 'ดู/จัดการบริบทและไฟล์', onClick: () => setShowDataReview('manage' as const) },
+              { key: 'review-room', label: 'ตรวจหลักฐานของห้องนี้', onClick: () => setShowDataReview('review' as const) },
             ]
           : []),
-        { key: 'archive', label: 'Archive', onClick: () => setShowArchive(true) },
-        { key: 'overview', label: 'Overview', onClick: () => setShowOverview(true) },
-        { key: 'trust', label: 'Why this / ความไว้ใจ', onClick: () => setShowTrust(true) },
+        ...(isFocusMode
+          ? []
+          : [
+              { key: 'archive', label: 'Archive', onClick: () => setShowArchive(true) },
+              { key: 'overview', label: 'Overview', onClick: () => setShowOverview(true) },
+            ]),
+        { key: 'trust', label: 'ทำไม MIND แนะนำแบบนี้', onClick: () => setShowTrust(true) },
       ],
     },
     {
-      title: 'คู่มือและทางลัด',
+      title: 'เดโม',
       items: [
         { key: 'walkthrough', label: routeUsesReducedChrome ? 'วิธีใช้' : 'ดูเดโม 30 วินาที', onClick: () => setShowWalkthrough(true) },
-        ...(session.uiRoute === 'DUMP_ENTRY'
+      ],
+    },
+    {
+      title: 'Internal reference',
+      items: [
+        ...(showInternalReferenceTools && session.uiRoute === 'DUMP_ENTRY'
           ? [
-              { key: 'pmf', label: 'PMF guide', onClick: () => router.push('/pmf-guide') },
-              { key: 'business', label: 'Business gates', onClick: () => router.push('/business') },
+              { key: 'business', label: 'Internal: business dashboard', onClick: () => router.push('/business') },
+              { key: 'pmf', label: 'Internal: PMF reference', onClick: () => router.push('/pmf-guide') },
             ]
           : []),
       ],
@@ -785,6 +931,14 @@ export default function StateMachinePage() {
       ],
     },
   ].filter((section) => section.items.length > 0);
+
+  const appendReadySourcesToRoomMemory = async (task: NonNullable<AppSession['task']>, sourceOperationId: string) => {
+    try {
+      await recordTaskSourcesInRoomMemory(task, sourceOperationId);
+    } catch (error) {
+      console.warn('[MIND] failed to append ready room sources to memory', error);
+    }
+  };
 
   const handleDumpSubmission = async (submission: RoomSubmission) => {
     if (readOnlyMemory) {
@@ -848,6 +1002,7 @@ export default function StateMachinePage() {
       outcome_label: 'manual_mode_dump_saved',
     });
     await persistSessionWithRooms(nextSession);
+    await appendReadySourcesToRoomMemory(task, 'manual_dump');
   };
 
   const handleFileExtractionComplete = async (submission: RoomSubmission) => {
@@ -901,6 +1056,7 @@ export default function StateMachinePage() {
     sessionRef.current = nextSession;
     setSession(nextSession);
     await persistSessionWithRooms(nextSession);
+    await appendReadySourcesToRoomMemory(nextTask, 'file_extraction');
   };
 
   const handleEditCurrentContext = async () => {
@@ -1208,6 +1364,7 @@ export default function StateMachinePage() {
       sessionRef.current = nextSession;
       setSession(nextSession);
       await persistSessionWithRooms(nextSession);
+      await appendReadySourcesToRoomMemory(nextTask, 'file_retry');
       const updatedFile = nextSourceFiles.find((file) => file.id === fileId);
       if (updatedFile) {
         trackEvent('ocr_extract_finished', {
@@ -1332,6 +1489,42 @@ export default function StateMachinePage() {
       : AI_OFFLINE_MANUAL_COPY);
   };
 
+  const handleActiveReentryPrimary = async () => {
+    if (!activeRoomReentry) return;
+    if (readOnlyMemory) {
+      blockAiAction();
+      return;
+    }
+
+    if (activeRoomReentry.primaryAction === 'fix_context') {
+      if (session.task) {
+        setShowDataReview('manage');
+        return;
+      }
+      await handleEditCurrentContext();
+      return;
+    }
+
+    if (activeRoomReentry.primaryAction === 'answer_question') {
+      const input = document.getElementById('brain-dump-text') as HTMLTextAreaElement | null;
+      input?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      input?.focus();
+      return;
+    }
+
+    if (aiActionsBlocked) {
+      blockAiAction();
+      return;
+    }
+
+    if (roomCardCanContinue || hasResumableTask(session.task)) {
+      await handleContinueFromRoomCard();
+      return;
+    }
+
+    await controller.handleRetry();
+  };
+
   const renderState = () => {
     switch (session.uiRoute) {
       case 'MORNING_RITUAL':
@@ -1403,7 +1596,28 @@ export default function StateMachinePage() {
 
       case 'DUMP_ENTRY':
         return (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <GetStartedHome showIntro={homeEntryState.mode === 'get_started'}>
+            {!showDumpOnlyFirstView && homeEntryState.mode === 'active_room' && activeRoomReentry?.room.id === activeRoomId && (
+              <ActiveRoomReentryCard
+                state={activeRoomReentry}
+                onPrimary={handleActiveReentryPrimary}
+                onWhy={() => setShowTrust(true)}
+                onShowRooms={() => {
+                  setIsRoomSidebarCollapsed(false);
+                  if (isCompactViewport) setShowMobileRooms(true);
+                }}
+              />
+            )}
+            {!showDumpOnlyFirstView && homeEntryState.mode === 'resume_prompt' && homeEntryState.resumeRoom && (
+              <ResumePrompt
+                candidate={homeEntryState.resumeRoom}
+                onOpen={() => handleSelectRoomFromShell(homeEntryState.resumeRoom?.room.id ?? '')}
+                onShowRooms={() => {
+                  setIsRoomSidebarCollapsed(false);
+                  if (isCompactViewport) setShowMobileRooms(true);
+                }}
+              />
+            )}
             <BrainDumpInput
               onNext={handleDumpSubmission}
               onFileExtractionComplete={handleFileExtractionComplete}
@@ -1414,6 +1628,13 @@ export default function StateMachinePage() {
               roomId={session.roomId}
               disabled={readOnlyMemory}
               disabledReason="View-Only mode"
+              entryVariant={showDumpOnlyFirstView
+                ? 'default'
+                : homeEntryState.mode === 'get_started'
+                ? 'get_started'
+                : homeEntryState.mode === 'active_room'
+                  ? 'active_context'
+                  : 'default'}
             />
             {showResetBanner && (
               <div
@@ -1436,14 +1657,17 @@ export default function StateMachinePage() {
                 </button>
               </div>
             )}
-          </div>
+          </GetStartedHome>
         );
 
       case 'SYNTHESIZING':
         return (
           <div style={{ paddingTop: '2rem', textAlign: 'center' }}>
-            <div className="spinner" />
-            <p>กำลังคลี่สิ่งที่อยู่ในหัว…</p>
+            <AIProcessingIndicator
+              size="hero"
+              label="กำลังคลี่สิ่งที่อยู่ในหัว"
+              detail="MIND กำลังสรุปบริบทและหา next move แรก"
+            />
           </div>
         );
 
@@ -1456,6 +1680,7 @@ export default function StateMachinePage() {
             whyThisNow={currentWhyThisNow}
             constraints={session.task?.constraints}
             plan={session.task?.currentPlan}
+            sourceFiles={session.task?.sourceFiles}
             negotiationLoading={isNegotiatingAction}
             onMarkAdjusted={readOnlyMemory ? blockAiAction : controller.handleOneActionAdjustmentTouched}
             onNegotiate={aiActionsBlocked ? blockAiAction : controller.handleActionNegotiation}
@@ -1612,7 +1837,7 @@ export default function StateMachinePage() {
         />
       )}
 
-      <div className={`mind-shell-layout ${isFocusMode ? 'is-focus-mode' : 'is-power-mode'}`}>
+      <div className={`mind-shell-layout ${isFocusMode ? 'is-focus-mode' : 'is-power-mode'} ${showDumpOnlyFirstView ? 'is-dump-first-view' : ''}`}>
         <header className={`mind-shell-topbar ${routeUsesReducedChrome ? 'is-reduced' : ''}`}>
           <div className="mind-shell-topbar-left">
             <button
@@ -1668,7 +1893,7 @@ export default function StateMachinePage() {
                 {isPinned ? 'เอาหมุดออก' : 'ปักหมุด'}
               </button>
             )}
-            {isCompactViewport && (
+            {isCompactViewport && !showDumpOnlyFirstView && (
               <button
                 type="button"
                 className="shell-secondary-button"
@@ -1682,7 +1907,7 @@ export default function StateMachinePage() {
             )}
             <button
               type="button"
-              className="shell-secondary-button"
+              className="shell-secondary-button mind-shell-utility-toggle"
               onClick={() => setShowUtilityMenu((value) => !value)}
             >
               {utilityButtonLabel}
@@ -1747,7 +1972,7 @@ export default function StateMachinePage() {
           <p className="mind-shell-pin-note">ปักหมุดได้สูงสุด 3 รายการ</p>
         )}
 
-        {(showMobileRooms || showMobileStudio) && (
+        {(showMobileRooms || (!showDumpOnlyFirstView && showMobileStudio)) && (
           <button
             type="button"
             className="mind-shell-backdrop"
@@ -1760,12 +1985,11 @@ export default function StateMachinePage() {
         )}
 
         <div
-          className={`mind-room-shell ${isRoomSidebarCollapsed ? 'rooms-collapsed' : ''} ${isStudioCollapsed ? 'studio-collapsed' : ''} ${isFocusMode ? 'is-focus-mode' : 'is-power-mode'}`}
+          className={`mind-room-shell ${isRoomSidebarCollapsed ? 'rooms-collapsed' : ''} ${isStudioCollapsed ? 'studio-collapsed' : ''} ${isFocusMode ? 'is-focus-mode' : 'is-power-mode'} ${showDumpOnlyFirstView ? 'is-dump-first-view' : ''}`}
         >
           <div className={`mind-room-sidebar-wrap ${showMobileRooms ? 'is-open' : ''}`}>
             <RoomSidebar
-              rooms={rooms}
-              activeRoomId={activeRoomId}
+              items={roomSidebarItems}
               onSelectRoom={handleSelectRoomFromShell}
               onCreateRoom={handleCreateRoom}
               collapsed={!isCompactViewport && isRoomSidebarCollapsed}
@@ -1797,6 +2021,7 @@ export default function StateMachinePage() {
             </section>
           </div>
 
+          {!showDumpOnlyFirstView && (
           <aside className={`mind-room-studio-wrap ${showMobileStudio ? 'is-open' : ''} ${isStudioCollapsed ? 'is-collapsed' : ''}`}>
             {isStudioCollapsed ? (
               <button
@@ -1812,7 +2037,7 @@ export default function StateMachinePage() {
                 aria-label={isCompactViewport ? 'ปิดตัวช่วย' : 'ขยายตัวช่วย'}
                 title={isCompactViewport ? 'ปิดตัวช่วย' : 'ขยายตัวช่วย'}
               >
-                <span className="studio-eyebrow">Studio</span>
+                <span className="studio-eyebrow">บริบทช่วยงาน</span>
                 <span className="mind-room-studio-collapsed-label">ตัวช่วย</span>
                 <span className="mind-room-studio-collapsed-arrow">←</span>
               </button>
@@ -1820,7 +2045,7 @@ export default function StateMachinePage() {
               <>
                 <div className="mind-room-studio-header">
                   <div>
-                    <p className="studio-eyebrow">Studio</p>
+                    <p className="studio-eyebrow">บริบทช่วยงาน</p>
                     <h2 className="mind-room-studio-title">ตัวช่วย</h2>
                   </div>
                   <button
@@ -1854,6 +2079,7 @@ export default function StateMachinePage() {
               </>
             )}
           </aside>
+          )}
         </div>
       </div>
       {activeValuePulseContext && !presentationMode && !showArchive && !showDataReview && !showOverview && !showTrust && !showWalkthrough && !showAiOpsDebug && !showObservationCapture && (

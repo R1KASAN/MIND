@@ -9,6 +9,9 @@ import {
   SCAFFOLD_REFINE_LOADING_COPY,
   type ScaffoldRefineFeedback,
 } from '@/lib/orchestrator/scaffold-refine';
+import { AIProcessingIndicator } from '@/components/AI/AIProcessingIndicator';
+import { StepEvidencePanel } from './StepEvidencePanel';
+import { hasRetrievedEvidence } from '@/lib/orchestrator/step-evidence-display';
 
 interface Props {
   action: AiSynthesisResponse['recommended_action'];
@@ -65,120 +68,6 @@ function renderRefineFeedbackBadges(refineFeedback: ScaffoldRefineFeedback) {
         </span>
       ) : null}
     </div>
-  );
-}
-
-function hasRetrievedEvidence(step?: CurrentPlanStep) {
-  return Boolean(step?.evidence?.some((item) => item.sourceKindLabel === 'retrieved'));
-}
-
-function formatTimestamp(timestamp?: number) {
-  if (!timestamp) return undefined;
-  return new Intl.DateTimeFormat('th-TH', {
-    day: 'numeric',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(timestamp));
-}
-
-function formatSourceKindLabel(value?: PlanSourceKindLabel) {
-  if (value === 'manual_summary') return 'สรุปด้วยมือ';
-  if (value === 'extracted') return 'ดึงจากไฟล์';
-  if (value === 'retrieved') return 'ดึงจากหลักฐาน';
-  return 'หลักฐานในห้อง';
-}
-
-function formatGeneratedByLabel(value?: PlanGeneratedBy) {
-  if (value === 'action') return 'แผนหลัก';
-  if (value === 'scaffold') return 'ย่อยงาน';
-  if (value === 'rescue') return 'ช่วยตอนติด';
-  if (value === 'reentry') return 'กลับเข้าห้อง';
-  return value ?? '';
-}
-
-function StepProvenance({ step }: { step?: CurrentPlanStep }) {
-  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
-  if (!step) return null;
-  const selectedEvidence = step.evidence?.find((item) => item.sourceId === selectedSourceId) ?? step.evidence?.[0];
-  const generatedLabel = formatTimestamp(step.provenance?.generatedAt);
-  const confirmedLabel = formatTimestamp(step.provenance?.confirmedAt);
-  return (
-    <details className="supporting-panel" style={{ width: '100%', maxWidth: '44rem' }}>
-          <summary
-          style={{
-            cursor: 'pointer',
-            color: 'var(--text-secondary)',
-            fontSize: '0.88rem',
-            fontWeight: 600,
-            listStyle: 'none',
-            textAlign: 'left',
-          }}
-        >
-          เหตุผล / ประวัติ
-        </summary>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', marginTop: '0.85rem' }}>
-        <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-          <span className="supporting-label">ร่างจาก MIND</span>
-          <span className="supporting-label">{formatConfidenceLabel(step.confidence)}</span>
-          {step.provenance?.userEdited && <span className="supporting-label">แก้ไขโดยคุณ</span>}
-          {step.provenance?.confirmedAt && <span className="supporting-label">ยืนยันแล้ว</span>}
-          {step.safety?.manualOnly && <span className="supporting-label" style={{ color: 'var(--danger)' }}>ทำด้วยมือเท่านั้น</span>}
-        </div>
-        {step.evidence && step.evidence.length > 0 && (
-          <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-            {step.evidence.map((item) => (
-              <button
-                key={`${step.id}-${item.sourceId}`}
-                type="button"
-                onClick={() => {
-                  setSelectedSourceId(item.sourceId);
-                  trackEvent('step_evidence_clicked', {
-                    step_id: step.id,
-                    source_ids: [item.sourceId],
-                    confidence_level: step.confidence?.level,
-                    confidence_score: step.confidence?.score,
-                    destructive_risk: step.safety?.risk,
-                    retrieval_enabled: hasRetrievedEvidence(step),
-                  });
-                }}
-                title={item.excerpt}
-                style={{
-                  background: selectedSourceId === item.sourceId ? 'rgba(94,106,210,0.16)' : 'rgba(255,255,255,0.04)',
-                  border: selectedSourceId === item.sourceId ? '1px solid rgba(94,106,210,0.35)' : '1px solid rgba(255,255,255,0.09)',
-                  color: selectedSourceId === item.sourceId ? 'var(--text-primary)' : 'var(--text-secondary)',
-                  padding: '0.34rem 0.58rem',
-                  fontSize: '0.76rem',
-                }}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        )}
-        {selectedEvidence && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-            <span className="supporting-label" style={{ marginBottom: 0 }}>
-              {formatSourceKindLabel(selectedEvidence.sourceKindLabel)} · {selectedEvidence.label}
-            </span>
-            <p className="supporting-summary" style={{ margin: 0 }}>
-              {selectedEvidence.excerpt || 'ยังไม่มี excerpt สั้น ๆ จาก source นี้'}
-            </p>
-          </div>
-        )}
-        <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-          {generatedLabel && <span className="studio-chip">สร้างเมื่อ {generatedLabel}</span>}
-          {confirmedLabel && <span className="studio-chip">ยืนยันเมื่อ {confirmedLabel}</span>}
-              {step.provenance?.generatedBy && <span className="studio-chip">{formatGeneratedByLabel(step.provenance.generatedBy)}</span>}
-          {step.safety?.risk && <span className="studio-chip">ความเสี่ยง: {step.safety.risk}</span>}
-        </div>
-        {step.provenance?.overrideNote && (
-          <p className="studio-inline-note" style={{ margin: 0 }}>
-            แก้ไข: {step.provenance.overrideNote}
-          </p>
-        )}
-      </div>
-    </details>
   );
 }
 
@@ -341,12 +230,10 @@ export function Scaffold({
           )}
         </div>
 
-        <StepProvenance step={currentStep} />
+        <StepEvidencePanel step={currentStep} />
 
         {refineLoading && (
-          <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-            {SCAFFOLD_REFINE_LOADING_COPY}
-          </p>
+          <AIProcessingIndicator label="กำลังย่อยให้เล็กลง" detail={SCAFFOLD_REFINE_LOADING_COPY} />
         )}
         {!refineLoading && refineFeedback?.kind === 'error' && (
           <div
@@ -503,13 +390,11 @@ export function Scaffold({
         ))}
       </div>
 
-      <StepProvenance step={currentStep} />
+      <StepEvidencePanel step={currentStep} />
 
       <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
         {refineLoading && (
-          <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-            {SCAFFOLD_REFINE_LOADING_COPY}
-          </p>
+          <AIProcessingIndicator label="กำลังย่อยให้เล็กลง" detail={SCAFFOLD_REFINE_LOADING_COPY} />
         )}
         {!refineLoading && refineFeedback?.kind === 'error' && (
           <div

@@ -131,7 +131,7 @@ export function useRoomActions({
       return;
     }
     const created = await createRoom({
-      title: `Client room ${rooms.length + 1}`,
+      title: `ห้องงานใหม่ ${rooms.length + 1}`,
       scenarioType: demoScenarioId,
       makeActive: true,
     });

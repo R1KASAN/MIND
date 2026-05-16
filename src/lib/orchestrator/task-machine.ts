@@ -7,6 +7,7 @@ import type {
   AiReentryResponse,
   AiScaffoldResponse,
 } from '@/lib/ai/operations';
+import type { ActionEvidenceContext } from '@/lib/orchestrator/evidence-context';
 import { summarizeRoomFile, truncateRoomText } from '@/lib/room';
 import type {
   Action,
@@ -257,10 +258,11 @@ export function buildActionSuccessArtifacts(input: {
   task: TaskContext;
   intake: AiIntakeResponse;
   actionResponse: AiActionResponse;
+  evidenceContext?: ActionEvidenceContext;
   existingAction?: Action | null;
   persistedNegotiationMode?: Extract<AiActionNegotiationMode, 'reply_first' | 'resume_first'>;
 }) {
-  const { task, intake, actionResponse, existingAction, persistedNegotiationMode } = input;
+  const { task, intake, actionResponse, evidenceContext, existingAction, persistedNegotiationMode } = input;
   const workflowType = intake.workflowType;
   const payload = buildPayloadFromAiActionResponse(workflowType, actionResponse, intake.blockers, intake.taskShape);
   const actionState = buildActionStateFromPayload(workflowType, payload, task.roomId, existingAction);
@@ -275,12 +277,16 @@ export function buildActionSuccessArtifacts(input: {
   }
 
   const generatedAt = Date.now();
+  const actionEvidence = evidenceContext?.selectionMethod === 'retrieval' && evidenceContext.evidenceChips.length > 0
+    ? evidenceContext.evidenceChips
+    : undefined;
   const currentPlan = enrichPlanWithProvenance({
     actionTitle: actionResponse.chosenAction.title,
     successSignal: actionResponse.chosenAction.successSignal,
     steps: payload.recommended_action.micro_steps.map((step, index) => ({
       id: `step-${index + 1}`,
       text: step,
+      evidence: actionEvidence,
     })),
   }, task, 'action', generatedAt);
 

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import type { Action, TaskContext } from '../store/idb';
 import { composeRoomSourceText, type RoomSourceFile } from '../room';
 import { clearRoomMemoryData, getRoomMemoryDb, getRoomMemorySnapshot } from '../store/room-memory-db';
-import { requestIntake, requestRescue, SynthesisFailure } from './task-events';
+import { recordTaskSourcesInRoomMemory, requestAction, requestIntake, requestRescue, SynthesisFailure } from './task-events';
 
 function makeTask(): TaskContext {
   return {
@@ -247,6 +247,126 @@ test('requestIntake appends source_added events for live room sources', async ()
     assert.equal(sourceEvents.every((event) => event.actor === 'system'), true);
     assert.equal(sourceEvents.every((event) => event.intent?.kind === 'context_entered'), true);
     assert.ok(events.some((event) => event.type === 'blocker_updated' && event.intent?.kind === 'ai_detected_blocker'));
+  } finally {
+    global.fetch = originalFetch;
+    await clearRoomMemoryData();
+  }
+});
+
+test('recordTaskSourcesInRoomMemory appends ready file source after extraction', async () => {
+  const file: RoomSourceFile = {
+    id: 'client-note',
+    name: 'client-note.md',
+    kind: 'text',
+    mimeType: 'text/markdown',
+    size: 128,
+    status: 'ready',
+    createdAt: 1,
+    extractedText: 'Client needs a reply about scope and timeline.',
+  };
+  const task: TaskContext = {
+    ...makeTask(),
+    roomId: 'room-file-extraction',
+    sourceText: 'Manual room note',
+    sourceFiles: [file],
+  };
+
+  await clearRoomMemoryData();
+  try {
+    const refs = await recordTaskSourcesInRoomMemory(task, 'file_extraction');
+    const events = await getRoomMemoryDb().roomEvents.where('roomId').equals('room-file-extraction').toArray();
+    const sourceEvent = events.find((event) => (
+      event.type === 'source_added' &&
+      event.sourceOperationId === 'file_extraction' &&
+      event.refs.some((ref) => ref.id === 'file:client-note')
+    ));
+
+    assert.ok(refs.some((ref) => ref.id === 'file:client-note'));
+    assert.ok(sourceEvent);
+    assert.equal(sourceEvent?.actor, 'system');
+    assert.equal(sourceEvent?.intent?.kind, 'context_entered');
+  } finally {
+    await clearRoomMemoryData();
+  }
+});
+
+test('requestAction sends retrieved evidenceContext to the action route', async () => {
+  const originalFetch = global.fetch;
+  const task: TaskContext = {
+    ...makeTask(),
+    roomId: 'room-action',
+    sourceText: 'Client asks for deadline and scope confirmation.',
+    sourceFiles: [
+      {
+        id: 'scope-brief',
+        name: 'scope-brief.txt',
+        kind: 'text',
+        mimeType: 'text/plain',
+        size: 120,
+        status: 'ready',
+        createdAt: 1,
+        extractedText: 'Client deadline is Friday and scope is limited to CRM automation.',
+      },
+    ],
+    taskFrame: {
+      objective: 'Reply with deadline and scope confirmation',
+      stage: 'awaiting_reply',
+      stakeholders: ['client'],
+    },
+    taskShape: {
+      deliverableType: 'reply',
+      immediateNeed: 'send_reply_now',
+      missingInputs: [],
+      workContext: 'Client needs deadline and scope confirmation.',
+    },
+    blockerSignals: ['deadline_unclear'],
+  };
+  let capturedBody: Record<string, unknown> | null = null;
+
+  await clearRoomMemoryData();
+  global.fetch = async (_input, init) => {
+    capturedBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+    return new Response(JSON.stringify({
+      chosenAction: {
+        title: 'Confirm Friday deadline and CRM scope',
+        rationale: 'This directly answers the client blocker.',
+        successSignal: 'Client has confirmed scope and deadline.',
+      },
+      alternatives: [],
+      whyThisNow: 'The client is waiting for a concrete confirmation.',
+      replyDraft: 'I can confirm the Friday deadline and CRM automation scope.',
+      situationSummary: 'Client needs deadline and scope confirmation.',
+      meta: {
+        model: 'qwen2.5:3b',
+        usedRoomFiles: ['scope-brief.txt'],
+        repairUsed: false,
+      },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    const result = await requestAction({
+      task,
+      preferredCandidate: {
+        title: 'Confirm Friday deadline and CRM scope',
+        rationale: 'deadline scope CRM automation',
+        kind: 'reply_first',
+      },
+    });
+    const evidenceContext = capturedBody?.evidenceContext as {
+      selectionMethod?: string;
+      evidenceChips?: Array<{ sourceId?: string }>;
+      summaryText?: string;
+    } | undefined;
+
+    assert.equal(result.actionResponse.chosenAction.title, 'Confirm Friday deadline and CRM scope');
+    assert.equal(result.evidenceContext.selectionMethod, 'retrieval');
+    assert.equal(evidenceContext?.selectionMethod, 'retrieval');
+    assert.ok(evidenceContext?.evidenceChips?.some((chip) => chip.sourceId === 'file:scope-brief'));
+    assert.match(evidenceContext?.summaryText ?? '', /scope-brief\.txt/);
   } finally {
     global.fetch = originalFetch;
     await clearRoomMemoryData();

@@ -1,5 +1,6 @@
 import type { Action, TaskContext } from '@/lib/store/idb';
 import type { AiActionNegotiationMode, AiReentryScope } from '@/lib/ai/operations';
+import type { ActionEvidenceContext } from '@/lib/orchestrator/evidence-context';
 
 function truncateText(value: string | undefined, maxChars: number) {
   if (!value) return 'ไม่มี';
@@ -47,6 +48,36 @@ function describeRescueAction(action: Action | null | undefined, currentStepInde
     `title: ${action.title}`,
     `currentStep: ${currentStep}`,
     `nextStep: ${nextStep ?? 'ไม่มี'}`,
+  ].join('\n');
+}
+
+function countUnansweredPendingInputs(task: TaskContext) {
+  return (task.pendingInputs ?? []).filter((input) => !input.answer.trim()).length;
+}
+
+function resolveActionPromptMode(task: TaskContext): 'propose' | 'ask' {
+  const unansweredCount = countUnansweredPendingInputs(task);
+  const confidence = task.taskShape?.confidence ?? 0.5;
+  if (unansweredCount >= 2 || confidence < 0.4) return 'ask';
+  return 'propose';
+}
+
+function buildActionDecisionGuidance(task: TaskContext) {
+  const unansweredCount = countUnansweredPendingInputs(task);
+  const confidence = task.taskShape?.confidence ?? 0.5;
+  const actionMode = resolveActionPromptMode(task);
+  const askReasons: string[] = [];
+
+  if (unansweredCount >= 2) askReasons.push(`unansweredPendingInputs=${unansweredCount}`);
+  if (confidence < 0.4) askReasons.push(`taskShapeConfidence=${confidence}`);
+
+  return [
+    `actionMode: ${actionMode}`,
+    `unansweredPendingInputs: ${unansweredCount}`,
+    `taskShapeConfidence: ${task.taskShape?.confidence ?? 'ไม่ระบุ'}`,
+    actionMode === 'ask'
+      ? `modeInstruction: ask exactly one focused clarifying question before proposing a detailed concrete action; reason=${askReasons.join(', ')}`
+      : 'modeInstruction: propose one concrete 5-20 minute next action grounded in available evidence and constraints',
   ].join('\n');
 }
 
@@ -194,9 +225,12 @@ export const ACTION_SYSTEM_PROMPT = `
 
 กฎ:
 - ตอบเป็น JSON object เดียวเท่านั้น
-- one next action ต้องเริ่มได้จริงภายในไม่กี่นาที
+- one next action ต้องเป็นสิ่งที่ user ทำจบได้จริงใน 5-20 นาที
 - alternatives ไม่เกิน 3
 - ห้ามวางแผนกว้าง ๆ
+- ถ้ามี evidence/context เพียงพอ ห้ามเริ่ม title ของ action ด้วยคำ meta กว้าง ๆ เช่น "เตรียม...", "วางแผน...", "ทบทวน..." ให้เลือกกริยาที่ลงมือจริง เช่น "ร่างอีเมลตอบกลับเรื่องงบประมาณ X" หรือ "เติมตัวเลข Y ลงในสไลด์"
+- ถ้า actionMode = ask ให้ถามคำถามเดียวที่ unlock ก้าวต่อไปได้ แทนการ propose action ยาวหรือเดา deliverable เฉพาะเอง
+- ถ้ามี missing inputs หลายรายการหรือความมั่นใจต่ำ ให้ถามข้อมูลที่ขาด 1 ข้อก่อน ห้าม hallucinate ก้าวเฉพาะที่ทำไม่ได้จากหลักฐานที่มี
 - ถ้ามี blocker ให้ action จัดการ blocker ก่อน
 - ถ้ามี candidate action ที่เหมาะ ให้ใช้เป็นฐาน ไม่ต้องเปลี่ยนทิศงานโดยไม่จำเป็น
 - ถ้า taskShape.immediateNeed = define_scope ให้ action จัด requirement, scope, unknowns ก่อน timeline หรือราคา
@@ -303,6 +337,8 @@ export const REENTRY_SYSTEM_PROMPT = `
 - resumeTarget ต้องเป็นหนึ่งใน: ONE_ACTION, SCAFFOLD, DUMP_ENTRY
 - topActions ต้องอิงงานใน room นี้เท่านั้น
 - ถ้างานยังค้างอยู่จริง ให้ prefer ONE_ACTION หรือ SCAFFOLD มากกว่า DUMP_ENTRY
+- ใช้ reentryConstraints เพื่อให้ next moves สอดคล้องกับข้อจำกัดและคำถามที่ยังค้างอยู่ของ user
+- ห้าม resurface รายการที่อยู่ใน resolvedConcerns เป็น concern อีกครั้ง
 `.trim();
 
 export function buildOperationRepairUserPrompt(
@@ -337,6 +373,7 @@ export function buildActionUserPrompt(
   task: TaskContext,
   preferredCandidate?: { title: string; rationale: string; kind: string } | null,
   negotiation?: { mode: AiActionNegotiationMode; userNote?: string } | null,
+  evidenceContext?: ActionEvidenceContext | null,
 ) {
   return [
     buildOperationTaskContext(task),
@@ -351,10 +388,16 @@ export function buildActionUserPrompt(
       ? `- mode: ${negotiation.mode}\n- userNote: ${negotiation.userNote?.trim() || 'ไม่มี'}`
       : '- mode: default',
     '',
+    'actionDecision:',
+    buildActionDecisionGuidance(task),
+    '',
     'actionConstraints:',
     `- timeBudgetMin: ${task.constraints?.timeBudgetMin ?? 'ไม่ระบุ'}`,
     `- energyLevel: ${task.constraints?.energyLevel ?? 'ไม่ระบุ'}`,
     `- preferReplyFirst: ${task.constraints?.preferReplyFirst ?? 'ไม่ระบุ'}`,
+    '',
+    'Retrieved evidence:',
+    evidenceContext?.summaryText?.trim() || 'ไม่มี retrieved evidence เพิ่มเติม',
   ].join('\n');
 }
 
@@ -430,6 +473,35 @@ export function buildRescueUserPrompt(task: TaskContext, action: Action | null |
   ].join('\n');
 }
 
+function buildReentryConstraintBlock(task: TaskContext): string {
+  const activeBlockers = task.blockerSignals.filter((s) => {
+    const lower = s.toLowerCase();
+    return !lower.includes('waiting') && !lower.includes('dependency');
+  });
+
+  const lastRescue = task.rescueHistory[task.rescueHistory.length - 1];
+
+  const unresolvedInputs = task.pendingInputs.filter((p) => !p.answer.trim());
+  const resolvedInputs = task.pendingInputs.filter((p) => Boolean(p.answer.trim()));
+
+  const lines: string[] = [];
+
+  if (activeBlockers.length > 0) {
+    lines.push(`activeBlockers: ${activeBlockers.join(', ')}`);
+  }
+  if (lastRescue) {
+    lines.push(`lastRescueReason: ${lastRescue.reason} → mode: ${lastRescue.mode}`);
+  }
+  if (unresolvedInputs.length > 0) {
+    lines.push(`unresolvedQuestions: ${unresolvedInputs.map((p) => p.prompt || p.kind).join(' | ')}`);
+  }
+  if (resolvedInputs.length > 0) {
+    lines.push(`resolvedConcerns: ${resolvedInputs.map((p) => p.kind).join(', ')} (do not resurface these)`);
+  }
+
+  return lines.length > 0 ? lines.join('\n') : 'ไม่มี';
+}
+
 export function buildReentryUserPrompt(
   task: TaskContext,
   action: Action | null | undefined,
@@ -438,6 +510,9 @@ export function buildReentryUserPrompt(
 ) {
   return [
     buildOperationTaskContext(task),
+    '',
+    'reentryConstraints:',
+    buildReentryConstraintBlock(task),
     '',
     'currentAction:',
     describeAction(action),

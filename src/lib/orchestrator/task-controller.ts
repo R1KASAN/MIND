@@ -48,6 +48,7 @@ import {
 } from '@/lib/orchestrator/task-machine';
 import { synthesizeLocally } from '@/lib/ai/local-synthesis';
 import type { AnalyticsEventProperties } from '@/lib/analytics/local-analytics';
+import type { ActionEvidenceContext } from '@/lib/orchestrator/evidence-context';
 import type { IcpTag } from '@/lib/business/monetization';
 import {
   buildScaffoldRefineFeedback,
@@ -293,15 +294,25 @@ export function createTaskController(bindings: TaskControllerBindings) {
     task: TaskContext;
     intake: AiIntakeResponse;
     actionResponse: AiActionResponse;
+    evidenceContext?: ActionEvidenceContext;
     fromRetry?: boolean;
     existingAction?: Action | null;
     persistedNegotiationMode?: Extract<AiActionNegotiationMode, 'reply_first' | 'resume_first'>;
   }) => {
-    const { task, intake, actionResponse, fromRetry = false, existingAction, persistedNegotiationMode } = options;
+    const {
+      task,
+      intake,
+      actionResponse,
+      evidenceContext,
+      fromRetry = false,
+      existingAction,
+      persistedNegotiationMode,
+    } = options;
     const artifacts = buildActionSuccessArtifacts({
       task,
       intake,
       actionResponse,
+      evidenceContext,
       existingAction,
       persistedNegotiationMode,
     });
@@ -545,7 +556,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
         return;
       }
 
-      const actionResponse = await requestAction({
+      const { actionResponse, evidenceContext } = await requestAction({
         task: intakeTask,
         preferredCandidate: intake.candidateActions[0],
       });
@@ -554,6 +565,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
         task: intakeTask,
         intake,
         actionResponse,
+        evidenceContext,
         fromRetry,
       });
     } catch (err) {
@@ -629,7 +641,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
     bindings.setIsNegotiatingAction(true);
 
     try {
-      const actionResponse = await requestAction({
+      const { actionResponse, evidenceContext } = await requestAction({
         task: trackedTask,
         negotiation: { mode: input.mode, userNote: input.userNote },
       });
@@ -672,6 +684,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
         },
         intake,
         actionResponse,
+        evidenceContext,
         existingAction: bindings.currentActionState,
         persistedNegotiationMode,
       });
@@ -1316,13 +1329,19 @@ export function createTaskController(bindings: TaskControllerBindings) {
       currentStepIndex: 0,
       lastSynthesis: bindings.currentPayload,
     };
+    const confirmedStep = nextTask.currentPlan?.steps[0];
+    const retrievedSourceCount = confirmedStep?.evidence?.filter(
+      (item) => item.sourceKindLabel === 'retrieved',
+    ).length ?? 0;
     trackEvent('step_confirmed', buildAnalyticsBase(nextTask, {
-      step_id: nextTask.currentPlan?.steps[0]?.id,
-      source_ids: nextTask.currentPlan?.steps[0]?.evidence?.map((item) => item.sourceId),
-      confidence_level: nextTask.currentPlan?.steps[0]?.confidence?.level,
-      confidence_score: nextTask.currentPlan?.steps[0]?.confidence?.score,
-      destructive_risk: nextTask.currentPlan?.steps[0]?.safety?.risk,
-      retrieval_enabled: false,
+      step_id: confirmedStep?.id,
+      source_ids: confirmedStep?.evidence?.map((item) => item.sourceId),
+      confidence_level: confirmedStep?.confidence?.level,
+      confidence_score: confirmedStep?.confidence?.score,
+      destructive_risk: confirmedStep?.safety?.risk,
+      retrieval_enabled: retrievedSourceCount > 0,
+      retrieval_selection_method: retrievedSourceCount > 0 ? 'retrieval' : 'none',
+      retrieved_source_count: retrievedSourceCount,
     }));
     clearScaffoldRefineState();
     await updateStatus('SCAFFOLD', {

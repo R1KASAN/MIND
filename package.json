@@ -25,6 +25,7 @@
     "smoke:task-flow:repeat": "tsx scripts/run-smoke-task-flow-repeat.ts",
     "smoke:sales-inquiry": "tsx scripts/run-smoke-sales-inquiry.ts",
     "smoke:ai-routes:gemma": "tsx scripts/run-smoke-ai-routes-gemma.ts",
+    "smoke:evidence-one-action": "tsx scripts/run-smoke-evidence-one-action.ts",
     "smoke:task-flow:repeat:repair-heavy": "MIND_RESCUE_BASELINE_LABEL=rescue-repair-heavy-170 MIND_RESCUE_BASELINE_NUM_PREDICT=170 MIND_RESCUE_BASELINE_REPAIR_NUM_PREDICT=240 MIND_RESCUE_BASELINE_TIMEOUT_MS=22000 MIND_RESCUE_BASELINE_REPAIR_TIMEOUT_MS=16000 MIND_RESCUE_BASELINE_OVERALL_BUDGET_MS=44000 tsx scripts/run-smoke-task-flow-repeat.ts",
     "smoke:task-flow:repeat:repair-heavy-longer-repair": "MIND_RESCUE_BASELINE_LABEL=repair-heavy-longer-repair MIND_RESCUE_BASELINE_NUM_PREDICT=170 MIND_RESCUE_BASELINE_REPAIR_NUM_PREDICT=240 MIND_RESCUE_BASELINE_TIMEOUT_MS=22000 MIND_RESCUE_BASELINE_REPAIR_TIMEOUT_MS=18000 MIND_RESCUE_BASELINE_OVERALL_BUDGET_MS=47000 tsx scripts/run-smoke-task-flow-repeat.ts",
     "smoke:task-flow:repeat:balanced-higher-overall-budget": "MIND_RESCUE_BASELINE_LABEL=balanced-higher-overall-budget MIND_RESCUE_BASELINE_NUM_PREDICT=160 MIND_RESCUE_BASELINE_REPAIR_NUM_PREDICT=220 MIND_RESCUE_BASELINE_TIMEOUT_MS=20000 MIND_RESCUE_BASELINE_REPAIR_TIMEOUT_MS=15000 MIND_RESCUE_BASELINE_OVERALL_BUDGET_MS=43000 tsx scripts/run-smoke-task-flow-repeat.ts",

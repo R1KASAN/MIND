@@ -462,10 +462,10 @@ export function PMFGuide() {
 
       <section className="pmf-hero">
         <div className="pmf-hero-copy">
-          <p className="pmf-eyebrow">{scenario.eyebrow}</p>
+          <p className="pmf-eyebrow">Internal reference only · {scenario.eyebrow}</p>
           <h1>PMF Template Pack สำหรับ MIND</h1>
           <p className="pmf-hero-lede">
-            ใช้เช็กว่า MIND แก้ painpoint จริงไหม โดยดูทั้ง customer interview, urgency/frequency, และ metric ที่บอกว่า user กลับมาใช้ซ้ำหรือไม่
+            หน้านี้เป็น reference ภายใน ไม่ใช่ workflow หลักของ prototype. ใช้เช็กว่า MIND แก้ painpoint จริงไหม โดยดูทั้ง customer interview, urgency/frequency, และ metric ที่บอกว่า user กลับมาใช้ซ้ำหรือไม่
           </p>
           <div className="pmf-chip-row">
             <span className="pmf-chip">Editable</span>

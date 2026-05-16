@@ -8,6 +8,12 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 Use this file as standing context whenever you work on code, UX, architecture, copy, or docs for MIND.
 
+## Active Plan
+
+Current prototype sprint: `docs/product/prototype-completion-plan.md`.
+Evidence-loop reference plan: `docs/product/next-round-evidence-backed-one-action.md`.
+Read the prototype sprint first unless the task is specifically about evidence-loop internals.
+
 ## Product Definition
 
 MIND is a **local-first AI task copilot for solo client-facing knowledge workers**.

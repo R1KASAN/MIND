@@ -5,6 +5,7 @@ import {
   SCAFFOLD_REFINE_LOADING_COPY,
   type ScaffoldRefineFeedback,
 } from '@/lib/orchestrator/scaffold-refine';
+import { AIProcessingIndicator } from '@/components/AI/AIProcessingIndicator';
 
 interface Props {
   loading?: boolean;
@@ -75,14 +76,11 @@ export function Rescue({
       </p>
 
       {loading && (
-        <div style={{
-          padding: '1rem',
-          borderRadius: 'var(--radius)',
-          background: 'rgba(255,255,255,0.04)',
-          color: 'var(--text-secondary)',
-        }}>
-          MIND กำลังดูให้อยู่ว่าติดเพราะอะไร และควรช่วยคุณยังไงต่อ
-        </div>
+        <AIProcessingIndicator
+          size="panel"
+          label="กำลังวินิจฉัยจุดติด"
+          detail="MIND กำลังดูให้อยู่ว่าติดเพราะอะไร และควรช่วยคุณยังไงต่อ"
+        />
       )}
 
       {rescueState && (
@@ -142,9 +140,7 @@ export function Rescue({
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '0.5rem' }}>
         {refineLoading && (
-          <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-            {SCAFFOLD_REFINE_LOADING_COPY}
-          </p>
+          <AIProcessingIndicator label="กำลังย่อยให้เล็กลง" detail={SCAFFOLD_REFINE_LOADING_COPY} />
         )}
         {!refineLoading && refineFeedback?.kind === 'error' && (
           <div

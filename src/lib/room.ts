@@ -66,27 +66,27 @@ export interface RoomSubmission {
 export const ROOM_FILE_UX_COPY: Record<RoomFileUxState, RoomFileUxCopy> = {
   pending: {
     state: 'pending',
-    title: 'กำลังอ่านไฟล์แนบ',
-    body: 'ไฟล์ถูกแนบเข้าห้องแล้ว MIND กำลังอ่านเนื้อหาอยู่เบื้องหลัง',
-    cta: 'กำลังอ่าน',
-    detail: 'ไฟล์นี้ถูกเก็บเป็น metadata และ blob ในเครื่องก่อน แล้วจะเติมข้อความเมื่อ extraction สำเร็จ',
-    reasonLabel: 'กำลังอ่านไฟล์แนบ',
+    title: 'กำลังสกัดข้อความ',
+    body: 'ไฟล์ถูกแนบเข้าห้องแล้ว MIND กำลังอ่านข้อความอยู่เบื้องหลัง',
+    cta: 'กำลังอ่านไฟล์',
+    detail: 'PDF หรือรูปภาพอาจใช้เวลาสักครู่ ระหว่างนี้ห้องยังใช้ข้อความเดิมและไฟล์ที่อ่านได้ต่อไปก่อน',
+    reasonLabel: 'กำลังสกัดข้อความจากไฟล์',
   },
   ocr_failed: {
     state: 'ocr_failed',
-    title: 'ไฟล์แนบอ่านไม่สำเร็จ',
-    body: 'MIND ลองอ่านไฟล์แล้ว แต่ OCR ยังดึงข้อความออกมาไม่ได้',
+    title: 'อ่านไม่สำเร็จ',
+    body: 'MIND ลองอ่านไฟล์นี้แล้ว แต่ยังดึงข้อความออกมาใช้ไม่ได้',
     cta: 'ลองอ่านไฟล์อีกครั้ง',
-    detail: 'OCR ของไฟล์นี้ล้มก่อนจะได้ข้อความที่ใช้เป็นบริบท',
-    reasonLabel: 'ลอง OCR แล้วแต่ยังอ่าน PDF ไม่สำเร็จ',
+    detail: 'ปัญหานี้เกิดกับไฟล์นี้ไฟล์เดียว ห้องยังใช้ข้อความเดิมและไฟล์อื่นที่อ่านได้ต่อไป',
+    reasonLabel: 'ลอง OCR แล้วแต่ยังอ่านข้อความไม่สำเร็จ',
   },
   ocr_garbled: {
     state: 'ocr_garbled',
-    title: 'อ่านข้อความใน PDF ไม่ชัดพอ',
-    body: 'MIND อ่านได้บางส่วน แต่คำยังแตกหรือไม่ครบ จึงยังใช้เป็นบริบทหลักไม่ได้',
+    title: 'อ่านได้ไม่ชัดพอ',
+    body: 'MIND อ่านได้บางส่วน แต่ข้อความยังแตกหรือไม่ครบ จึงยังไม่ใช้เป็นบริบทหลัก',
     cta: 'ลองอ่านไฟล์อีกครั้ง',
-    detail: 'OCR ได้ผลบางส่วน แต่ fragmented_word_runs ทำให้ข้อความยังไม่น่าเชื่อถือ',
-    reasonLabel: 'ลอง OCR แล้วแต่ข้อความ PDF ยังไม่ชัดพอ',
+    detail: 'ไฟล์นี้อาจเป็นสแกนหรือภาพที่ตัวอักษรไม่ชัด ห้องยังใช้ข้อความเดิมและไฟล์อื่นที่อ่านได้ต่อไป',
+    reasonLabel: 'ลอง OCR แล้วแต่ข้อความยังไม่ชัดพอ',
   },
   ready: {
     state: 'ready',
@@ -189,6 +189,16 @@ export function inferRoomFileKind(name: string, mimeType: string): RoomFileKind 
   }
 
   return 'other';
+}
+
+export function normalizeRoomFileText(text: string): string {
+  return text
+    .replace(/\u0000/g, '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t\f\v]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 export function truncateRoomText(text: string, limit = 8000): string {
