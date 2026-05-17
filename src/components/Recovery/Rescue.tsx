@@ -13,6 +13,8 @@ interface Props {
   refineLoading?: boolean;
   refineFeedback?: ScaffoldRefineFeedback | null;
   onMakeSmaller: () => void;
+  onBackToStep: () => void;
+  onBackToInput: () => void;
   onWalkAway: () => void;
   focusMode?: boolean;
 }
@@ -65,14 +67,16 @@ export function Rescue({
   refineLoading = false,
   refineFeedback,
   onMakeSmaller,
+  onBackToStep,
+  onBackToInput,
   onWalkAway,
   focusMode = true,
 }: Props) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', paddingTop: '2rem' }}>
-      <h2>ชะงักได้ ไม่เป็นไร</h2>
+      <h2>ลองเลือกดูว่า “ติด” เพราะอะไร</h2>
       <p style={{ color: 'var(--text-secondary)' }}>
-        แค่ขยับต่อได้ก็พอ ตอนนี้อยากทำแบบไหนดี
+        ถ้าก้าวนี้ยังใช้ได้ ให้ใช้ต่อได้เลย ถ้าใหญ่ไปให้แบ่งย่อย หรือถ้าบริบทไม่ตรงให้กลับไปแก้ข้อมูลเดิม
       </p>
 
       {loading && (
@@ -80,7 +84,6 @@ export function Rescue({
           size="panel"
           label="กำลังวินิจฉัยจุดติด"
           detail="MIND กำลังดูให้อยู่ว่าติดเพราะอะไร และควรช่วยคุณยังไงต่อ"
-          showSkeleton
         />
       )}
 
@@ -141,7 +144,7 @@ export function Rescue({
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '0.5rem' }}>
         {refineLoading && (
-          <AIProcessingIndicator label="กำลังย่อยให้เล็กลง" detail={SCAFFOLD_REFINE_LOADING_COPY} showSkeleton />
+          <AIProcessingIndicator label="กำลังย่อยให้เล็กลง" detail={SCAFFOLD_REFINE_LOADING_COPY} />
         )}
         {!refineLoading && refineFeedback?.kind === 'error' && (
           <div
@@ -163,15 +166,35 @@ export function Rescue({
             </div>
           </div>
         )}
-        <button className="primary" disabled={refineLoading} onClick={onMakeSmaller}>
-          ย่อยให้เล็กลงอีก
+        <button className="primary" disabled={refineLoading} onClick={onBackToStep}>
+          ใช้ก้าวนี้ต่อ
         </button>
-        <button disabled={refineLoading} onClick={onWalkAway}>
-          พักก่อน แล้วค่อยกลับมา
+        <button disabled={refineLoading} onClick={onMakeSmaller}>
+          แบ่งก้าวนี้ให้เล็กลง
         </button>
-        <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.88rem', lineHeight: 1.6 }}>
-          ถ้ารอบนี้ MIND ยังช่วยวินิจฉัยไม่ได้ งานนี้ยังถูกเก็บไว้ครบ คุณลองใหม่ทีหลังได้
-        </p>
+        <button disabled={refineLoading} onClick={onBackToInput}>
+          กลับไปแก้บริบทให้ตรงเคส
+        </button>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.45rem',
+            marginTop: '0.45rem',
+            paddingTop: '0.8rem',
+            borderTop: '1px solid rgba(255,255,255,0.08)',
+          }}
+        >
+          <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.78rem' }}>
+            ตัวเลือกอื่น
+          </p>
+          <button disabled={refineLoading} onClick={onWalkAway}>
+            พักงานนี้ไว้ก่อน เดี๋ยวกลับมาทำต่อ
+          </button>
+          <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.84rem', lineHeight: 1.55 }}>
+            ใช้เมื่อเคสถูกแล้ว แต่ตอนนี้ยังไม่พร้อมทำต่อ งานนี้จะถูกเก็บไว้ให้กลับมาต่อได้
+          </p>
+        </div>
       </div>
     </div>
   );

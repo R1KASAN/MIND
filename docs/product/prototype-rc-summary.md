@@ -38,6 +38,21 @@
 - No dedicated, labeled "Next Move" panel (currently integrated into Reentry Brief / ONE_ACTION)
 - OCR Accuracy improvements (Phase 4) explicitly deferred
 
+## Latest Updates
+RC Scaffold + Rescue UX patch = **worked for RC/demo** ✅
+* 5/5 paths successfully passed on 2026-05-18.
+* **Navigation Defect Solved:** Fixed the Rescue → Input bounce-back navigation loop. Returning to edit context is now 100% stable, preserves input text and files, and successfully routes back to ONE_ACTION/Scaffold on submit.
+* **Required Demo Environment Setup:**
+  * Must start the development server using: `npm run dev:local-ai` (starts Next.js on port 3000 and points `OLLAMA_HOST` to port `11437`).
+  * Must ensure local CPU-safe Ollama is running on port `11437` (`127.0.0.1:11437`).
+  * Must have model `gemma2:2b` loaded and ready in local Ollama instance.
+* Ready to demo: context reentry, make-smaller (splits steps using local AI successfully), back-to-context, and save point.
+
+## ห้ามแตะ (Do Not Touch Until Demo is Completed)
+- OneAction 3-block layout
+- Reentry Brief L1/L2
+- prompts / retrieval / schema / persistence
+
 ## Next Recommendation
 **Proceed to Prototype RC / Demo Validation.** (See [User Validation Plan](user-validation-plan.md))
 Do not initiate Phase 4 (OCR Accuracy) unless a reproducible OCR extraction failure occurs on a real client document that the existing fallback resilience chain cannot recover from.

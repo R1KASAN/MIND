@@ -20,7 +20,6 @@ interface Props {
   sourceFiles?: RoomSourceFile[];
   negotiationLoading?: boolean;
   onAccept: () => void;
-  onReject: () => void;
   onNotLikeThis?: () => void;
   onMarkAdjusted: () => void;
   onNegotiate: (input: ActionNegotiationInput) => void;
@@ -37,7 +36,6 @@ export function OneAction({
   sourceFiles = [],
   negotiationLoading = false,
   onAccept,
-  onReject,
   onNotLikeThis,
   onMarkAdjusted,
   onNegotiate,
@@ -58,7 +56,6 @@ export function OneAction({
   const selectedEnergy = constraints?.energyLevel;
   const hasConstraintSelection = typeof selectedTimeBudget === 'number' || typeof selectedEnergy === 'string';
   const primaryActionLabel = 'ใช้ก้าวนี้';
-  const secondaryActionLabel = 'ขอก้าวอื่น';
   const heroReason =
     whyThisNow
     || situationSummary
@@ -111,11 +108,6 @@ export function OneAction({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.recommended_action.title, primaryStep?.id]);
-
-  const handleReject = () => {
-    trackEvent('action_rejected');
-    onReject();
-  };
 
   const handleCopy = async () => {
     try {
@@ -206,12 +198,6 @@ export function OneAction({
             ช่วยแก้ก้าวนี้
           </button>
         )}
-        <button
-          onClick={handleReject}
-          style={{ background: 'transparent', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}
-        >
-          {secondaryActionLabel}
-        </button>
       </div>
 
       <details className="supporting-panel" style={{ width: '100%', maxWidth: '42rem' }} open={!focusMode}>
@@ -352,7 +338,6 @@ export function OneAction({
             <AIProcessingIndicator
               label="กำลังปรับ next move"
               detail="MIND กำลังปรับก้าวนี้ให้เข้ากับเวลา พลังงาน และบริบทของงานนี้"
-              showSkeleton
             />
           )}
         </div>

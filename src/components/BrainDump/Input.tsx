@@ -24,6 +24,8 @@ interface Props {
   disabled?: boolean;
   disabledReason?: string;
   entryVariant?: 'default' | 'get_started' | 'active_context';
+  contextReturnNotice?: boolean;
+  existingSourceFiles?: RoomSourceFile[];
 }
 
 type DemoScenarioId = 'client_project_restart' | 'sales_inquiry_demo_request';
@@ -67,6 +69,8 @@ export function BrainDumpInput({
   disabled = false,
   disabledReason,
   entryVariant = 'default',
+  contextReturnNotice = false,
+  existingSourceFiles = [],
 }: Props) {
   const [val, setVal] = useState(() => initialText ?? '');
   const [files, setFiles] = useState<File[]>([]);
@@ -165,7 +169,8 @@ export function BrainDumpInput({
   };
 
   const hasFiles = files.length > 0;
-  const canSubmit = !disabled && !isSubmitting && (val.trim().length > 0 || hasFiles);
+  const hasExistingSourceFiles = existingSourceFiles.length > 0;
+  const canSubmit = !disabled && !isSubmitting && (val.trim().length > 0 || hasFiles || (contextReturnNotice && hasExistingSourceFiles));
 
   const applyScenario = (scenario: DemoScenario) => {
     setActiveScenarioId(scenario.id);
@@ -404,7 +409,7 @@ export function BrainDumpInput({
   };
 
   const submit = async () => {
-    if (disabled || submitLockRef.current || isSubmitting || (!val.trim() && files.length === 0)) return;
+    if (disabled || submitLockRef.current || isSubmitting || (!val.trim() && files.length === 0 && !(contextReturnNotice && hasExistingSourceFiles))) return;
     submitLockRef.current = true;
     setIsSubmitting(true);
     setUploadError(null);
@@ -519,6 +524,22 @@ export function BrainDumpInput({
           boxShadow: isDraggingFiles ? '0 0 0 1px rgba(112,125,255,0.12), 0 28px 90px rgba(50,60,160,0.18)' : 'none',
           transition: 'border-color 140ms ease, background 140ms ease, box-shadow 140ms ease',
         }}>
+        {contextReturnNotice && (
+          <div
+            className="mind-inline-note"
+            role="status"
+            style={{ margin: 0, alignItems: 'flex-start' }}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+              <strong style={{ color: 'var(--text-primary)', fontSize: '0.9rem' }}>
+                คุณเลือกกลับมาแก้บริบทของงานนี้
+              </strong>
+              <span style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', lineHeight: 1.55 }}>
+                ข้อความและไฟล์เดิมยังอยู่ ลองปรับให้ตรงเคสนี้มากขึ้น แล้วกด ‘ไปต่อ’ อีกครั้ง
+              </span>
+            </div>
+          </div>
+        )}
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
             <p style={{ margin: 0, fontWeight: 600 }}>{copy.boxTitle}</p>
@@ -615,6 +636,41 @@ export function BrainDumpInput({
                 </button>
               </div>
             ))}
+          </div>
+        )}
+
+        {contextReturnNotice && hasExistingSourceFiles && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+            <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.84rem' }}>
+              ไฟล์เดิมที่ยังอยู่ในห้องนี้
+            </p>
+            {existingSourceFiles.slice(0, 3).map((file) => (
+              <div
+                key={file.id}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: '0.75rem',
+                  padding: '0.7rem 0.85rem',
+                  borderRadius: '14px',
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                }}
+              >
+                <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {file.name}
+                </span>
+                <span className={file.status === 'ready' ? 'studio-chip studio-chip-success' : 'studio-chip'}>
+                  {getRoomFileUxCopy(file).title}
+                </span>
+              </div>
+            ))}
+            {existingSourceFiles.length > 3 && (
+              <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
+                อีก {existingSourceFiles.length - 3} ไฟล์ยังอยู่ในห้องนี้
+              </p>
+            )}
           </div>
         )}
 

@@ -23,6 +23,7 @@ interface Props {
   refineFeedback?: ScaffoldRefineFeedback | null;
   onRescue: () => void;
   onMakeSmaller: () => void;
+  onBackToInput: () => void;
   onComplete: () => void;
   onEditStep?: (stepId: string, text: string) => void;
   onBackToSteps: () => void;
@@ -85,6 +86,35 @@ function StepMiniMeta({ step }: { step: CurrentPlanStep }) {
   );
 }
 
+function ScaffoldContextHeader({
+  actionTitle,
+  stepLabel,
+}: {
+  actionTitle: string;
+  stepLabel: string;
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '0.3rem',
+        padding: '0.78rem 0.9rem',
+        borderRadius: 'var(--radius)',
+        background: 'rgba(255,255,255,0.04)',
+        border: '1px solid rgba(255,255,255,0.08)',
+      }}
+    >
+      <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.78rem', lineHeight: 1.45 }}>
+        เป้าหมายรอบนี้: <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{actionTitle}</span>
+      </p>
+      <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.78rem', lineHeight: 1.45 }}>
+        ตอนนี้: <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{stepLabel}</span>
+      </p>
+    </div>
+  );
+}
+
 export function Scaffold({
   action,
   steps,
@@ -95,6 +125,7 @@ export function Scaffold({
   refineFeedback,
   onRescue,
   onMakeSmaller,
+  onBackToInput,
   onComplete,
   onEditStep,
   onBackToSteps,
@@ -107,6 +138,8 @@ export function Scaffold({
     : action.micro_steps.map((step, index) => ({ id: `step-${index + 1}`, text: step }));
   const activeStepIndex = Math.min(currentStepIndex, Math.max(visibleSteps.length - 1, 0));
   const currentStep = visibleSteps[activeStepIndex] ?? visibleSteps[0];
+  const stepProgressLabel = visibleSteps.length === 0 ? 'ขั้นตอน 0' : `ขั้นตอน ${activeStepIndex + 1} / ${visibleSteps.length}`;
+  const currentStepLabel = currentStep?.text ? `${stepProgressLabel} — ${currentStep.text}` : stepProgressLabel;
   useEffect(() => {
     if (!currentStep) return;
     trackEvent('step_draft_shown', {
@@ -200,9 +233,10 @@ export function Scaffold({
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', maxWidth: '44rem', margin: '0 auto', gap: '0.95rem', paddingTop: '1.5rem' }}>
+        <ScaffoldContextHeader actionTitle={action.title} stepLabel={currentStepLabel} />
         <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>{action.title}</h2>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '-0.2rem' }}>
-          ตอนนี้อยู่ที่ขั้นตอน {visibleSteps.length === 0 ? '0' : `${activeStepIndex + 1} / ${visibleSteps.length}`}
+          ตอนนี้อยู่ที่ {stepProgressLabel}
         </p>
 
         <div className="action-hero-card" style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
@@ -233,7 +267,7 @@ export function Scaffold({
         <StepEvidencePanel step={currentStep} />
 
         {refineLoading && (
-          <AIProcessingIndicator label="กำลังย่อยให้เล็กลง" detail={SCAFFOLD_REFINE_LOADING_COPY} showSkeleton />
+          <AIProcessingIndicator label="กำลังย่อยให้เล็กลง" detail={SCAFFOLD_REFINE_LOADING_COPY} />
         )}
         {!refineLoading && refineFeedback?.kind === 'error' && (
           <div
@@ -264,8 +298,8 @@ export function Scaffold({
           >
             เสร็จแล้ว
           </button>
-          <button disabled={refineLoading} onClick={onMakeSmaller}>ย่อยให้เล็กลงอีก</button>
-          <button disabled={refineLoading} onClick={onRescue}>ไม่ใช่แบบนี้</button>
+          <button disabled={refineLoading} onClick={onMakeSmaller}>แบ่งก้าวนี้ให้เล็กลง</button>
+          <button disabled={refineLoading} onClick={onBackToInput}>กลับไปแก้บริบท</button>
           <details className="supporting-panel" style={{ width: '100%', maxWidth: '44rem' }}>
             <summary
               style={{
@@ -300,7 +334,7 @@ export function Scaffold({
               ))}
             </div>
           </details>
-          <button disabled={refineLoading} onClick={onRescue} style={{ color: 'var(--danger)' }}>ฉันติดอยู่</button>
+          <button disabled={refineLoading} onClick={onRescue}>ช่วยดูให้หน่อยว่าติดตรงไหน</button>
         </div>
       </div>
     );
@@ -364,9 +398,10 @@ export function Scaffold({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', maxWidth: '44rem', margin: '0 auto', gap: '1rem', paddingTop: '2rem' }}>
+      <ScaffoldContextHeader actionTitle={action.title} stepLabel={currentStepLabel} />
       <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>{action.title}</h2>
       <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '-0.35rem' }}>
-        ตอนนี้อยู่ที่ขั้นตอน {visibleSteps.length === 0 ? '0' : `${activeStepIndex + 1} / ${visibleSteps.length}`}
+        ตอนนี้อยู่ที่ {stepProgressLabel}
       </p>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '1rem' }}>
@@ -394,7 +429,7 @@ export function Scaffold({
 
       <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
         {refineLoading && (
-          <AIProcessingIndicator label="กำลังย่อยให้เล็กลง" detail={SCAFFOLD_REFINE_LOADING_COPY} showSkeleton />
+          <AIProcessingIndicator label="กำลังย่อยให้เล็กลง" detail={SCAFFOLD_REFINE_LOADING_COPY} />
         )}
         {!refineLoading && refineFeedback?.kind === 'error' && (
           <div
@@ -423,9 +458,9 @@ export function Scaffold({
         >
           เสร็จแล้ว
         </button>
-        <button disabled={refineLoading} onClick={onMakeSmaller}>ย่อยให้เล็กลงอีก</button>
-        <button disabled={refineLoading} onClick={onRescue}>ไม่ใช่แบบนี้</button>
-        <button disabled={refineLoading} onClick={onRescue} style={{ color: 'var(--danger)' }}>ฉันติดอยู่</button>
+        <button disabled={refineLoading} onClick={onMakeSmaller}>แบ่งก้าวนี้ให้เล็กลง</button>
+        <button disabled={refineLoading} onClick={onBackToInput}>กลับไปแก้บริบท</button>
+        <button disabled={refineLoading} onClick={onRescue}>ช่วยดูให้หน่อยว่าติดตรงไหน</button>
       </div>
     </div>
   );
