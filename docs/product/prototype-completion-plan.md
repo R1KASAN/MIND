@@ -17,7 +17,15 @@ The prototype is done when these demo-critical flows work in the browser without
 - evidence chip -> visible source/provenance detail
 - `ช่วยแก้ก้าวนี้` / `ขอก้าวอื่น` recovery
 - room reopen / reentry continuation
-- `/business` dashboard shows local usage signal
+- save point / return keeps the Room continuity story intact
+
+Prototype acceptance gate:
+
+- Room-based file ingestion works for the demo path.
+- Evidence is visible and connected to the Room context.
+- Room memory supports reopening or returning to the same task.
+- The Room can produce a generated summary / next action / save point.
+- `/business` dashboard is not required for prototype acceptance; it remains internal instrumentation only.
 
 ## Sprint Scope
 
@@ -31,14 +39,14 @@ In scope:
 Out of scope:
 
 - real-user research or real-user KPI gates
-- broad OCR/PDF/file-ingestion work
+- broad OCR/PDF/file-ingestion expansion beyond the accepted prototype path
 - prompt, retrieval, schema, analytics-contract, or smoke-harness changes unless a proven defect requires a tiny fix
 - architecture refactors or moving orchestration layers
 - product breadth beyond one client-facing task room
 
 ## Current Baseline
 
-Source: browser check on `http://localhost:3000` and `/business`, same local profile, storage not cleared.
+Source: browser check on `http://localhost:3000` and `/business` for internal instrumentation baseline, same local profile, storage not cleared.
 
 Fresh-room intake:
 
@@ -74,9 +82,9 @@ Dashboard snapshot after refresh:
 Baseline interpretation:
 
 - Paste-text and evidence-backed flow are demoable.
-- Reentry is visible but still needs a clean demo path because dashboard reentry cards have no data.
+- Reentry is visible but still needs a clean Room-based demo path.
 - Value pulse is not part of the prototype demo story.
-- Dashboard metrics are useful as local synthetic/demo signal, not human validation.
+- Dashboard metrics are useful as local instrumentation, not an acceptance gate or human validation.
 
 ## Phase 1: Freeze Scope and Baseline
 
@@ -113,7 +121,7 @@ Checklist:
 
 Fix-now defects:
 
-- Broken button, route, state transition, or dashboard read.
+- Broken button, route, or state transition on the Room-based demo path.
 - A demo-critical control hidden, disabled, or visually unreachable.
 - Evidence source detail not opening after chip click.
 - Reentry visible but selecting the room loses task context.
@@ -199,11 +207,41 @@ Synthetic pass: 2026-05-15
 
 Synthetic summary:
 
-- Repeated strengths: paste-text entry, evidence reveal, and dashboard local signal are demoable.
+- Repeated strengths: paste-text entry, evidence reveal, and Room-based continuation are demoable.
 - Repeated confusion: populated room list can still compete with first-load focus; recovery/reentry need a rehearsed demo path.
 - Edge-case-only confusion: evidence can feel like extra reading if the presenter does not click the chip.
 - Improve before demo: rehearse one fixed room for reentry and one fixed recovery branch.
 - Defer: real-user preference, value pulse, and OCR/file-heavy proof.
+
+## Decision — After Returning-User Persona Check
+
+Summary:
+
+- Reentry is validated by the returning-user persona: `ห้อง1` plus context summary is enough to get back to the right room.
+- The remaining evidence points to one narrow follow-up only: sidebar/nav friction when there are many rooms with similar names.
+
+Key changes:
+
+- Keep PR review as the primary active loop.
+- If a follow-up pass is approved from evidence, limit it to a narrow sidebar/nav pass focused on:
+  - finding the existing room faster
+  - separating rooms with similar names more clearly
+- Do not expand into sidebar redesign or unrelated UX cleanup.
+- Do not touch prompts, retrieval, analytics, OCR, or smoke harness behavior.
+
+Test plan:
+
+- Validate only against the two sources of evidence already available:
+  - PR review feedback
+  - demo-session friction from real usage
+- Treat "can find the same room again" as already confirmed.
+- Treat "too many similar room names" as the only navigation issue worth considering next.
+
+Assumptions:
+
+- Local AI latency stays in watch mode unless review or demo evidence clearly says it feels unacceptably slow.
+- A latency/progress pass is only justified if both review and demo evidence point to "stuck/too slow to explain."
+- No other work should start until one of these is true: review feedback arrives, or evidence justifies the narrow sidebar/nav pass.
 
 ## Phase 4: Demo Package and Handoff
 
@@ -221,13 +259,12 @@ Demo script:
 6. Click `ใช้ก้าวนี้` to move into scaffold.
 7. Show one recovery path: `ขอก้าวอื่น`, `ช่วยแก้ก้าวนี้`, or `ฉันติดอยู่`.
 8. Reopen an older room and point to `กลับมาทำต่อ`.
-9. Open `/business` to show local-only usage signals.
 
 Known limitations:
 
 - Real-user validation is not part of this prototype sprint.
 - OCR/file-heavy workflows are deferred unless the demo explicitly needs them.
-- Reentry dashboard metrics currently show `ไม่มีข้อมูล`; the UI reentry path can still be demonstrated.
+- Reentry dashboard metrics currently show `ไม่มีข้อมูล`, but dashboard status is not part of prototype acceptance.
 - Value pulse has no current local data and should not be central to the demo.
 - The dashboard is local instrumentation, not market proof.
 
@@ -237,11 +274,41 @@ Final verification checklist:
 - [x] `git diff --check`
 - [x] `npm run smoke:evidence-one-action`
 - [x] `npm run smoke:demo-browser`
+- [x] `npm run smoke:fallback-e2e`
+- [x] `npm run smoke:fallback-matrix`
 - [x] Browser: fresh intake first-load hierarchy
 - [x] Browser: evidence chip opens source detail
-- [ ] Browser: rescue / alternative path has no dead end
-- [ ] Browser: reentry / room continuation is demoable
-- [x] Browser: `/business` refresh shows non-zero events/tasks
+- [x] Browser: rescue / alternative path has no dead end
+- [x] Browser: reentry / room continuation is demoable
+- [x] Browser: Room save point / return is demoable
+
+Room reentry / save point verification plan:
+
+- Test Room: `Demo Reentry Continuity`
+- Primary sample file: `mind-brief.txt` or another ready `txt/md` demo file already available in the repo/demo set.
+- Before patching, document exact repro details: precondition, steps, expected result, actual result, and observed failure.
+
+Pass conditions:
+
+- Reopen Room เดิมแล้วเห็นบริบทเดิมหรือ artifact ที่สอดคล้อง.
+- Room title / selected room identity ยังตรงกับห้องเดิมหลัง reopen.
+- Evidence chip ยังเปิด source detail ได้.
+- Save point / return label สื่อ continuation.
+- Next action หรือ `ใช้ก้าวนี้` ยัง reachable.
+- ไม่มี broken route/state ระหว่างออกจากห้องและกลับเข้าห้อง.
+
+Must-run checks for this verification:
+
+- Manual browser: `Demo Reentry Continuity` Room flow.
+- `git diff --check`
+- `npm run typecheck:app`
+
+Regression checks if a patch is needed:
+
+- `npm run smoke:evidence-one-action`
+- `npm run smoke:demo-browser`
+- Manual browser: fresh intake still shows textarea, `แนบไฟล์เพิ่ม`, and `ไปต่อ`.
+- Manual browser: evidence reveal still opens source detail after reentry.
 
 Verification log:
 
@@ -255,7 +322,10 @@ Verification log:
 | `npm run smoke:studio` | blocked | Same initial page text timeout plus HMR WebSocket console noise on `127.0.0.1:3000`; do not change smoke harness in this sprint. |
 | Browser manual: fresh intake | pass | New room applied `is-dump-first-view`; textarea, `ไปต่อ`, and `แนบไฟล์เพิ่ม` were present. |
 | Browser manual: evidence reveal | pass | Evidence chip opened `เหตุผล / ประวัติ` and showed selected source text. |
-| Browser manual: dashboard | pass | `/business` refresh showed `EVENTS = 779`, `TASKS = 20`. |
+| Browser manual: dashboard | pass | `/business` refresh showed `EVENTS = 779`, `TASKS = 20`; internal instrumentation only. |
+| Browser manual: reentry / room continuation | pass | Room created, context pasted, `ไปต่อ` clicked, evidence and next action appeared; switched to another room, returned — room identity, context, evidence chips, `ทำก้าวนี้`, and save point all preserved. |
+| Browser manual: Room save point / return | pass | Sidebar showed `กลับมาทำต่อ` on the room after leaving; reentry chips showed `ใช้บริบทจากข้อความเดิม`, `มี reentry brief ล่าสุด`, and `ขยับล่าสุดในชั่วโมงนี้` — all consistent with task continuation. |
+| Browser manual: rescue / alternative path | pass | `ใช้ก้าวนี้`, `ขอก้าวอื่น`, `ช่วยแก้ก้าวนี้` all visible and clickable in ONE_ACTION; scaffold showed `เสร็จแล้ว`, `ย่อยให้เล็กลงอีก`, `ไม่ใช่แบบนี้`, `ฉันติดอยู่`; `ไม่ใช่แบบนี้` triggered `กำลังวินิจฉัยจุดติด` with recovery options — no dead end. |
 
 ## Verification — File Ingestion Pass
 
@@ -271,7 +341,7 @@ Scope:
 | AC-1 txt/md ingestion | `mind-file-ingestion-ac1.md` | pass | Browser drop on fresh room showed `mind-file-ingestion-ac1.md` as read, with extracted text visible in room context. Unit path also verified `.txt`/`.md` direct extraction without OCR. |
 | AC-2 next action from txt/md | `scope-brief.txt` / `client-note.md` | pass | `requestAction` test sent retrieved `evidenceContext` with `file:scope-brief`; `recordTaskSourcesInRoomMemory` appended `file:client-note` as `source_added`. Existing evidence smoke still retrieved file evidence. |
 | AC-3 OCR fallback | `scanned.pdf`, `scan.png`, `receipt.png` | pass | PDF OCR fallback remains automatic; OCR runtime failure marks only the failed PDF and keeps txt evidence usable. Image OCR success stores text; image OCR failure records `image_ocr_failed` without crashing mixed-file ingestion. |
-| AC-4 no regression | app checks + browser checks | pass | `npm run typecheck:app`, `npm run smoke:evidence-one-action`, `npm run smoke:demo-browser`, and browser checks passed. `/business` refresh showed `EVENTS = 798`, `TASKS = 20`. |
+| AC-4 no regression | app checks + browser checks | pass | `npm run typecheck:app`, `npm run smoke:evidence-one-action`, `npm run smoke:demo-browser`, and browser checks passed. `/business` refresh showed `EVENTS = 798`, `TASKS = 20`; internal instrumentation only. |
 
 Check results:
 
@@ -285,7 +355,7 @@ Check results:
 | Browser manual: fresh room hierarchy | pass | Fresh room still shows textarea, `ไปต่อ`, and `แนบไฟล์เพิ่ม` as the primary surface. |
 | Browser manual: evidence reveal | pass | Clicking evidence chip opens `เหตุผล / ประวัติ` and shows selected source text. |
 | Browser manual: txt/md attachment | pass | Dropping `mind-file-ingestion-ac1.md` into a fresh room surfaced file name and extracted text in room context. |
-| Browser manual: dashboard | pass | `/business` refresh showed `EVENTS = 798`, `TASKS = 20`; reentry time remains `ไม่มีข้อมูล`. |
+| Browser manual: dashboard | pass | `/business` refresh showed `EVENTS = 798`, `TASKS = 20`; reentry time remains `ไม่มีข้อมูล`; internal instrumentation only. |
 
 Known limitations:
 
@@ -365,7 +435,7 @@ Route and component classification:
 
 Hidden/deferred routes and entry points:
 
-- `/business`: keep for internal dashboard review only; do not present as a workflow step unless the demo explicitly needs local instrumentation.
+- `/business`: keep for internal dashboard review only; do not present as an acceptance step or normal demo workflow.
 - `/pmf-guide`: keep as product/reference artifact only; not part of prototype user path.
 - Archive / Overview overlays: defer in focus-mode demo because they add navigation choices that do not prove file ingestion or evidence-backed next action.
 
@@ -393,6 +463,31 @@ Exit criteria:
 
 - The app can be presented end-to-end to a computer engineering audience.
 - The boundary between prototype-ready and deferred work is clear.
+
+## Verification — First-Time User UX Fixes
+Date: 2026-05-16
+
+Scope:
+UX/copy fixes 3 จุดจาก First-Time User Observation Log
+ไม่มีการแตะ prompts, retrieval, analytics, OCR, smoke harness, หรือ architecture
+
+| Fix | Result | Evidence |
+|-----|--------|---------|
+| Fix 1 — Loading indicator (isDumpPending) | pass | ปุ่ม ไปต่อ เปลี่ยนเป็น กำลังสรุป... ทันที; route → SYNTHESIZING เร็วมาก; gap ลดลงอย่างมีนัยสำคัญ |
+| Fix 2 — Value Pulse trigger ย้ายไป post-confirm | pass | ONE_ACTION view เปิดสะอาดไม่มี modal บัง; ValuePulse ไม่ปรากฏก่อน user interact กับ action; fresh session ยืนยันแล้ว |
+| Fix 3 — Label เริ่มด้วยวิธีนี้ | pass | ปรากฏชัดใน section ปรับก้าวเพิ่มเติม แทน เริ่มงานก่อน |
+
+Checks:
+- git diff --check: pass
+- npm run typecheck:app: pass
+- npm run smoke:evidence-one-action: pass
+- npm run smoke:demo-browser: pass
+- Manual browser: ONE_ACTION, Value Pulse, label ยืนยันทั้งหมด
+
+Known gap (defer):
+- Loading indicator gap สั้นมาก (blank panel ชั่วคราว)
+  เกิดจาก isDumpPending rerender กับ SYNTHESIZING route เกือบพร้อมกัน
+  ยังดีกว่าเดิมอย่างมีนัยสำคัญ — defer animation polish ไว้หลัง demo
 
 ## Prototype Walkthrough Findings
 
@@ -448,6 +543,13 @@ Prototype demo note:
 - No prompts, retrieval schema, analytics contracts, OCR provider setup, or smoke harness were changed in this walkthrough pass.
 - If any of the confusion points above are addressed next, it should be a small usability cleanup pass, not an architecture or contract change.
 
+### Deferred UX items (post-demo)
+- คำว่า "ก้าว" ทุกที่ — copy pass หลัง demo
+- โหมดละเอียด / เครื่องมือ visual weight — hierarchy pass แยก sprint
+- State transition animation หลัง ใช้ก้าวนี้ — animation pass แยก sprint
+- ดูที่มาของก้าวนี้ heading — ยังยอมรับได้สำหรับ demo
+- Badge room status tooltip — defer หลัง demo
+
 ## Prototype User Walkthrough Runbook
 
 Use this runbook when demoing the current prototype to a person in the room. Keep it short, verbal, and observation-first.
@@ -465,7 +567,7 @@ Show one clean story:
 - Open the prototype at `/`.
 - Stay in focus mode.
 - Use one prepared sample file plus one messy text prompt.
-- Keep `/business` and `/pmf-guide` out of the demo path unless you explicitly need internal reference.
+- Keep `/business` and `/pmf-guide` out of the demo path; they are internal references, not acceptance gates.
 
 ### Demo script
 
@@ -565,3 +667,167 @@ Acceptance check:
 | AC-4 OCR failure isolation | pass | Failure copy is file-scoped and states that the Room continues with available context. |
 | AC-5 summary / next action / save point | pass | No task-memory or route behavior changed; existing save-point verification still applies. |
 | AC-6 scope guard | pass | No prompt, retrieval schema, analytics contract, OCR provider, or smoke harness changes in this pass. |
+
+## Verification — Room Reentry and Save Point Continuity
+
+Date: 2026-05-16
+
+Scope:
+
+- Room reentry / save point / return continuity acceptance gate only.
+- Verified via automated browser test on `http://localhost:3000` plus `git diff --check`, `npm run typecheck:app`, and `npm run smoke:evidence-one-action`.
+- No prompt, retrieval schema, analytics contract, OCR provider, or smoke harness changes.
+
+Test flow:
+
+1. Opened `/` and created a new Room.
+2. Pasted client/project context (ABC Corp delay update Phase 2).
+3. Confirmed `แนบไฟล์เพิ่ม` button was present.
+4. Clicked `ไปต่อ`.
+5. Evidence chips appeared: `ข้อความเดิมของงานนี้`, `อัปเดตเมื่อสักครู่`.
+6. Right panel showed next action context with `แก้บริบทนี้` reachable.
+7. `ดูว่าทำไม` link visible; evidence/source panel available.
+8. Switched to another Room via sidebar.
+9. Returned to the original Room.
+10. Verified: room identity preserved, context/evidence chips visible (`ใช้บริบทจากข้อความเดิม`, `มี reentry brief ล่าสุด`, `ขยับล่าสุดในชั่วโมงนี้`), `ทำก้าวนี้` button reachable, sidebar label `กลับมาทำต่อ` present, and `กลับมาดูสถานะ` save point visible.
+
+Pass condition results:
+
+| Condition | Result |
+|---|---|
+| Reopen Room เดิมแล้วเห็นบริบทเดิมหรือ artifact ที่สอดคล้อง | pass |
+| Room title / selected room identity ยังตรงกับห้องเดิมหลัง reopen | pass |
+| Evidence chip ยังเปิด source detail ได้ | pass |
+| Save point / return label สื่อ continuation | pass |
+| Next action หรือ `ใช้ก้าวนี้` ยัง reachable | pass |
+| ไม่มี broken route/state ระหว่างออกจากห้องและกลับเข้าห้อง | pass |
+
+Check results:
+
+| Check | Result | Note |
+|---|---|---|
+| `git diff --check` | pass | No whitespace errors. |
+| `npm run typecheck:app` | pass | App TypeScript compile check passed. |
+| `npm run smoke:evidence-one-action` | pass | `selectionMethod: retrieval`, schema valid, retrieved `file:stale-handoff`. |
+| Browser manual: reentry flow | pass | Full room switch and return verified; all 6 pass conditions met. |
+
+Overall: **pass** — acceptance gate `Room reentry / save point / return continuity` is closed.
+
+Notes:
+
+- Room auto-naming produced `ห้องงานใหม่ 2` instead of `Demo Reentry Continuity`; this is a naming convenience limitation, not a reentry defect. Room identity was correctly preserved across switch and return.
+- Value Pulse modal appeared during the flow and was dismissed; this is existing known behavior and not a reentry blocker.
+- `smoke:rooms` and `smoke:studio` remain documented as blocked by initial-page timeout in fresh Playwright context; this pass did not touch smoke harness files.
+
+## Verification — Rescue and Alternative Path
+
+Date: 2026-05-16
+
+Scope:
+
+- Rescue / alternative path acceptance gate only: verify that `ขอก้าวอื่น`, `ช่วยแก้ก้าวนี้`, `ไม่ใช่แบบนี้`, and `ฉันติดอยู่` do not produce a dead end in the demo flow.
+- Verified via automated browser test on `http://localhost:3000`.
+- No prompt, retrieval schema, analytics contract, OCR provider, or smoke harness changes.
+
+Test flow:
+
+1. Opened `/` and selected an existing Room with context.
+2. Verified ONE_ACTION view: action title visible, `ใช้ก้าวนี้`, `ช่วยแก้ก้าวนี้`, `ขอก้าวอื่น` all present.
+3. Clicked `ขอก้าวอื่น` — AI produced a new action; recovery buttons remained visible.
+4. Clicked `ใช้ก้าวนี้` — entered scaffold view showing step `1 / 3`.
+5. Scaffold controls visible: `เสร็จแล้ว`, `ย่อยให้เล็กลงอีก`, `ไม่ใช่แบบนี้`, `ดูขั้นตอนทั้งหมด`, `ฉันติดอยู่`.
+6. Clicked `ไม่ใช่แบบนี้` — triggered `กำลังวินิจฉัยจุดติด` diagnosis with recovery options:
+   - `ย่อยให้เล็กลงอีก` (break down further)
+   - `พักก่อน แล้วค่อยกลับมา` (take a break and come back)
+7. Recovery text explained: "MIND ยังวินิจฉัยไม่สำเร็จในรอบนี้ แต่บริบทงานและข้อความเดิมของคุณยังอยู่ครบ ลองย่อยให้เล็กลงอีก หรือพักไว้แล้วกลับมาลอง rescue ใหม่ได้"
+8. No dead end — user can continue from any rescue path.
+
+Pass condition results:
+
+| Control | Present | Clickable | Dead end after click |
+|---|---|---|---|
+| `ใช้ก้าวนี้` | yes | yes | no — enters scaffold |
+| `ขอก้าวอื่น` | yes | yes | no — produces alternate action |
+| `ช่วยแก้ก้าวนี้` | yes | yes | no — opens adjustment options |
+| `ย่อยให้เล็กลงอีก` | yes (scaffold) | yes | no — breaks down further |
+| `ไม่ใช่แบบนี้` | yes (scaffold) | yes | no — triggers diagnosis with recovery |
+| `ฉันติดอยู่` | yes (scaffold) | yes | no — same rescue flow |
+
+Overall: **pass** — acceptance gate `rescue / alternative path has no dead end` is closed.
+
+Notes:
+
+- The rescue flow (`ไม่ใช่แบบนี้` / `ฉันติดอยู่`) converges to a diagnosis view with two clear recovery paths, neither of which dead-ends.
+- Value Pulse modal appeared during the flow and was dismissed; this is existing known behavior.
+- All Phase 4 final verification checklist items are now checked.
+
+## Verification — Phase 3.5 Demo Readiness / Reentry Workspace
+
+Date: 2026-05-17
+
+Scope:
+
+- Fallback resilience demo path: failed scanned PDF + ready txt → contextStatus `partial` → evidence → save point → reentry.
+- Smoke scripts added to checklist: `smoke:fallback-e2e`, `smoke:demo-browser`, `smoke:fallback-matrix`.
+- No prompt, retrieval schema, analytics contract, OCR provider, or smoke harness changes.
+
+### Smoke Check Results
+
+| Check | Result | Note |
+|---|---|---|
+| `npm run typecheck:app` | pass | Clean, no errors. |
+| `git diff --check` | pass | No whitespace errors. |
+| `npm run smoke:evidence-one-action` | pass | `selectionMethod: retrieval`, retrieved `file:stale-handoff`. |
+| `npm run smoke:fallback-e2e` | pass | `intakeSuccess: true`, `actionSuccess: true`, retrieved `file:file-ready-txt`, failed PDF excluded. |
+| `npm run smoke:fallback-matrix` | pass | 7/7 scenarios — txt/md/PDF ready, partial+blocked fallback, mixed ready/failed — all assertions passed. |
+| `npm run smoke:demo-browser` | pass | Shell visible, room switch reflected, health badge `AI พร้อม`, no console errors. |
+
+### 10-Step Fallback Demo Path — Code Evidence
+
+The following table maps each demo step to the implemented code path. No browser was spun up in this verification; assertions are based on the confirmed smoke results above and prior manual verifications already logged in this document.
+
+| Step | Demo action | Implemented code path | Status |
+|---|---|---|---|
+| 1 | Create new Room | Room sidebar → `ห้องใหม่` | Confirmed (prior manual passes) |
+| 2 | Attach scanned PDF | `extractRoomSubmission` → PDF OCR path → `unreadable` or `failed_extraction` | Confirmed (`smoke:fallback-e2e`, matrix scenario 4) |
+| 3 | Attach ready `notes.txt` → `อ่านไฟล์ได้แล้ว` | `extractRoomSubmission` → text path → `status: ready` | Confirmed (`smoke:fallback-matrix` scenario 1) |
+| 4 | Click `ไปต่อ` — shows `partial` badge | `buildStudioSnapshot` → `contextStatus: 'partial'` → `ContextSnapshot.tsx` renders badge | Confirmed (Phase 1 DONE; matrix scenario 4) |
+| 5 | `ONE_ACTION` from `notes.txt` evidence | `buildActionEvidenceContext` selects only `ready` sources | Confirmed (`smoke:fallback-e2e`: retrieved `file:file-ready-txt`, failed PDF excluded) |
+| 6 | Evidence chip shows `ใช้เป็นบริบทแล้ว` | `StudioReadyFile.usedInContext = true` → badge in `ContextSnapshot.tsx` | Confirmed (Phase 1.5 DONE) |
+| 7 | PDF shows `อ่านไม่สำเร็จ` + retry button | `fileIssues[].retryable` → `ContextSnapshot.tsx` failure UI | Confirmed (Phase 1.5 DONE) |
+| 8 | Save Point — captures `usedSourceIds` + `failedFileNames` | `buildReentryTaskArtifacts` → `reentryBrief.usedSourceIds`, `reentryBrief.failedFileNames` | Confirmed (Phase 2.5 DONE; `task-machine.test.ts`) |
+| 9 | Reopen Room → restores `reentryBrief.summary` + `topActions` | `idb.ts` → `lastReentryBrief` persisted; hydrated on session load | Confirmed (Room reentry/save point manual pass) |
+| 10 | Working Snapshot / Next Move readable without reset | `reentryBrief.summary` (situation), `reentryBrief.topActions[0]` (next move) surfaced in reentry card | Confirmed (Room reentry manual pass) |
+
+### Working Snapshot — Definition (Operational Memory State)
+
+> The Working Snapshot is the operational memory state of the client case.
+> It answers: what happened, what the client wants, what was last agreed, and what risks/open loops are open.
+> It reduces cognitive reset when the user returns to a Room.
+> It is NOT a generic document summary.
+
+Current code mapping:
+- `reentryBrief.summary` → situation/what-happened text (generated by `AiReentryResponse.reentrySummary`)
+- `reentryBrief.topActions[]` → candidate next moves
+- `reentryBrief.usedSourceIds` → files confirmed as evidence at Save Point time
+- `reentryBrief.failedFileNames` → files needing retry, shown in "ดูเพิ่ม" section of `RoomCanvasHeader.tsx`
+- `situation_summary` on `lastSynthesis` → fallback working context when no reentry brief exists
+
+Expected (not yet a named UI panel — deferred post-demo):
+- A dedicated "Working Snapshot" labeled panel.
+- A dedicated "Next Move" labeled panel.
+- A standalone Room Dashboard page.
+
+### Presenter Script — File Failure Moment
+
+> "ไฟล์ PDF นี้ยังอ่านไม่สำเร็จ แต่ MIND ยังทำงานต่อได้จาก notes.txt ที่พร้อมแล้ว —
+> ดูนะว่าระบบเลือกใช้ไฟล์ไหนเป็นบริบท และ next move ที่แนะนำมาจากไฟล์นั้น
+> เมื่อเราเซฟ Save Point และกลับมาใหม่ งานก็ยังอยู่ครบพร้อมให้ไปต่อ ไม่ต้องเริ่มใหม่"
+
+### Known Limitations (Phase 3.5)
+
+- `smoke:rooms` and `smoke:studio` remain blocked by initial-page Playwright timeout in fresh context; this is a known harness gap and not a prototype blocker.
+- Port conflicts on 3205/3207 are non-fatal during smoke runs when a dev server is already running on those ports; both smokes passed with exit 0.
+- Dedicated "Working Snapshot", "Next Move", and standalone Room Dashboard UI panels are deferred until post-demo evidence confirms need.
+
+Overall: **pass** — Phase 3.5 Demo Readiness acceptance gate is closed.

@@ -22,6 +22,46 @@ test('assessExtractedTextQuality flags garbled extracted text', () => {
   assert.notEqual(quality.reason, undefined);
 });
 
+test('assessExtractedTextQuality accepts readable Thai text with common 3-character words', () => {
+  // Regression for Thai min-length >= 3 threshold:
+  // words like งาน, ได้, รับ, ลูก, ออก are 3 chars and must not be penalised.
+  const quality = assessExtractedTextQuality(
+    'งานนี้ต้องทำให้เสร็จวันนี้ และทีมต้องได้รับข้อมูลจากลูกค้าก่อนที่จะเริ่มออกแบบระบบใหม่ ' +
+    'เพราะการรอนานเกินไปทำให้แผนงานทั้งหมดต้องเลื่อนออกไป',
+  );
+  assert.equal(quality.usable, true);
+  assert.equal(quality.metrics.fragmentedRunCount, 0);
+});
+
+test('assessExtractedTextQuality accepts mixed Thai-English content', () => {
+  // Regression: realistic mixed-script OCR output must not be falsely rejected.
+  const quality = assessExtractedTextQuality(
+    'ลูกค้าส่ง email มาขอ update สถานะ project ก่อนวันศุกร์ ' +
+    'ทีมต้องเตรียม PDF สรุปและส่ง customer update กลับไปภายในวันนี้',
+  );
+  assert.equal(quality.usable, true);
+  assert.equal(quality.metrics.fragmentedRunCount, 0);
+});
+
+test('assessExtractedTextQuality accepts numeric-heavy Thai document with meaningful context', () => {
+  // Regression: numbers alone must not drag word ratio below threshold when Thai context is present.
+  const quality = assessExtractedTextQuality(
+    'ราคาแพ็กเกจอยู่ที่ 1,200 บาทต่อเดือน รวม VAT 7% แล้ว ' +
+    'มีทั้งหมด 3 แพ็กเกจให้เลือก ลูกค้าต้องยืนยันก่อนวันที่ 15 ของเดือน',
+  );
+  assert.equal(quality.usable, true);
+});
+
+test('assessExtractedTextQuality rejects genuinely fragmented Thai OCR output', () => {
+  // Garbled Tesseract output: every Thai character spaced individually,
+  // producing fragmented_word_runs and near-zero normalWordRatio.
+  const quality = assessExtractedTextQuality(
+    'ไ ฟ ล ์ ต ั ว อ ย ่ า ง ท ี่ ถ ู ก ส แ ก น แ ล ้ ว ไ ม ่ ช ั ด เ จ น เ ล ย ส ั ก น ิ ด',
+  );
+  assert.equal(quality.usable, false);
+  assert.ok(quality.metrics.fragmentedRunCount > 0, 'expected fragmented run count > 0');
+});
+
 test('extractRoomSubmission keeps clean text-layer PDF as ready', async () => {
   let ocrCalled = false;
   const submission = await extractRoomSubmission('', [makePdfFile()], {
@@ -91,7 +131,7 @@ test('extractRoomSubmission marks PDF failed when OCR output is still garbled', 
   assert.equal(submission.extractedText, '');
   assert.equal(submission.sourceText.includes('มีโน้ตเดิมอยู่แล้ว'), true);
   assert.equal(submission.sourceText.includes('บริบทจากไฟล์แนบ'), false);
-  assert.equal(submission.sourceText.includes('ลอง OCR แล้วแต่ข้อความ PDF ยังไม่ชัดพอ'), true);
+  assert.equal(submission.sourceText.includes('ลอง OCR แล้วแต่ข้อความยังไม่ชัดพอ'), true);
 });
 
 test('extractRoomSubmission marks PDF failed when OCR runtime fails', async () => {

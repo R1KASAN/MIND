@@ -189,6 +189,7 @@ export function MorningRitual({
           size="panel"
           label="กำลังคัดทางเริ่มวันนี้"
           detail="MIND กำลังคัดว่าควรกลับไปเริ่มจากตรงไหนดี"
+          showSkeleton
         />
       )}
 

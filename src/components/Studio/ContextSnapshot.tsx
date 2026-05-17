@@ -71,6 +71,30 @@ export function ContextSnapshot({
         <span className="studio-chip">{snapshot.lastUpdatedLabel}</span>
       </div>
 
+      {snapshot.contextStatus === 'partial' && (
+        <div className="studio-context-status-badge studio-context-status-partial" role="status">
+          <span>⚠</span>
+          <span>มีบางไฟล์อ่านไม่สำเร็จ แต่ห้องยังทำงานต่อได้จากไฟล์หรือข้อความที่พร้อมอยู่</span>
+        </div>
+      )}
+
+      {snapshot.contextStatus === 'blocked' && (
+        <div className="studio-context-status-badge studio-context-status-blocked" role="status">
+          <span>⛔</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+            <span>ยังไม่มีบริบทที่พร้อมใช้ — ลอง retry ไฟล์ที่ล้มเหลว หรือเพิ่มข้อความสรุปแทนไฟล์นั้น</span>
+            <span style={{ opacity: 0.75, fontSize: '0.8rem' }}>คุณยังสามารถเพิ่มข้อความสรุปเองเพื่อให้ระบบทำงานต่อได้</span>
+          </div>
+        </div>
+      )}
+
+      {snapshot.contextStatus === 'empty' && (
+        <div className="studio-context-status-badge studio-context-status-partial" role="status" style={{ opacity: 0.72 }}>
+          <span>📋</span>
+          <span>เพิ่มข้อความหรือไฟล์เพื่อเริ่มสร้างบริบทของห้อง</span>
+        </div>
+      )}
+
       {(readyCount > 0 || issueCount > 0) && (
         <div className="studio-snapshot-status-row">
           {readyCount > 0 && (
@@ -164,52 +188,62 @@ export function ContextSnapshot({
             <span className="studio-chip studio-chip-success">{readyCount} ไฟล์</span>
           </div>
           <div className="studio-file-stack">
-            {snapshot.readyFiles.map((file) => (
-              <article key={file.id} className="studio-file-row studio-file-row-ready">
-                <div className="studio-file-row-main">
-                  <div className="studio-file-row-head">
-                    <span className="studio-eyebrow" style={{ marginBottom: 0 }}>
-                      {file.copy.title}
-                    </span>
-                    <span className={`studio-chip ${file.isPrimary ? 'studio-chip-success' : ''}`}>
-                      {file.isPrimary ? (file.isAutoPrimary ? 'ไฟล์หลักอัตโนมัติ' : 'ไฟล์หลัก') : file.copy.cta}
-                    </span>
-                  </div>
-                  <strong className="studio-file-row-title">{file.name}</strong>
-                  <p className="studio-inline-note" style={{ margin: 0 }}>
-                    {file.copy.body}
-                  </p>
-                </div>
-                {!file.isPrimary && onSelectPrimaryFile && (
-                  <button
-                    type="button"
-                    className="studio-context-button"
-                    onClick={() => void onSelectPrimaryFile(file.id)}
-                  >
-                    ใช้เป็นไฟล์หลัก
-                  </button>
-                )}
-                <p className="studio-file-row-detail">{file.copy.detail}</p>
-                {file.extractedText && (
-                  <details className="studio-provenance">
-                    <summary
-                      style={{
-                        cursor: 'pointer',
-                        color: 'var(--text-secondary)',
-                        fontSize: '0.82rem',
-                        fontWeight: 600,
-                        listStyle: 'none',
-                      }}
-                    >
-                      ดูข้อความที่อ่านได้
-                    </summary>
-                    <p className="studio-inline-note" style={{ margin: '0.35rem 0 0', whiteSpace: 'pre-wrap' }}>
-                      {file.extractedText}
+            {snapshot.readyFiles.map((file) => {
+              const hasRetrievalInfo = snapshot.retrievedSourceIds.length > 0;
+              return (
+                <article key={file.id} className="studio-file-row studio-file-row-ready">
+                  <div className="studio-file-row-main">
+                    <div className="studio-file-row-head">
+                      <span className="studio-eyebrow" style={{ marginBottom: 0 }}>
+                        {file.copy.title}
+                      </span>
+                      <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span className={`studio-chip ${file.isPrimary ? 'studio-chip-success' : ''}`}>
+                          {file.isPrimary ? (file.isAutoPrimary ? 'ไฟล์หลักอัตโนมัติ' : 'ไฟล์หลัก') : file.copy.cta}
+                        </span>
+                        {hasRetrievalInfo && (
+                          <span className={`studio-chip ${file.usedInContext ? 'studio-chip-evidence-used' : 'studio-chip-evidence-unused'}`}>
+                            {file.usedInContext ? 'ใช้เป็นบริบทแล้ว' : 'ไม่ได้ใช้ในการสรุปรอบนี้'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <strong className="studio-file-row-title">{file.name}</strong>
+                    <p className="studio-inline-note" style={{ margin: 0 }}>
+                      {file.copy.body}
                     </p>
-                  </details>
-                )}
-              </article>
-            ))}
+                  </div>
+                  {!file.isPrimary && onSelectPrimaryFile && (
+                    <button
+                      type="button"
+                      className="studio-context-button"
+                      onClick={() => void onSelectPrimaryFile(file.id)}
+                    >
+                      ใช้เป็นไฟล์หลัก
+                    </button>
+                  )}
+                  <p className="studio-file-row-detail">{file.copy.detail}</p>
+                  {file.extractedText && (
+                    <details className="studio-provenance">
+                      <summary
+                        style={{
+                          cursor: 'pointer',
+                          color: 'var(--text-secondary)',
+                          fontSize: '0.82rem',
+                          fontWeight: 600,
+                          listStyle: 'none',
+                        }}
+                      >
+                        ดูข้อความที่อ่านได้
+                      </summary>
+                      <p className="studio-inline-note" style={{ margin: '0.35rem 0 0', whiteSpace: 'pre-wrap' }}>
+                        {file.extractedText}
+                      </p>
+                    </details>
+                  )}
+                </article>
+              );
+            })}
           </div>
         </div>
       )}

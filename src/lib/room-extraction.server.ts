@@ -84,7 +84,9 @@ function buildTextQualityMetrics(
   const spacedThaiRuns = text.match(/(?:[\u0E00-\u0E7F]\s+){4,}[\u0E00-\u0E7F]/g) ?? [];
   const compactWordTokens = normalizedText.match(/[A-Za-z\u0E00-\u0E7F]+/g) ?? [];
   const normalWordCount = compactWordTokens.filter((token) => {
-    if (/[\u0E00-\u0E7F]/.test(token)) return token.length >= 4;
+    // Thai has many meaningful 3-character tokens (งาน, ได้, รับ, ออก).
+    // >= 4 undercounted readable Thai OCR; 2-char tokens stay excluded to avoid counting noise.
+    if (/[\u0E00-\u0E7F]/.test(token)) return token.length >= 3;
     return token.length >= 3;
   }).length;
   const significantCharacterCount = normalizedText.replace(/\s/g, '').length;
@@ -120,7 +122,9 @@ export function assessExtractedTextQuality(text: string): ExtractedTextQuality {
 
   const compactWordTokens = normalizedText.match(/[A-Za-z\u0E00-\u0E7F]+/g) ?? [];
   const normalWordCount = compactWordTokens.filter((token) => {
-    if (/[\u0E00-\u0E7F]/.test(token)) return token.length >= 4;
+    // Thai has many meaningful 3-character tokens (งาน, ได้, รับ, ออก).
+    // >= 4 undercounted readable Thai OCR; 2-char tokens stay excluded to avoid counting noise.
+    if (/[\u0E00-\u0E7F]/.test(token)) return token.length >= 3;
     return token.length >= 3;
   }).length;
   const normalWordRatio = compactWordTokens.length > 0 ? normalWordCount / compactWordTokens.length : 0;
@@ -510,7 +514,38 @@ export async function extractRoomSubmission(
 ): Promise<RoomSubmission> {
   const sourceFiles: RoomSourceFile[] = [];
   for (const file of files) {
-    sourceFiles.push(await extractSingleFile(file, deps));
+    const result = await extractSingleFile(file, deps);
+    sourceFiles.push(result);
+
+    // ── Phase 3.2 Observability ──────────────────────────────────────────────
+    // One structured log per file, emitted after final status is known.
+    // Does NOT alter extraction logic or thresholds.
+    const kind = result.kind;
+    let extractionMethod: 'text-layer' | 'ocr' | 'plain-text' | 'markdown' | null = null;
+    if (result.status === 'ready') {
+      if (result.ocrEngine) {
+        extractionMethod = 'ocr';
+      } else if (kind === 'pdf') {
+        extractionMethod = 'text-layer';
+      } else if (kind === 'text') {
+        // Distinguish markdown from plain text by file extension
+        extractionMethod = result.name.toLowerCase().endsWith('.md') ? 'markdown' : 'plain-text';
+      } else if (kind === 'table') {
+        extractionMethod = 'plain-text';
+      }
+    }
+
+    console.log('[MIND][FileExtraction]', JSON.stringify({
+      fileName: result.name,
+      mimeType: result.mimeType,
+      status: result.status,
+      extractionMethod,
+      extractedTextLength: result.extractedText?.length ?? 0,
+      failureReason: result.failureReason ?? null,
+      qualityReason: result.failureDetail ?? null,
+      enteredRoomMemory: result.status === 'ready',
+    }));
+    // ── End Observability ─────────────────────────────────────────────────────
   }
   const extractedParts = sourceFiles
     .map((file) => file.extractedText?.trim())

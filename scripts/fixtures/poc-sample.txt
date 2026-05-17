@@ -1,0 +1,20 @@
+Meeting Notes — Client Project Alpha
+Date: 2025-05-14
+
+Attendees: Arkarapol, Siriporn, James
+
+Agenda:
+1. Project status update
+2. Blocker review
+3. Next steps
+
+Status: The backend API is complete. Frontend integration is 70% done.
+Blockers: Need design review sign-off before proceeding.
+Next steps: Schedule design review by end of week.
+
+Action items:
+- Arkarapol: send mockups by Thursday
+- Siriporn: confirm timeline with client
+- James: update integration tests
+
+Thai note: ทีมพร้อมดำเนินการต่อหลังได้รับการอนุมัติ

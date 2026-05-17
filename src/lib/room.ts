@@ -472,3 +472,42 @@ export function stripRoomFileContext(sourceText: string): string {
 
   return sourceText.trim();
 }
+
+// ─── Room Context State Model ────────────────────────────────────────────────
+
+export type RoomContextStatus = 'empty' | 'ready' | 'partial' | 'blocked';
+
+/**
+ * Returns the canonical context state for a Room task.
+ *
+ * - `empty`:   no usable context and no files at all
+ * - `ready`:   usable context present, no failed files
+ * - `partial`: usable context present + at least one failed/unreadable file
+ * - `blocked`: files exist but all context paths are unusable
+ *
+ * Uses `stripRoomFileContext` so auto-generated file labels are not counted
+ * as usable manual text.
+ */
+export function getRoomContextStatus(task: {
+  sourceText: string;
+  sourceFiles: Pick<RoomSourceFile, 'status'>[];
+  lastSynthesis?: { situation_summary?: string | null } | null;
+  taskFrame?: { objective?: string | null } | null;
+}): RoomContextStatus {
+  const strippedText = stripRoomFileContext(task.sourceText).trim();
+  const readyFiles = task.sourceFiles.filter((f) => f.status === 'ready');
+  const failedFiles = task.sourceFiles.filter(
+    (f) => f.status === 'failed_extraction' || f.status === 'unreadable' || f.status === 'failed',
+  );
+
+  const hasUsableContext =
+    strippedText.length > 0 ||
+    readyFiles.length > 0 ||
+    Boolean(task.lastSynthesis?.situation_summary) ||
+    Boolean(task.taskFrame?.objective);
+
+  if (!hasUsableContext && task.sourceFiles.length === 0) return 'empty';
+  if (hasUsableContext && failedFiles.length === 0) return 'ready';
+  if (hasUsableContext && failedFiles.length > 0) return 'partial';
+  return 'blocked';
+}

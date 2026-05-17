@@ -400,6 +400,17 @@ export function buildScaffoldSuccessArtifacts(input: {
 }
 
 export function buildReentryTaskArtifacts(task: TaskContext, reentry: AiReentryResponse) {
+  const failedFileNames = task.sourceFiles
+    .filter((f) => f.status === 'failed_extraction' || f.status === 'unreadable' || f.status === 'failed')
+    .map((f) => f.name);
+
+  // Derive used source IDs from the current plan's evidence chips if available
+  const usedSourceIds = task.currentPlan?.steps
+    ?.flatMap((step) => step.evidence ?? [])
+    .map((chip) => chip.sourceId)
+    .filter((id, i, arr) => arr.indexOf(id) === i)
+    ?? [];
+
   const nextTask: TaskContext = {
     ...task,
     assistantMode: 'reentry_brief',
@@ -409,6 +420,8 @@ export function buildReentryTaskArtifacts(task: TaskContext, reentry: AiReentryR
       topActions: reentry.topActions,
       ignoredNoise: reentry.ignoredNoise,
       createdAt: Date.now(),
+      ...(usedSourceIds.length > 0 ? { usedSourceIds } : {}),
+      ...(failedFileNames.length > 0 ? { failedFileNames } : {}),
     },
   };
 

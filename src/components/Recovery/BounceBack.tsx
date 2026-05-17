@@ -116,6 +116,18 @@ export function BounceBack({
                     ))}
                   </div>
                 )}
+                {reentryBrief.usedSourceIds && reentryBrief.usedSourceIds.length > 0 && (
+                  <p className="reentry-hero-file-note">
+                    <span className="reentry-hero-file-note-label">ใช้เป็นบริบท</span>
+                    <span>{reentryBrief.usedSourceIds.map((id) => id.replace(/^file:/, '')).join(', ')}</span>
+                  </p>
+                )}
+                {reentryBrief.failedFileNames && reentryBrief.failedFileNames.length > 0 && (
+                  <p className="reentry-hero-file-note reentry-hero-file-note-warning">
+                    <span className="reentry-hero-file-note-label">อ่านไม่สำเร็จ</span>
+                    <span>{reentryBrief.failedFileNames.join(', ')} — retry ได้</span>
+                  </p>
+                )}
                 <button type="button" onClick={onStartFresh}>เริ่มใหม่</button>
               </div>
             </details>
@@ -140,6 +152,7 @@ export function BounceBack({
           size="panel"
           label="กำลังสรุปจุดกลับมาทำต่อ"
           detail="MIND กำลังสรุปว่าควรกลับเข้างานนี้แบบไหนดี"
+          showSkeleton
         />
       )}
       {!reentryBrief && (

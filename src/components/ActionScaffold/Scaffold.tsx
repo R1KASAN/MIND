@@ -233,7 +233,7 @@ export function Scaffold({
         <StepEvidencePanel step={currentStep} />
 
         {refineLoading && (
-          <AIProcessingIndicator label="กำลังย่อยให้เล็กลง" detail={SCAFFOLD_REFINE_LOADING_COPY} />
+          <AIProcessingIndicator label="กำลังย่อยให้เล็กลง" detail={SCAFFOLD_REFINE_LOADING_COPY} showSkeleton />
         )}
         {!refineLoading && refineFeedback?.kind === 'error' && (
           <div
@@ -394,7 +394,7 @@ export function Scaffold({
 
       <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
         {refineLoading && (
-          <AIProcessingIndicator label="กำลังย่อยให้เล็กลง" detail={SCAFFOLD_REFINE_LOADING_COPY} />
+          <AIProcessingIndicator label="กำลังย่อยให้เล็กลง" detail={SCAFFOLD_REFINE_LOADING_COPY} showSkeleton />
         )}
         {!refineLoading && refineFeedback?.kind === 'error' && (
           <div

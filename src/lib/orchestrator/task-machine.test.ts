@@ -321,6 +321,139 @@ test('buildReentryTaskArtifacts stores a reentry save point brief', () => {
   assert.equal(result.nextTask.reentryBrief?.ignoredNoise[0], 'งานเก่า');
 });
 
+// ─── Phase 2.5: Save Point Metadata Tests ────────────────────────────────────
+
+test('Phase 2.5: buildReentryTaskArtifacts includes failedFileNames from failed sourceFiles', () => {
+  const task = makeTask({
+    lifecycleState: 'stalled',
+    sourceText: 'งานค้าง',
+    sourceFiles: [
+      {
+        id: 'file-txt',
+        name: 'notes.txt',
+        kind: 'text',
+        mimeType: 'text/plain',
+        size: 100,
+        status: 'ready',
+        extractedText: 'notes',
+        createdAt: 1,
+      },
+      {
+        id: 'file-pdf',
+        name: 'brief.pdf',
+        kind: 'pdf',
+        mimeType: 'application/pdf',
+        size: 8000,
+        status: 'failed_extraction',
+        extractedText: '',
+        failureReason: 'pdf_ocr_failed',
+        createdAt: 1,
+      },
+      {
+        id: 'file-img',
+        name: 'scan.png',
+        kind: 'image',
+        mimeType: 'image/png',
+        size: 5000,
+        status: 'unreadable',
+        extractedText: '',
+        failureReason: 'ocr_garbled',
+        createdAt: 1,
+      },
+    ],
+  });
+  const reentry = {
+    reentrySummary: 'กลับมาทำต่อ',
+    topActions: [{
+      roomId: 'task-1',
+      title: 'กลับ',
+      rationale: 'ต่อจากเดิม',
+      impact: 'high' as const,
+      effort: 'low' as const,
+      resumeTarget: 'ONE_ACTION' as const,
+    }],
+    ignoredNoise: [],
+  };
+
+  const result = buildReentryTaskArtifacts(task, reentry);
+  const brief = result.nextTask.reentryBrief;
+
+  assert.ok(brief);
+  assert.deepEqual(brief.failedFileNames, ['brief.pdf', 'scan.png'], 'failed files captured');
+  // Ready file should NOT appear in failedFileNames
+  assert.ok(!brief.failedFileNames?.includes('notes.txt'), 'ready file excluded from failedFileNames');
+});
+
+test('Phase 2.5: buildReentryTaskArtifacts includes usedSourceIds from plan evidence', () => {
+  const task = makeTask({
+    lifecycleState: 'has_one_action',
+    currentPlan: {
+      actionTitle: 'ตอบลูกค้า',
+      successSignal: 'ลูกค้ารู้แผน',
+      steps: [
+        {
+          id: 'step-1',
+          text: 'อ่านไฟล์',
+          evidence: [
+            { sourceId: 'file:notes-txt', label: 'notes.txt', excerpt: 'notes', sourceKindLabel: 'retrieved' },
+          ],
+        },
+        {
+          id: 'step-2',
+          text: 'สรุป',
+          evidence: [
+            { sourceId: 'file:notes-txt', label: 'notes.txt', excerpt: 'notes', sourceKindLabel: 'retrieved' },
+            { sourceId: 'manual:task-1', label: 'บริบทเดิม', excerpt: 'บริบท', sourceKindLabel: 'retrieved' },
+          ],
+        },
+      ],
+    },
+  });
+  const reentry = {
+    reentrySummary: 'กลับมา',
+    topActions: [{
+      roomId: 'task-1',
+      title: 'ต่อ',
+      rationale: 'ต่อ',
+      impact: 'high' as const,
+      effort: 'low' as const,
+      resumeTarget: 'ONE_ACTION' as const,
+    }],
+    ignoredNoise: [],
+  };
+
+  const result = buildReentryTaskArtifacts(task, reentry);
+  const brief = result.nextTask.reentryBrief;
+
+  assert.ok(brief);
+  assert.deepEqual(brief.usedSourceIds, ['file:notes-txt', 'manual:task-1'], 'deduped source IDs');
+});
+
+test('Phase 2.5: buildReentryTaskArtifacts omits metadata fields when no failed files or evidence', () => {
+  const task = makeTask({
+    sourceFiles: [],
+  });
+  const reentry = {
+    reentrySummary: 'กลับมา',
+    topActions: [{
+      roomId: 'task-1',
+      title: 'ต่อ',
+      rationale: 'ต่อ',
+      impact: 'high' as const,
+      effort: 'low' as const,
+      resumeTarget: 'ONE_ACTION' as const,
+    }],
+    ignoredNoise: [],
+  };
+
+  const result = buildReentryTaskArtifacts(task, reentry);
+  const brief = result.nextTask.reentryBrief;
+
+  assert.ok(brief);
+  assert.equal(brief.failedFileNames, undefined, 'omitted when empty');
+  assert.equal(brief.usedSourceIds, undefined, 'omitted when empty');
+});
+
 test('bounce-back route helpers prefer real checkpoints', () => {
   const scaffoldTask = makeTask({ lifecycleState: 'in_scaffold', currentStepIndex: 1 });
   const doneTask = makeTask({ lifecycleState: 'done' });

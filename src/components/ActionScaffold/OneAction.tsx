@@ -318,7 +318,7 @@ export function OneAction({
             <button onClick={() => {
               markAdjustmentIntent();
               onNegotiate({ mode: 'resume_first' });
-            }} disabled={negotiationLoading}>เริ่มงานก่อน</button>
+            }} disabled={negotiationLoading}>เริ่มด้วยวิธีนี้</button>
           )}
           <details open={!focusMode}>
             <summary
@@ -352,6 +352,7 @@ export function OneAction({
             <AIProcessingIndicator
               label="กำลังปรับ next move"
               detail="MIND กำลังปรับก้าวนี้ให้เข้ากับเวลา พลังงาน และบริบทของงานนี้"
+              showSkeleton
             />
           )}
         </div>

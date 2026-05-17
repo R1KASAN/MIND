@@ -80,6 +80,7 @@ export function Rescue({
           size="panel"
           label="กำลังวินิจฉัยจุดติด"
           detail="MIND กำลังดูให้อยู่ว่าติดเพราะอะไร และควรช่วยคุณยังไงต่อ"
+          showSkeleton
         />
       )}
 
@@ -140,7 +141,7 @@ export function Rescue({
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '0.5rem' }}>
         {refineLoading && (
-          <AIProcessingIndicator label="กำลังย่อยให้เล็กลง" detail={SCAFFOLD_REFINE_LOADING_COPY} />
+          <AIProcessingIndicator label="กำลังย่อยให้เล็กลง" detail={SCAFFOLD_REFINE_LOADING_COPY} showSkeleton />
         )}
         {!refineLoading && refineFeedback?.kind === 'error' && (
           <div

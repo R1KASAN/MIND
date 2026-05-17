@@ -346,6 +346,8 @@ export default function StateMachinePage() {
   const [isReentryLoading, setIsReentryLoading] = useState(false);
   const [isScaffoldRefining, setIsScaffoldRefining] = useState(false);
   const [scaffoldRefineFeedback, setScaffoldRefineFeedback] = useState<ScaffoldRefineFeedback | null>(null);
+  // Covers the gap between dump submit and SYNTHESIZING route — prevents blank main panel
+  const [isDumpPending, setIsDumpPending] = useState(false);
 
   // Overlays
   const [showArchive, setShowArchive] = useState(false);
@@ -698,7 +700,15 @@ export default function StateMachinePage() {
     if (!previousRoute) return;
     if (presentationMode) return;
 
-    if (session.uiRoute !== 'DUMP_ENTRY' || previousRoute === 'DUMP_ENTRY') {
+    // Only trigger ValuePulse after the user has interacted with an action
+    // (i.e. after ONE_ACTION or SCAFFOLD), not on the first DUMP_ENTRY load
+    // or immediately after dump submission. This prevents the modal from
+    // appearing before the user has seen the action recommendation.
+    const isPostActionReturn =
+      session.uiRoute === 'DUMP_ENTRY' &&
+      (previousRoute === 'ONE_ACTION' || previousRoute === 'SCAFFOLD');
+
+    if (!isPostActionReturn) {
       if (session.uiRoute !== 'DUMP_ENTRY') {
         setActiveValuePulseContext(null);
       }
@@ -947,7 +957,12 @@ export default function StateMachinePage() {
     }
 
     if (!aiOfflineManualMode) {
-      await controller.handleDump(submission);
+      setIsDumpPending(true);
+      try {
+        await controller.handleDump(submission);
+      } finally {
+        setIsDumpPending(false);
+      }
       return;
     }
 
@@ -1595,6 +1610,19 @@ export default function StateMachinePage() {
         );
 
       case 'DUMP_ENTRY':
+        // isDumpPending covers the brief gap between ไปต่อ submit and SYNTHESIZING route
+        // — prevents blank main panel during AI latency
+        if (isDumpPending) {
+          return (
+            <div style={{ paddingTop: '2rem', textAlign: 'center' }}>
+              <AIProcessingIndicator
+                size="hero"
+                label="กำลังคลี่สิ่งที่อยู่ในหัว"
+                detail="MIND กำลังสรุปบริบทและหา next move แรก"
+              />
+            </div>
+          );
+        }
         return (
           <GetStartedHome showIntro={homeEntryState.mode === 'get_started'}>
             {!showDumpOnlyFirstView && homeEntryState.mode === 'active_room' && activeRoomReentry?.room.id === activeRoomId && (

@@ -205,6 +205,10 @@ export interface ReentryBrief {
   topActions: ReentryTopAction[];
   ignoredNoise: string[];
   createdAt: number;
+  /** Source IDs that were used as evidence context at save-point time. */
+  usedSourceIds?: string[];
+  /** File names that were in a failed/unreadable state at save-point time. */
+  failedFileNames?: string[];
 }
 
 export interface TaskConstraints {
@@ -809,7 +813,22 @@ function normalizeReentryBrief(value: unknown): ReentryBrief | undefined {
     : [];
 
   if (topActions.length === 0) return undefined;
-  return { summary, topActions, ignoredNoise, createdAt };
+
+  const usedSourceIds = Array.isArray(record.usedSourceIds)
+    ? record.usedSourceIds.map((item) => normalizeOptionalString(item)).filter((item): item is string => Boolean(item))
+    : undefined;
+  const failedFileNames = Array.isArray(record.failedFileNames)
+    ? record.failedFileNames.map((item) => normalizeOptionalString(item)).filter((item): item is string => Boolean(item))
+    : undefined;
+
+  return {
+    summary,
+    topActions,
+    ignoredNoise,
+    createdAt,
+    ...(usedSourceIds && usedSourceIds.length > 0 ? { usedSourceIds } : {}),
+    ...(failedFileNames && failedFileNames.length > 0 ? { failedFileNames } : {}),
+  };
 }
 
 function normalizeAssistantMode(value: unknown): AssistantMode | undefined {

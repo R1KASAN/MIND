@@ -136,33 +136,88 @@ function hasDemoRequestIntent(text: string) {
   ]);
 }
 
+// ---------------------------------------------------------------------------
+// Signal Router v2 — intent signal detectors
+// ---------------------------------------------------------------------------
+
+function hasProposalSignal(normalized: string) {
+  return includesAny(normalized, ['proposal', 'ข้อเสนอ', 'ใบเสนอ']);
+}
+
+function hasTimelineSignal(normalized: string) {
+  return includesAny(normalized, [
+    'timeline', 'ไทม์ไลน์', 'ระยะเวลา', 'กำหนดการ', 'กี่วัน', 'กี่สัปดาห์',
+    'roadmap', 'แผนงาน', 'เวลา',
+  ]);
+}
+
+function hasEstimateSignal(normalized: string) {
+  return includesAny(normalized, [
+    'estimate', 'pricing', 'ราคา', 'quotation', 'quote',
+    'ประเมิน', 'งบ', 'budget', 'ตีราคา', 'cost',
+  ]);
+}
+
+function hasScopeSignal(normalized: string) {
+  return includesAny(normalized, [
+    'requirement', 'requirements', 'scope', 'ขอบเขต',
+    'ยังไม่นิ่ง', 'note กระจัดกระจาย', 'โน้ตกระจัดกระจาย',
+    'spec', 'brief',
+  ]);
+}
+
+function hasExecutionSignal(normalized: string) {
+  return includesAny(normalized, [
+    'rejected', 'delayed', 'delay', 'urgent', 'split work',
+    'assign', 'delegate', 'handoff', 'unblock',
+    'ตีกลับ', 'ดีเลย์', 'ล่าช้า', 'ด่วน',
+    'แบ่งงาน', 'มอบหมาย', 'ส่งต่อ',
+  ]);
+}
+
+function hasResumeSignal(normalized: string) {
+  return includesAny(normalized, [
+    'ยังไม่ได้เริ่ม', 'resume', 'กลับมาเริ่ม', 'ลงมือ',
+    'draft', 'ทำต่อ', 'เริ่มงาน',
+  ]);
+}
+
+export function isProposalLike(deliverableType: TaskShapeDeliverableType) {
+  return deliverableType === 'proposal' || deliverableType === 'timeline' || deliverableType === 'estimate';
+}
+
+// ---------------------------------------------------------------------------
+// Signal Router v2 — priority-based classification
+// ---------------------------------------------------------------------------
+
 function detectDeliverableTypeFromText(text: string): TaskShapeDeliverableType | undefined {
   const normalized = normalizeTextForMatch(text);
-  const hasProposal = includesAny(normalized, ['proposal', 'ข้อเสนอ', 'ใบเสนอ']);
-  const hasTimeline = includesAny(normalized, ['timeline', 'เวลา', 'กำหนดการ']);
-  const hasEstimate = includesAny(normalized, ['estimate', 'pricing', 'ราคา', 'quotation', 'quote']);
 
+  // Priority 1: explicit reply / demo request
   if (hasExplicitReplyIntent(text) || hasDemoRequestIntent(text)) return 'reply';
-  if (hasProposal) return 'proposal';
-  if (hasTimeline) return 'timeline';
-  if (hasEstimate) return 'estimate';
-  if (
-    includesAny(normalized, [
-      'ยังไม่ได้เริ่ม',
-      'resume',
-      'กลับมาเริ่ม',
-      'ลงมือ',
-      'draft',
-      'ทำต่อ',
-      'เริ่มงาน',
-      'scope',
-      'requirement',
-      'requirements',
-      'spec',
-    ])
-  ) {
-    return 'execution';
-  }
+
+  // Priority 2: proposal-like (combined signals win over individual)
+  const proposal = hasProposalSignal(normalized);
+  const timeline = hasTimelineSignal(normalized);
+  const estimate = hasEstimateSignal(normalized);
+  const scope = hasScopeSignal(normalized);
+
+  // timeline + estimate + scope/requirement => always proposal/planning
+  if (timeline && estimate && scope) return 'proposal';
+  if (timeline && estimate) return 'proposal';
+  if (proposal) return 'proposal';
+  // scope + (timeline OR estimate) => proposal/planning, not execution
+  if (scope && (timeline || estimate)) return timeline ? 'timeline' : 'estimate';
+  if (timeline) return 'timeline';
+  if (estimate) return 'estimate';
+  // scope alone without execution signals => proposal (scoping work)
+  if (scope && !hasExecutionSignal(normalized)) return 'proposal';
+
+  // Priority 3: execution / delegation chaos
+  if (hasExecutionSignal(normalized)) return 'execution';
+
+  // Priority 4: resume signals (weaker)
+  if (hasResumeSignal(normalized)) return 'execution';
 
   return undefined;
 }
@@ -213,7 +268,7 @@ function detectImmediateNeedFromText(
     return 'prepare_inputs';
   }
 
-  if (deliverableType === 'proposal' || deliverableType === 'execution') {
+  if (isProposalLike(deliverableType) || deliverableType === 'execution') {
     return 'resume_execution';
   }
 
@@ -358,17 +413,26 @@ export function buildTaskFrameFallback(
     };
   }
 
-  if (taskShape.deliverableType === 'proposal' && taskShape.immediateNeed === 'define_scope') {
+  const _plk = isProposalLike(taskShape.deliverableType);
+
+  if (_plk && taskShape.immediateNeed === 'define_scope') {
     return {
       objective: 'รวบ requirement และ scope ที่ยังไม่ชัดก่อนทำ proposal',
       stage: 'กำลังล็อกข้อมูลตั้งต้นเพื่อเริ่ม timeline และ estimate ได้จริง',
     };
   }
 
-  if (taskShape.deliverableType === 'proposal' && taskShape.immediateNeed === 'prepare_inputs') {
+  if (_plk && taskShape.immediateNeed === 'prepare_inputs') {
     return {
       objective: 'รวบ input ขั้นต่ำสำหรับทำ timeline และ estimate ของ proposal',
       stage: 'กำลังเตรียมข้อมูลก่อนแตก proposal เป็นก้าวทำงานจริง',
+    };
+  }
+
+  if (_plk) {
+    return {
+      objective: 'รวบข้อมูลตั้งต้นเพื่อเริ่มประเมิน timeline และ estimate',
+      stage: 'กำลังจัดข้อมูลที่มีให้พอเริ่มประเมินราคาและระยะเวลาคร่าว ๆ',
     };
   }
 
@@ -412,7 +476,9 @@ export function buildIntakeFallbackCandidates(
     ];
   }
 
-  if (taskShape.deliverableType === 'proposal' && taskShape.immediateNeed === 'define_scope') {
+  const _plk = isProposalLike(taskShape.deliverableType);
+
+  if (_plk && taskShape.immediateNeed === 'define_scope') {
     return [
       {
         title: 'รวบ requirement ที่มีและจุดที่ยังขาดก่อน',
@@ -427,7 +493,7 @@ export function buildIntakeFallbackCandidates(
     ];
   }
 
-  if (taskShape.deliverableType === 'proposal' && taskShape.immediateNeed === 'prepare_inputs') {
+  if (_plk && taskShape.immediateNeed === 'prepare_inputs') {
     return [
       {
         title: 'แยกสิ่งที่ต้องรู้ก่อนตีราคา proposal',
@@ -437,6 +503,37 @@ export function buildIntakeFallbackCandidates(
       {
         title: 'รวบ input ขั้นต่ำสำหรับทำ timeline รอบแรก',
         rationale: 'เหมาะเมื่ออยากเริ่มจากภาพรวมของงานก่อนลงรายละเอียดราคา',
+        kind: 'dependency_first' as const,
+      },
+    ];
+  }
+
+  // Catch-all for proposal-like types with other immediateNeed values
+  if (_plk) {
+    return [
+      {
+        title: 'รวบข้อมูลตั้งต้นสำหรับ timeline และ estimate เบื้องต้น',
+        rationale: 'ช่วยให้เริ่มประเมินราคาและระยะเวลาได้โดยไม่ต้องรอข้อมูลครบ 100%',
+        kind: 'resume_first' as const,
+      },
+      {
+        title: 'ตั้งสมมติฐาน scope เพื่อเริ่ม estimate รอบแรก',
+        rationale: 'เหมาะเมื่อต้องการตัวเลขคร่าว ๆ ก่อนเพื่อตัดสินใจขั้นต่อไป',
+        kind: 'dependency_first' as const,
+      },
+    ];
+  }
+
+  if (taskShape.deliverableType === 'execution') {
+    return [
+      {
+        title: 'แบ่งงานและมอบหมายให้ทีมก่อนเพื่อปลดล็อกงานที่ค้าง',
+        rationale: 'เมื่อมีหลายชิ้นงานกระจัดกระจาย การ delegate ชัด ๆ ช่วยให้ทีมเดินต่อได้ทันที',
+        kind: 'resume_first' as const,
+      },
+      {
+        title: 'ระบุงานที่บล็อกอยู่และส่งต่อให้คนรับผิดชอบโดยตรง',
+        rationale: 'เหมาะเมื่อมี dependency หลายจุดและต้องการปลดล็อกพร้อมกันหลายทาง',
         kind: 'dependency_first' as const,
       },
     ];
@@ -502,7 +599,9 @@ export function buildActionFallbackCopy(
     };
   }
 
-  if (taskShape.deliverableType === 'proposal' && taskShape.immediateNeed === 'define_scope') {
+  const _plk = isProposalLike(taskShape.deliverableType);
+
+  if (_plk && taskShape.immediateNeed === 'define_scope') {
     return {
       chosenTitle: 'รวบ requirement ที่มีและจุดที่ยังขาดก่อน',
       chosenRationale: 'proposal, timeline และ estimate จะเริ่มได้จริงก็ต่อเมื่อ requirement กับ scope ถูกล็อกพอประมาณก่อน',
@@ -523,7 +622,7 @@ export function buildActionFallbackCopy(
     };
   }
 
-  if (taskShape.deliverableType === 'proposal' && taskShape.immediateNeed === 'prepare_inputs') {
+  if (_plk && taskShape.immediateNeed === 'prepare_inputs') {
     return {
       chosenTitle: 'แยกสิ่งที่ต้องรู้ก่อนตีราคา proposal',
       chosenRationale: 'จะช่วยให้ timeline และ estimate มีฐานข้อมูลขั้นต่ำก่อนลงมือร่างข้อเสนอ',
@@ -539,6 +638,49 @@ export function buildActionFallbackCopy(
         {
           title: 'ตั้งสมมติฐาน scope เพื่อทำ timeline และ estimate รอบแรก',
           rationale: 'ช่วยให้มี working draft โดยไม่ต้องรอข้อมูลครบ 100%',
+        },
+      ],
+    };
+  }
+
+  // Catch-all for proposal-like types with other immediateNeed values
+  if (_plk) {
+    return {
+      chosenTitle: 'รวบข้อมูลตั้งต้นสำหรับ timeline และ estimate เบื้องต้น',
+      chosenRationale: 'เริ่มจากการจัดข้อมูลที่มีให้พอประเมินราคาและระยะเวลาคร่าว ๆ ได้ก่อน',
+      successSignal: 'ได้ตัวเลข estimate เบื้องต้นที่ใช้ตัดสินใจขั้นต่อไปได้',
+      whyThisNow: 'ตอนนี้ข้อมูลยังกระจาย การรวบให้พอประเมินได้จะช่วยขยับโปรเจกต์ต่อเร็วที่สุด',
+      situationSummary: 'ต้องการ estimate หรือ timeline แต่ข้อมูลตั้งต้นยังไม่ครบ จึงต้องรวบก่อนเริ่มประเมิน',
+      replyDraft: undefined,
+      alternatives: [
+        {
+          title: 'ตั้งสมมติฐาน scope เพื่อเริ่ม estimate รอบแรก',
+          rationale: 'เหมาะเมื่อต้องการตัวเลขคร่าว ๆ ก่อนเพื่อตัดสินใจขั้นต่อไป',
+        },
+        {
+          title: 'รวบ requirement ที่มีและจุดที่ยังขาดก่อน',
+          rationale: 'เหมาะเมื่อ scope ยังกว้างเกินจะเริ่ม estimate ทันที',
+        },
+      ],
+    };
+  }
+
+  if (taskShape.deliverableType === 'execution') {
+    return {
+      chosenTitle: 'แบ่งงานและส่งต่อให้ทีมเพื่อปลดล็อกงานที่ค้างอยู่',
+      chosenRationale: 'มีหลายชิ้นงานกระจัดกระจาย การ delegate ชัด ๆ ทันทีช่วยให้ทีมเดินต่อได้โดยไม่รอ',
+      successSignal: 'ทีมแต่ละคนรู้ว่างานของตัวเองคืออะไรและเริ่มได้เลย',
+      whyThisNow: 'ตอนนี้มีหลายงานค้างพร้อมกัน การ delegate และกำหนดลำดับก่อนหลังจะช่วยให้ขยับได้เร็วที่สุด',
+      situationSummary: 'มีงานกระจัดกระจายหลายชิ้นที่ต้องแบ่งและมอบหมายให้ทีมก่อนจะขยับต่อได้',
+      replyDraft: undefined,
+      alternatives: [
+        {
+          title: 'ระบุงานที่บล็อกอยู่และส่งต่อให้คนรับผิดชอบโดยตรง',
+          rationale: 'เหมาะเมื่อมี dependency หลายจุดและต้องปลดล็อกพร้อมกันหลายทาง',
+        },
+        {
+          title: 'ลิสต์งานทุกชิ้นและจัดลำดับว่าอะไรด่วนที่สุด',
+          rationale: 'ช่วยให้เห็นภาพรวมก่อนเริ่ม delegate เพื่อไม่ให้งานสำคัญหลุด',
         },
       ],
     };
