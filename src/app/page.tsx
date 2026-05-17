@@ -332,6 +332,7 @@ export default function StateMachinePage() {
   const [resumeHomeRoom, setResumeHomeRoom] = useState<RankedResumeRoom | null>(null);
   const [rankedSidebarRooms, setRankedSidebarRooms] = useState<RankedResumeRoom[]>([]);
   const [activeRoomReentry, setActiveRoomReentry] = useState<ActiveRoomReentryState | null>(null);
+  const [forceInputEditor, setForceInputEditor] = useState(false);
   const sessionRef = useRef<AppSession | null>(null);
   const aiStatusRef = useRef<HealthCheckResult['status']>('checking');
   const [currentPayload, setCurrentPayload] = useState<AiSynthesisResponse | null>(null);
@@ -715,11 +716,16 @@ export default function StateMachinePage() {
       return;
     }
 
+    if (forceInputEditor) {
+      setActiveValuePulseContext(null);
+      return;
+    }
+
     const anchor = valuePulseAnchorRef.current;
     if (!anchor) return;
     if (hasSeenValuePulse(anchor.id)) return;
     setActiveValuePulseContext(anchor);
-  }, [presentationMode, session?.uiRoute, session]);
+  }, [forceInputEditor, presentationMode, session?.uiRoute, session]);
 
   useEffect(() => {
     if (session?.uiRoute === 'DUMP_ENTRY') return;
@@ -824,6 +830,8 @@ export default function StateMachinePage() {
   useEffect(() => {
     if (!session || !activeRoom) return;
     if (isNegotiatingAction || isReentryLoading || isRescueLoading || isScaffoldRefining) return;
+    // Skip hydration while the user is editing context — prevents jitter from resetting the editor
+    if (forceInputEditor) return;
 
     const recoveredSession = hydrateRoomSessionFromRecord(session, activeRoom);
     if (recoveredSession === session) return;
@@ -834,6 +842,7 @@ export default function StateMachinePage() {
     })();
   }, [
     activeRoom,
+    forceInputEditor,
     hydrateSessionState,
     isNegotiatingAction,
     isReentryLoading,
@@ -864,8 +873,13 @@ export default function StateMachinePage() {
 
     if (previousActiveRoomIdRef.current === activeRoomId) return;
     previousActiveRoomIdRef.current = activeRoomId;
+    // Only reset forceInputEditor on genuine room switches — same-room ID jitter
+    // from persistSessionWithRooms should not clear the editor mid-edit
+    if (activeRoomId !== session?.roomId) {
+      setForceInputEditor(false);
+    }
     resetRoomViewport();
-  }, [activeRoomId, resetRoomViewport]);
+  }, [activeRoomId, resetRoomViewport, session?.roomId]);
 
   if (!session) return null;
 
@@ -956,10 +970,41 @@ export default function StateMachinePage() {
       return;
     }
 
+    const normalizeContextEditSubmission = (input: RoomSubmission): RoomSubmission => {
+      const baseSession = sessionRef.current ?? session;
+      const existingFiles = forceInputEditor ? baseSession?.task?.sourceFiles ?? [] : [];
+      if (existingFiles.length === 0) return input;
+
+      const incomingIds = new Set(input.sourceFiles.map((file) => file.id));
+      const incomingNames = new Set(input.sourceFiles.map((file) => file.name));
+      const preservedFiles = existingFiles.filter((file) => !incomingIds.has(file.id) && !incomingNames.has(file.name));
+      const sourceFiles = [...preservedFiles, ...input.sourceFiles];
+      const createdAt = Date.now();
+      const sourcePreference = baseSession?.task?.sourcePreference?.primarySourceId &&
+        sourceFiles.some((file) => getRoomSourceIdForFile(file) === baseSession.task?.sourcePreference?.primarySourceId)
+        ? baseSession.task.sourcePreference
+        : createAutoRoomSourcePreference(sourceFiles, createdAt);
+      const preferredSourceContext = buildPreferredRoomSourceContext(
+        input.text || input.sourceText,
+        sourceFiles,
+        sourcePreference,
+      );
+
+      return {
+        ...input,
+        sourceText: preferredSourceContext.sourceText || input.sourceText,
+        extractedText: preferredSourceContext.extractedText || input.extractedText,
+        sourceFiles,
+      };
+    };
+
+    const nextSubmission = normalizeContextEditSubmission(submission);
+
     if (!aiOfflineManualMode) {
+      setForceInputEditor(false);
       setIsDumpPending(true);
       try {
-        await controller.handleDump(submission);
+        await controller.handleDump(nextSubmission);
       } finally {
         setIsDumpPending(false);
       }
@@ -968,18 +1013,18 @@ export default function StateMachinePage() {
 
     const base = sessionRef.current ?? session;
     const createdAt = Date.now();
-    const sourcePreference = createAutoRoomSourcePreference(submission.sourceFiles, createdAt);
+    const sourcePreference = createAutoRoomSourcePreference(nextSubmission.sourceFiles, createdAt);
     const preferredSourceContext = buildPreferredRoomSourceContext(
-      submission.text || submission.sourceText,
-      submission.sourceFiles,
+      nextSubmission.text || nextSubmission.sourceText,
+      nextSubmission.sourceFiles,
       sourcePreference,
     );
     const task = createTaskContext({
       roomId: base.roomId,
-      sourceText: preferredSourceContext.sourceText || submission.sourceText,
-      sourceFiles: submission.sourceFiles,
+      sourceText: preferredSourceContext.sourceText || nextSubmission.sourceText,
+      sourceFiles: nextSubmission.sourceFiles,
       sourcePreference,
-      extractedText: preferredSourceContext.extractedText || (sourcePreference ? submission.extractedText : ''),
+      extractedText: preferredSourceContext.extractedText || (sourcePreference ? nextSubmission.extractedText : ''),
       createdAt,
       lifecycleState: 'dumped',
       lastAttemptAt: createdAt,
@@ -1008,6 +1053,7 @@ export default function StateMachinePage() {
     setCurrentActionState(null);
     setCurrentWhyThisNow('');
     setCurrentRescueState(null);
+    setForceInputEditor(false);
     setAiOfflineNotice(AI_OFFLINE_MANUAL_COPY);
     trackEvent('task_opened', {
       room_id: nextSession.roomId,
@@ -1079,7 +1125,16 @@ export default function StateMachinePage() {
       setAiOfflineNotice('Memory may be partially incompatible. Operating in View-Only mode. Resetting database is recommended only as a last resort.');
       return;
     }
+    setForceInputEditor(true);
+    setActiveValuePulseContext(null);
     await controller.openDumpWithCurrentContext();
+    if (typeof window !== 'undefined') {
+      window.requestAnimationFrame(() => {
+        const input = document.getElementById('brain-dump-text') as HTMLTextAreaElement | null;
+        input?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        input?.focus();
+      });
+    }
   };
 
   const handleDeleteRoomSources = async (deleteTokens: string[]) => {
@@ -1625,7 +1680,7 @@ export default function StateMachinePage() {
         }
         return (
           <GetStartedHome showIntro={homeEntryState.mode === 'get_started'}>
-            {!showDumpOnlyFirstView && homeEntryState.mode === 'active_room' && activeRoomReentry?.room.id === activeRoomId && (
+            {!forceInputEditor && !showDumpOnlyFirstView && homeEntryState.mode === 'active_room' && activeRoomReentry?.room.id === activeRoomId && (
               <ActiveRoomReentryCard
                 state={activeRoomReentry}
                 onPrimary={handleActiveReentryPrimary}
@@ -1650,6 +1705,8 @@ export default function StateMachinePage() {
               onNext={handleDumpSubmission}
               onFileExtractionComplete={handleFileExtractionComplete}
               initialText={session.activeDumpContext?.text}
+              contextReturnNotice={forceInputEditor}
+              existingSourceFiles={forceInputEditor ? session.task?.sourceFiles : undefined}
               presentationMode={presentationMode}
               defaultScenarioId={demoScenarioId}
               focusMode={isFocusMode}
@@ -1713,7 +1770,6 @@ export default function StateMachinePage() {
             onMarkAdjusted={readOnlyMemory ? blockAiAction : controller.handleOneActionAdjustmentTouched}
             onNegotiate={aiActionsBlocked ? blockAiAction : controller.handleActionNegotiation}
             onAccept={aiActionsBlocked ? blockAiAction : controller.handleAcceptAction}
-            onReject={aiActionsBlocked ? blockAiAction : controller.handleRejectAction}
             onNotLikeThis={aiActionsBlocked ? blockAiAction : controller.handleEnterRescue}
             focusMode={isFocusMode}
           />
@@ -1745,6 +1801,7 @@ export default function StateMachinePage() {
             refineFeedback={scaffoldRefineFeedback}
             onRescue={aiActionsBlocked ? blockAiAction : controller.handleEnterRescue}
             onMakeSmaller={aiActionsBlocked ? blockAiAction : controller.handleMakeSmaller}
+            onBackToInput={readOnlyMemory ? blockAiAction : handleEditCurrentContext}
             onComplete={readOnlyMemory ? blockAiAction : controller.handleCompleteScaffold}
             onEditStep={readOnlyMemory ? undefined : controller.handleEditCurrentPlanStep}
             onBackToSteps={controller.handleReturnToScaffoldSteps}
@@ -1761,6 +1818,8 @@ export default function StateMachinePage() {
             refineLoading={isScaffoldRefining}
             refineFeedback={scaffoldRefineFeedback}
             onMakeSmaller={aiActionsBlocked ? blockAiAction : controller.handleMakeSmaller}
+            onBackToStep={aiActionsBlocked ? blockAiAction : async () => controller.resumeTaskFromRoute('SCAFFOLD')}
+            onBackToInput={readOnlyMemory ? blockAiAction : handleEditCurrentContext}
             onWalkAway={readOnlyMemory ? blockAiAction : controller.handleWalkAwayFromRescue}
             focusMode={isFocusMode}
           />

@@ -1251,6 +1251,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
           lifecycleState: 'dumped' as const,
           currentActionId: null,
           currentStepIndex: 0,
+          assistantMode: undefined,
         }
       : null;
 
