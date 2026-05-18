@@ -165,3 +165,9 @@ If the viewer cannot explain the product’s value within 1 minute after the dem
 
 *   **ถ้า Pass:** นำแพ็กเกจนี้และสคริปต์ Happy Messy Path ไปใช้เป็น Limited Demo นำเสนองานได้ทันที
 *   **ถ้า Fail (โดยเฉพาะเรื่อง Fallback):** พิจารณายก Phase 4 (OCR) กลับมาทำ (เป็นกรณี Worst Case)
+
+### Post-demo visual credibility work
+
+The desktop whitespace, ONE_ACTION metadata hierarchy, Rescue visual hierarchy, breadcrumb readability, and mobile spacing issues are recorded as post-demo layout / spacing / visual-hierarchy polish. They are not RC acceptance blockers while the rehearsed Room-based demo path still passes.
+
+Any future patch for these items must stay presentation-only: use Graphify first, change layout/CSS/component markup only, and do not touch prompts, retrieval, persistence, analytics, OCR, smoke harness, architecture, or orchestrator/state-machine behavior.

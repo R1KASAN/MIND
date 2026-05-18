@@ -23,6 +23,7 @@ For parity work, do not start with `/code`.
 | --- | --- | --- | --- |
 | Prep | `/narrative` | [01 Business Value](01-business-value.md) | A feature still needs business framing before parity work starts |
 | Polish | `/structure` | [06 Mobile Shortening](06-mobile-shortening.md) | The parity spec still feels too tall, duplicated, or weak on mobile |
+| Post-demo UI | `/code` | [UI Polish Layout Only](ui-polish-layout-only.md) | The app needs layout / spacing / hierarchy polish without product logic changes |
 
 ## What The Core Chain Must Preserve
 

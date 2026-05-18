@@ -12,6 +12,8 @@
     "start:local-ai": "OLLAMA_HOST=http://127.0.0.1:11437 AI_MODEL=gemma2:2b AI_FALLBACK_MODELS=gemma2:2b tsx scripts/ensure-canonical-ollama-runtime.ts && OLLAMA_HOST=http://127.0.0.1:11437 AI_MODEL=gemma2:2b AI_FALLBACK_MODELS=gemma2:2b next start",
     "start:raw": "next start",
     "lint": "eslint",
+    "design:lint": "design.md lint DESIGN.md",
+    "design:spec": "design.md spec --rules",
     "typecheck:app": "tsc -p tsconfig.app.json --noEmit",
     "typecheck:test": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx --test src/lib/ai/*.test.ts src/lib/orchestrator/*.test.ts src/lib/retrieval/*.test.ts src/lib/room.test.ts src/lib/room-extraction.server.test.ts src/lib/store/*.test.ts",
@@ -59,6 +61,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@google/design.md": "^0.1.1",
     "@playwright/test": "^1.51.1",
     "@types/node": "^20",
     "@types/react": "^19",

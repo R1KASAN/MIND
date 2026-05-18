@@ -550,6 +550,67 @@ Prototype demo note:
 - ดูที่มาของก้าวนี้ heading — ยังยอมรับได้สำหรับ demo
 - Badge room status tooltip — defer หลัง demo
 
+### Post-demo visual credibility TODO
+
+These items are not current RC acceptance blockers as long as the rehearsed Room-based demo path still passes. Treat them as post-demo layout / spacing / visual-hierarchy work only.
+
+- Desktop two-column shell: reduce the dead dark space at desktop widths by using the existing room list / history as a persistent left rail beside the active Room flow at `>=1024px`.
+- ONE_ACTION hierarchy: group metadata pills into a muted row, reduce their visual competition with the primary CTA, and make `ดูที่มาของก้าวนี้` read as a clickable evidence/source affordance.
+- Rescue hierarchy: separate diagnosis, advisory content, and CTA actions with clearer spacing, weight, and dividers; remove or reduce repeated breadcrumb/title copy if it is only presentation-level duplication.
+- Breadcrumb / title readability: make the flow-state area larger and clearer with slightly stronger contrast and a separator such as `›`, without changing routing or task state.
+- Mobile polish: add safe-area padding to sticky CTAs, increase Rescue card gaps, truncate long quoted context with an explicit expansion affordance, and group Scaffold secondary actions when feasible without changing behavior.
+
+Prompt for a future layout-only patch:
+
+```md
+Act as MIND post-demo UI polish engineer.
+
+Goal:
+Create a code patch for layout, spacing, and visual hierarchy only. Do not change product logic.
+
+Use Graphify first:
+- graphify query "What files control the app shell layout and room sidebar?"
+- graphify query "What files control ONE_ACTION metadata pills and evidence link?"
+- graphify query "What files control Rescue visual hierarchy and spacing?"
+- graphify query "What files control mobile sidebar and sticky CTA layout?"
+- graphify explain "page.tsx"
+- graphify explain "OneAction.tsx"
+- graphify explain "Scaffold.tsx"
+- graphify explain "Rescue.tsx"
+
+Scope:
+- Desktop >=1024px: reduce dead horizontal space with a purposeful two-column shell using existing room/sidebar and main content surfaces.
+- ONE_ACTION: make metadata pills muted and less competitive; improve `ดูที่มาของก้าวนี้` affordance; keep primary CTA visually dominant.
+- Rescue: improve visual hierarchy between diagnosis, advisory, and CTA; remove/reduce repeated breadcrumb feel if it is only copy/layout.
+- Breadcrumb/title: improve readability and flow-state clarity through typography/spacing only.
+- Mobile: add safe-area padding to sticky CTA areas; increase Rescue gaps; truncate overly long context; group secondary Scaffold actions if feasible without logic changes.
+
+Hard constraints:
+- Do not touch prompts, retrieval schema, analytics contract, OCR provider/setup, persistence schema, smoke harness, architecture, or orchestrator/state-machine logic.
+- Do not alter acceptance behavior for Room ingestion, evidence, Room memory, next action/save point, or reentry.
+- Do not add new product surfaces or broad redesign.
+- This is a post-demo layout/spacing patch only.
+
+Verification:
+- npm run typecheck:app
+- git diff --check
+- Browser check at desktop 1440x900:
+  - app no longer feels like a narrow single-column canvas
+  - ONE_ACTION CTA hierarchy is clear
+  - Rescue hierarchy is readable
+- Browser check at mobile 390x844:
+  - no sticky CTA clipping
+  - no horizontal overflow
+  - Rescue card spacing is readable
+  - Scaffold secondary actions do not overwhelm the first viewport
+
+Output:
+- Files changed
+- Visual changes by surface
+- What was intentionally not changed
+- Verification results
+```
+
 ## Prototype User Walkthrough Runbook
 
 Use this runbook when demoing the current prototype to a person in the room. Keep it short, verbal, and observation-first.
