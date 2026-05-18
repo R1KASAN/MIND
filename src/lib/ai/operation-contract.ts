@@ -249,6 +249,14 @@ function isPlaceholderText(value: string | undefined) {
   );
 }
 
+function isMalformedStructuredText(value: string | undefined) {
+  if (!value) return false;
+  return (
+    ['{', '}', '[', ']'].includes(value) ||
+    ((value.startsWith('{') || value.startsWith('[')) && !/[ก-๙a-zA-Z0-9]/.test(value.slice(0, 8)))
+  );
+}
+
 function formatZodError(error: ZodError) {
   return error.issues
     .map((issue) => `${issue.path.length > 0 ? issue.path.join('.') : 'root'}: ${issue.message}`)
@@ -460,8 +468,14 @@ function buildPlainTextActionCandidate(raw: string, options?: {
     .filter(Boolean);
   const merged = sanitizePlainTextLine(cleaned);
   const firstMeaningfulLine = lines[0];
-  const safeFirstLine = looksLikeSerializedJsonBlob(firstMeaningfulLine) ? undefined : firstMeaningfulLine;
-  const safeMerged = looksLikeSerializedJsonBlob(merged) ? undefined : merged;
+  const safeFirstLine =
+    looksLikeSerializedJsonBlob(firstMeaningfulLine) || isMalformedStructuredText(firstMeaningfulLine)
+      ? undefined
+      : firstMeaningfulLine;
+  const safeMerged =
+    looksLikeSerializedJsonBlob(merged) || isMalformedStructuredText(merged)
+      ? undefined
+      : merged;
   const summaryText = safeMerged || safeFirstLine;
 
   return {
@@ -509,6 +523,8 @@ function normalizeActionCandidate(value: unknown, options?: {
       ? buildActionFallbackCopy(options.fallbackWorkflowType, options.fallbackTaskShape)
       : undefined;
   const shouldKeepReplyDraft = options?.fallbackWorkflowType === 'client_response';
+  const fallbackWhyThisNow = taskShapeFallback?.whyThisNow ?? fallbackAction.whyThisNow;
+  const rawWhyThisNow = coerceString(pickAlias(object, ['whyThisNow', 'why_this_now', 'rationale']));
   const rawChosenTitle =
     coerceString(pickAlias(chosenObject, ['title', 'action_title'])) ??
     fallbackAction.chosenTitle;
@@ -562,8 +578,10 @@ function normalizeActionCandidate(value: unknown, options?: {
       ? taskShapeFallback?.alternatives ?? normalizedAlternatives
       : normalizedAlternatives,
     whyThisNow: shouldUseDemoRequestFallback
-      ? taskShapeFallback?.whyThisNow ?? fallbackAction.whyThisNow
-      : pickAlias(object, ['whyThisNow', 'why_this_now', 'rationale']) ?? fallbackAction.whyThisNow,
+      ? fallbackWhyThisNow
+      : isMalformedStructuredText(rawWhyThisNow)
+        ? fallbackWhyThisNow
+        : rawWhyThisNow ?? fallbackWhyThisNow,
     replyDraft: shouldKeepReplyDraft
       ? pickAlias(object, ['replyDraft', 'reply_draft']) ?? taskShapeFallback?.replyDraft ?? fallbackAction.replyDraft
       : undefined,
@@ -920,13 +938,7 @@ function normalizeReentryCandidate(value: unknown, options?: {
 
 function validateSemanticText(label: string, value: string | undefined) {
   const normalized = coerceString(value);
-  if (
-    normalized &&
-    (
-      ['{', '}', '[', ']'].includes(normalized) ||
-      ((normalized.startsWith('{') || normalized.startsWith('[')) && !/[ก-๙a-zA-Z0-9]/.test(normalized.slice(0, 8)))
-    )
-  ) {
+  if (normalized && isMalformedStructuredText(normalized)) {
     throw new AiOperationContractError('semantic_validation_failed', `${label} must not be malformed structured text`);
   }
 

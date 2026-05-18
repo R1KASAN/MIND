@@ -328,6 +328,50 @@ test('parseAiActionResponse falls back to readable text when plain-text fallback
   assert.equal(parsed.situationSummary.includes('"chosenAction"'), false);
 });
 
+test('parseAiActionResponse falls back when truncated JSON leaves only a brace as plain text', () => {
+  const parsed = parseAiActionResponse(`
+{
+  "chosenAction": {
+    "title": "อ่าน stale handoff เพื่อดูจุดค้างล่าสุด",
+    "rationale": "ก่อนเริ่มงานใหม่ต้องรู้จุดค้างล่าสุด"
+  `,
+  {
+    fallbackChosenTitle: 'อ่าน stale handoff เพื่อดูจุดค้างล่าสุด',
+    fallbackChosenRationale: 'The handoff identifies the unfinished pricing table.',
+    fallbackSuccessSignal: 'เห็นจุดค้างและรู้ next move ที่ส่งผลกับลูกค้า',
+    fallbackWhyThisNow: 'ตอนนี้ควรเริ่มจาก handoff ล่าสุดก่อนเพื่อลดการอ่านซ้ำ',
+    fallbackSituationSummary: 'งาน proposal ค้างที่ pricing table และต้องส่ง client follow-up',
+    fallbackWorkflowType: 'client_resume',
+  });
+
+  assert.equal(parsed.whyThisNow, 'ตอนนี้ควรเริ่มจาก handoff ล่าสุดก่อนเพื่อลดการอ่านซ้ำ');
+  assert.equal(parsed.situationSummary, 'งาน proposal ค้างที่ pricing table และต้องส่ง client follow-up');
+});
+
+test('parseAiActionResponse falls back for malformed whyThisNow without rejecting the payload', () => {
+  const parsed = parseAiActionResponse(JSON.stringify({
+    chosenAction: {
+      title: 'อ่าน handoff แล้วอัปเดต estimate',
+      rationale: 'เริ่มจากหลักฐานล่าสุดก่อนเพื่อไม่ต้องอ่านใหม่ทั้งหมด',
+      successSignal: 'รู้จุดค้างและมี estimate ที่อัปเดตแล้ว',
+    },
+    alternatives: [],
+    whyThisNow: '{',
+    situationSummary: 'งาน proposal ค้างที่ pricing table และต้องส่ง client follow-up',
+    meta: {
+      model: 'gemma2:2b',
+      usedRoomFiles: [],
+      repairUsed: false,
+    },
+  }), {
+    fallbackWhyThisNow: 'ตอนนี้ควรเริ่มจาก handoff ล่าสุดก่อนเพื่อลดการอ่านซ้ำ',
+    fallbackWorkflowType: 'client_resume',
+  });
+
+  assert.equal(parsed.whyThisNow, 'ตอนนี้ควรเริ่มจาก handoff ล่าสุดก่อนเพื่อลดการอ่านซ้ำ');
+  assert.equal(parsed.situationSummary.includes('pricing table'), true);
+});
+
 test('parseAiActionResponse rejects malformed structured summary fragments', () => {
   assert.throws(() => parseAiActionResponse(JSON.stringify({
     chosenAction: {

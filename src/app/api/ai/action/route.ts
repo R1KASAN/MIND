@@ -12,19 +12,19 @@ import {
 import {
   ACTION_SYSTEM_PROMPT,
   AI_OPERATION_REPAIR_PROMPT,
+  buildActionTaskContext,
   buildActionUserPrompt,
   buildOperationRepairUserPrompt,
-  buildOperationTaskContext,
 } from '@/lib/ai/operation-prompts';
 import { runAiOperation } from '@/lib/ai/operation-route-helpers';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const ACTION_NUM_PREDICT = Number(process.env.AI_NUM_PREDICT_ACTION || 360) || 360;
+const ACTION_NUM_PREDICT = Number(process.env.AI_NUM_PREDICT_ACTION || 180) || 180;
 const ACTION_REPAIR_NUM_PREDICT =
-  Number(process.env.AI_NUM_PREDICT_ACTION_REPAIR || Math.max(420, ACTION_NUM_PREDICT)) ||
-  Math.max(420, ACTION_NUM_PREDICT);
+  Number(process.env.AI_NUM_PREDICT_ACTION_REPAIR || Math.max(240, ACTION_NUM_PREDICT)) ||
+  Math.max(240, ACTION_NUM_PREDICT);
 const ACTION_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_ACTION_QWEN_MS || process.env.AI_TIMEOUT_QWEN_MS || 60000) || 60000;
 const ACTION_REPAIR_TIMEOUT_MS =
   Number(process.env.AI_REPAIR_TIMEOUT_ACTION_QWEN_MS || process.env.AI_REPAIR_TIMEOUT_QWEN_MS || 30000) ||
@@ -59,7 +59,7 @@ export async function POST(req: Request) {
     }, { status: 400 });
   }
 
-  const taskContext = buildOperationTaskContext(task);
+  const taskContext = buildActionTaskContext(task);
   const fallbackTaskShape = task.taskShape ?? deriveTaskShapeFromText(task.sourceText);
   const fallbackWorkflowType = task.workflowType ?? inferWorkflowTypeFromTaskShape(fallbackTaskShape);
   const fallbackActionCopy = buildActionFallbackCopy(fallbackWorkflowType, fallbackTaskShape);

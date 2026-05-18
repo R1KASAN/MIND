@@ -167,6 +167,79 @@ export function buildOperationTaskContext(task: TaskContext) {
   ].join('\n');
 }
 
+export function buildActionTaskContext(task: TaskContext) {
+  const blockerSignals = task.blockerSignals ?? [];
+  const rescueHistory = task.rescueHistory ?? [];
+  const taskShape = task.taskShape
+    ? [
+        `deliverableType: ${task.taskShape.deliverableType}`,
+        `immediateNeed: ${task.taskShape.immediateNeed}`,
+        `missingInputs: ${(task.taskShape.missingInputs ?? []).join(', ') || 'ไม่มี'}`,
+        `workContext: ${truncateText(task.taskShape.workContext, 180)}`,
+        `confidence: ${task.taskShape.confidence ?? 'ไม่ระบุ'}`,
+      ].join('\n')
+    : 'ไม่มี';
+  const taskFrame = task.taskFrame
+    ? [
+        `objective: ${truncateText(task.taskFrame.objective, 180)}`,
+        `stage: ${truncateText(task.taskFrame.stage, 120)}`,
+        `stakeholders: ${(task.taskFrame.stakeholders ?? []).join(', ') || 'ไม่มี'}`,
+      ].join('\n')
+    : 'ไม่มี';
+  const currentPlan = task.currentPlan
+    ? [
+        `actionTitle: ${truncateText(task.currentPlan.actionTitle, 160)}`,
+        `successSignal: ${truncateText(task.currentPlan.successSignal, 180)}`,
+        `steps:`,
+        ...(task.currentPlan.steps ?? [])
+          .slice(0, 5)
+          .map((step, index) => `  ${index + 1}. ${truncateText(step.text, 140)}`),
+      ].join('\n')
+    : 'ไม่มี';
+  const rescueHistoryText = rescueHistory.length > 0
+    ? rescueHistory.slice(-3).map((entry) => `- ${entry.reason} -> ${entry.mode}`).join('\n')
+    : 'ไม่มี';
+  const constraints = task.constraints
+    ? [
+        `timeBudgetMin: ${task.constraints.timeBudgetMin ?? 'ไม่ระบุ'}`,
+        `energyLevel: ${task.constraints.energyLevel ?? 'ไม่ระบุ'}`,
+        `preferReplyFirst: ${task.constraints.preferReplyFirst ?? 'ไม่ระบุ'}`,
+      ].join('\n')
+    : 'ไม่มี';
+
+  return [
+    `workflowType: ${task.workflowType ?? 'unknown'}`,
+    `lifecycleState: ${task.lifecycleState}`,
+    `currentStepIndex: ${task.currentStepIndex}`,
+    `assistantMode: ${task.assistantMode ?? 'none'}`,
+    `lastAiOperation: ${task.lastAiOperation ?? 'none'}`,
+    `sourceText: ${truncateText(task.sourceText, 900)}`,
+    `extractedText: ${truncateText(task.extractedText, 700)}`,
+    `sourcePreference: ${task.sourcePreference?.primarySourceId ?? 'ไม่มีไฟล์หลักที่ผู้ใช้เลือก'}`,
+    `sourceFiles: ${truncateText(describeFiles(task), 500)}`,
+    `pendingInputs: ${truncateText(describePendingInputs(task), 320)}`,
+    `blockerSignals: ${blockerSignals.length > 0 ? blockerSignals.join(', ') : 'ไม่มี'}`,
+    '',
+    `taskShape:`,
+    taskShape,
+    '',
+    `taskFrame:`,
+    taskFrame,
+    '',
+    `currentPlan:`,
+    currentPlan,
+    '',
+    `constraints:`,
+    constraints,
+    '',
+    `rescueHistory:`,
+    rescueHistoryText,
+    '',
+    `actionExplanation: ${truncateText(task.actionExplanation, 260)}`,
+    `lastFailureReason: ${task.lastFailureReason ?? 'none'}`,
+  ].join('\n');
+}
+
 export const AI_OPERATION_REPAIR_PROMPT = `
 คุณคือ repair layer ของ MIND สำหรับ operation-based AI routes
 
@@ -245,6 +318,7 @@ export const ACTION_SYSTEM_PROMPT = `
 - reply_first = ให้เอนเอียงไปทางตอบลูกค้าก่อน
 - resume_first = ให้เอนเอียงไปทางเริ่มงานก่อน
 - replyDraft ต้องเป็น null ถ้า task นี้ไม่ใช่ send_reply_now จริง
+- whyThisNow และ situationSummary ต้องเป็นประโยคข้อความธรรมดา 1 บรรทัด ห้ามเป็น object, array, bullet list, หรือ JSON fragment
 - รูปแบบที่ต้องคืน:
   {
     "chosenAction": {
@@ -376,7 +450,7 @@ export function buildActionUserPrompt(
   evidenceContext?: ActionEvidenceContext | null,
 ) {
   return [
-    buildOperationTaskContext(task),
+    buildActionTaskContext(task),
     '',
     'preferredCandidate:',
     preferredCandidate

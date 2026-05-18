@@ -53,6 +53,7 @@ test('ONE_ACTION prompt: enough context biases toward concrete 5-20 minute actio
   assert.ok(ACTION_SYSTEM_PROMPT.includes('"เตรียม..."'), 'system prompt must ban vague meta openers');
   assert.ok(ACTION_SYSTEM_PROMPT.includes('"วางแผน..."'), 'system prompt must ban planning-only openers');
   assert.ok(ACTION_SYSTEM_PROMPT.includes('"ทบทวน..."'), 'system prompt must ban review-only openers');
+  assert.ok(ACTION_SYSTEM_PROMPT.includes('ห้ามเป็น object, array'), 'system prompt must keep semantic text fields out of structured fragments');
   assert.ok(prompt.includes('actionDecision:'), 'user prompt must include actionDecision block');
   assert.ok(prompt.includes('actionMode: propose'), 'enough context should use propose mode');
   assert.ok(prompt.includes('modeInstruction: propose one concrete 5-20 minute next action'), 'propose mode should demand a concrete 5-20 minute action');
