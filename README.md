@@ -57,6 +57,8 @@ For generic Next.js development without the local AI path, use the raw escape ha
 npm run dev:raw
 ```
 
+If Next.js reports SWC/Turbopack helper errors, follow the reset steps in [docs/agents/dev-workflow.md](docs/agents/dev-workflow.md) before assuming the app is broken.
+
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
