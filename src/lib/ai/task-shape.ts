@@ -182,6 +182,28 @@ function hasResumeSignal(normalized: string) {
   ]);
 }
 
+function hasPersonalFrictionSignal(normalized: string) {
+  return includesAny(normalized, [
+    'หิว',
+    'หิวข้าว',
+    'ยังไม่ได้กิน',
+    'ไม่ได้กินข้าว',
+    'ง่วง',
+    'เหนื่อย',
+    'หมดแรง',
+    'ไม่มีแรง',
+    'ปวดหัว',
+    'เครียด',
+    'ไม่พร้อม',
+    'ไม่มีสมาธิ',
+    'ใจลอย',
+  ]);
+}
+
+function isPersonalFrictionTaskShape(taskShape: TaskShape) {
+  return taskShape.deliverableType === 'unknown' && taskShape.workContext.includes('แรงเสียดทานส่วนตัว');
+}
+
 export function isProposalLike(deliverableType: TaskShapeDeliverableType) {
   return deliverableType === 'proposal' || deliverableType === 'timeline' || deliverableType === 'estimate';
 }
@@ -336,6 +358,10 @@ function buildWorkContextFromText(
     return 'ตอนนี้งานติดที่ยังต้องตีราคาและรวบข้อมูลสำหรับ estimate ให้พอ';
   }
 
+  if (hasPersonalFrictionSignal(normalized)) {
+    return 'ผู้ใช้ติดที่แรงเสียดทานส่วนตัว เช่น หิว เหนื่อย หรือยังไม่พร้อม แต่ยังต้องกลับไปทำงานต่อ';
+  }
+
   if (missingInputs.length > 0 || includesAny(normalized, ['ยังไม่ได้เริ่ม', 'ค้างอยู่', 'resume'])) {
     return 'งานนี้ยังเริ่มหรือกลับมาเริ่มได้ไม่เต็มที่ เพราะข้อมูลและจุดตั้งต้นยังไม่ถูกล็อก';
   }
@@ -433,6 +459,13 @@ export function buildTaskFrameFallback(
     return {
       objective: 'รวบข้อมูลตั้งต้นเพื่อเริ่มประเมิน timeline และ estimate',
       stage: 'กำลังจัดข้อมูลที่มีให้พอเริ่มประเมินราคาและระยะเวลาคร่าว ๆ',
+    };
+  }
+
+  if (isPersonalFrictionTaskShape(taskShape)) {
+    return {
+      objective: 'จัดการสิ่งที่ทำให้เริ่มงานไม่ออกก่อนกลับไปทำงานต่อ',
+      stage: 'กำลังลดแรงเสียดทานให้เหลือก้าวเล็กที่เริ่มได้ทันที',
     };
   }
 
@@ -534,6 +567,21 @@ export function buildIntakeFallbackCandidates(
       {
         title: 'ระบุงานที่บล็อกอยู่และส่งต่อให้คนรับผิดชอบโดยตรง',
         rationale: 'เหมาะเมื่อมี dependency หลายจุดและต้องการปลดล็อกพร้อมกันหลายทาง',
+        kind: 'dependency_first' as const,
+      },
+    ];
+  }
+
+  if (isPersonalFrictionTaskShape(taskShape)) {
+    return [
+      {
+        title: 'กินหรือเตรียมอะไรเล็ก ๆ แล้วตั้งก้าวงาน 5 นาทีแรก',
+        rationale: 'โจทย์ตอนนี้ไม่ใช่ขาดแผนงาน แต่ร่างกายยังไม่พร้อมพอจะเริ่มทำงานต่อ',
+        kind: 'resume_first' as const,
+      },
+      {
+        title: 'เลือกงานชิ้นเล็กที่สุดที่ทำได้หลังพักกินข้าว',
+        rationale: 'ช่วยให้กลับเข้าจังหวะงานโดยไม่ต้องฝืนเริ่มจากก้อนใหญ่ทันที',
         kind: 'dependency_first' as const,
       },
     ];
@@ -681,6 +729,27 @@ export function buildActionFallbackCopy(
         {
           title: 'ลิสต์งานทุกชิ้นและจัดลำดับว่าอะไรด่วนที่สุด',
           rationale: 'ช่วยให้เห็นภาพรวมก่อนเริ่ม delegate เพื่อไม่ให้งานสำคัญหลุด',
+        },
+      ],
+    };
+  }
+
+  if (isPersonalFrictionTaskShape(taskShape)) {
+    return {
+      chosenTitle: 'กินอะไรเล็ก ๆ แล้วกลับมาเริ่มงานจากก้าว 5 นาที',
+      chosenRationale: 'จากบริบท ผู้ใช้ติดที่หิวหรือแรงกายยังไม่พร้อม ไม่ใช่ขาดแผนงานใหม่ ดังนั้นควรลด friction ก่อนแล้วค่อยเริ่มงานชิ้นเล็ก',
+      successSignal: 'ได้กินหรือเตรียมของกินง่าย ๆ และรู้ก้าวงานสั้น ๆ ที่จะเริ่มต่อทันที',
+      whyThisNow: 'ถ้าฝืนเริ่มงานทั้งที่หิว งานจะยิ่งหนืดและตัดสินใจยาก การเติมพลังเล็กน้อยก่อนช่วยให้เริ่มต่อได้จริงกว่า',
+      situationSummary: 'ผู้ใช้หิวแต่ยังต้องทำงาน จึงควรจัดการพลังงานขั้นต่ำก่อนแล้วกลับมาทำงานด้วยก้าวเล็ก',
+      replyDraft: undefined,
+      alternatives: [
+        {
+          title: 'ตั้ง timer 10 นาทีเพื่อกินหรือเตรียมของกินก่อน',
+          rationale: 'เหมาะเมื่อยังต้องกลับมาทำงานต่อแต่ร่างกายยังไม่พร้อม',
+        },
+        {
+          title: 'เปิดงานที่ต้องทำไว้ แล้วเลือกจุดเริ่มหนึ่งจุดหลังพักสั้น ๆ',
+          rationale: 'ช่วยลดแรงต้านตอนกลับมานั่งทำงานอีกครั้ง',
         },
       ],
     };

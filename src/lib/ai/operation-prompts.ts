@@ -273,6 +273,7 @@ export const INTAKE_SYSTEM_PROMPT = `
 - ถ้าผู้ใช้กำลังเตรียม proposal, scope, requirement, timeline หรือ estimate ให้เอนเอียงไปทาง client_resume
 - คำว่า "ลูกค้า" อย่างเดียวไม่พอจะจัดเป็น client_response
 - จัดเป็น client_response เฉพาะเมื่อ user มี intent ชัดว่าจะตอบ ส่ง หรือถามกลับตอนนี้
+- ถ้า input เป็นแรงเสียดทานส่วนตัว เช่น หิว ง่วง เหนื่อย ไม่มีสมาธิ แต่ยังต้องทำงาน ให้รักษาบริบทนั้นไว้ ห้ามแต่งเป็นงานลูกค้า โปรเจกต์ ไฟล์ หรือ requirement
 - taskFrame ต้องตอบว่ากำลังทำอะไร อยู่ช่วงไหน และใครเกี่ยวข้อง
 - blockers เป็นสิ่งที่ขัดการตอบหรือเริ่มงานจริง
 - คืน taskShape รูปแบบนี้เสมอ:
@@ -306,8 +307,11 @@ export const ACTION_SYSTEM_PROMPT = `
 - ถ้ามี missing inputs หลายรายการหรือความมั่นใจต่ำ ให้ถามข้อมูลที่ขาด 1 ข้อก่อน ห้าม hallucinate ก้าวเฉพาะที่ทำไม่ได้จากหลักฐานที่มี
 - ถ้ามี blocker ให้ action จัดการ blocker ก่อน
 - ถ้ามี candidate action ที่เหมาะ ให้ใช้เป็นฐาน ไม่ต้องเปลี่ยนทิศงานโดยไม่จำเป็น
+- ก่อนเสนอทางออก ให้ situationSummary สะท้อนคำสำคัญจาก input ผู้ใช้ 1 ครั้ง เช่น "หิวข้าวแต่ต้องทำงาน", "หมดแรง", หรือวลีเฉพาะของ room นี้
+- ห้ามให้คำแนะนำ productivity generic ถ้าไม่ได้ผูกกับสถานการณ์เฉพาะใน sourceText, taskShape หรือ evidence
 - ถ้า taskShape.immediateNeed = define_scope ให้ action จัด requirement, scope, unknowns ก่อน timeline หรือราคา
 - ถ้า taskShape.immediateNeed = prepare_inputs ให้ action รวบข้อมูลขั้นต่ำสำหรับ timeline หรือ estimate ก่อน
+- ถ้า taskShape.deliverableType = unknown และบริบทเป็นแรงเสียดทานส่วนตัว ให้เสนอ action ที่จัดการสภาพผู้ใช้ก่อนแล้วค่อยพากลับไปทำงานก้าวเล็ก ห้ามแต่งบริบทลูกค้าหรือไฟล์ขึ้นมาเอง
 - ห้าม default ไปที่ "สรุปข้อความลูกค้า" หรือ "ตอบลูกค้า" ถ้างานจริงเป็น proposal/resume task
 - alternatives ต้องเป็นก้าวที่ concrete และเริ่มได้จริง ไม่ใช่ชื่อกว้าง ๆ เช่น "จัดการ blocker ที่มีอยู่" หรือ "สรุปข้อมูลที่มีอยู่"
 - ถ้ามี negotiation mode ให้ปรับ action ตาม mode นั้นโดยยังยึด task เดิม
@@ -380,6 +384,8 @@ export const RESCUE_SYSTEM_PROMPT = `
   clarify, follow_up, shrink, switch_track, pause_cleanly
 - rescuePlan.steps ต้องมี 2-3 รายการและสั้น
 - ให้ยึด blockerSignals เป็นสัญญาณหลักก่อนเดาเอง
+- diagnosis.explanation ต้อง mirror คำสำคัญจากบริบทผู้ใช้ก่อนวินิจฉัย ห้ามเริ่มจาก template ทั่วไปถ้า sourceText ชัดอยู่แล้ว
+- ถ้าบริบทเป็นแรงเสียดทานส่วนตัว เช่น หิว ง่วง เหนื่อย หมดแรง หรือไม่มีสมาธิ ให้เลือก low_energy หรือ shrink/pause_cleanly ก่อน productivity plan ที่เพิ่มภาระ
 - ถ้าไม่แน่ใจ ให้เลือกแผนที่ conservative และเริ่มง่ายที่สุด
 - suggestedMessage เป็น null ได้ถ้าไม่จำเป็น
 - คืน object นี้เท่านั้น:

@@ -6,6 +6,7 @@ import {
   inferWorkflowTypeFromTaskShape,
   buildIntakeFallbackCandidates,
   buildActionFallbackCopy,
+  buildTaskFrameFallback,
   isProposalLike,
 } from './task-shape.ts';
 
@@ -18,6 +19,7 @@ const CLASSIFICATION_CASES: Array<{
   input: string;
   expectedType: string;
   notType?: string;
+  allowUnknown?: boolean;
 }> = [
   // execution / delegation chaos
   {
@@ -63,13 +65,21 @@ const CLASSIFICATION_CASES: Array<{
     input: 'ต้องตอบลูกค้าก่อน',
     expectedType: 'reply',
   },
+  {
+    name: 'personal friction stays unknown instead of fake client work',
+    input: 'หิวข้าวแต่ต้องทำงาน',
+    expectedType: 'unknown',
+    allowUnknown: true,
+  },
 ];
 
-for (const { name, input, expectedType, notType } of CLASSIFICATION_CASES) {
+for (const { name, input, expectedType, notType, allowUnknown } of CLASSIFICATION_CASES) {
   test(name, () => {
     const shape = deriveTaskShapeFromText(input);
     assert.equal(shape.deliverableType, expectedType, `deliverableType for: "${input}"`);
-    assert.notEqual(shape.deliverableType, 'unknown', `must not be unknown: "${input}"`);
+    if (!allowUnknown) {
+      assert.notEqual(shape.deliverableType, 'unknown', `must not be unknown: "${input}"`);
+    }
     if (notType) {
       assert.notEqual(shape.deliverableType, notType);
     }
@@ -142,3 +152,25 @@ for (const { name, input, mustNotInclude, titleMustMatch } of FALLBACK_CASES) {
     }
   });
 }
+
+test('personal friction fallback keeps the user context instead of inventing client/project context', () => {
+  const shape = deriveTaskShapeFromText('หิวข้าวแต่ต้องทำงาน');
+  const workflowType = inferWorkflowTypeFromTaskShape(shape);
+  const frame = buildTaskFrameFallback(workflowType, shape);
+  const candidates = buildIntakeFallbackCandidates(workflowType, shape);
+  const action = buildActionFallbackCopy(workflowType, shape);
+  const combinedText = [
+    shape.workContext,
+    frame.objective,
+    frame.stage,
+    ...candidates.map((candidate) => `${candidate.title} ${candidate.rationale}`),
+    action.chosenTitle,
+    action.chosenRationale,
+    action.situationSummary,
+  ].join(' ');
+
+  assert.equal(shape.deliverableType, 'unknown');
+  assert.equal(shape.immediateNeed, 'resume_execution');
+  assert.match(combinedText, /หิว|กิน|แรงเสียดทาน|พลังงาน|ก้าว 5 นาที/);
+  assert.doesNotMatch(combinedText, /ลูกค้า|โปรเจกต์|proposal|requirement|ไฟล์/);
+});
