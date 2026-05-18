@@ -20,6 +20,9 @@
 /outputs
 /tmp
 /mockup-app/.next
+.agents/
+.playwright-mcp/
+graphify-out/
 
 # next.js
 /.next/
