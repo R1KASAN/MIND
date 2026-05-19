@@ -1,15 +1,24 @@
+import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
   buildRoomSidebarItems,
   rankResumeRooms,
+  selectActiveRoomReentry,
   resolveActiveRoomReentryState,
   resolveHomeEntryState,
   type ResumeRoomCandidateInput,
 } from '@/lib/orchestrator/home-entry';
 import { createTaskContext, type AppSession, type RoomRecord } from '@/lib/store/idb';
-import type { RoomMemoryReplayContext } from '@/lib/store/room-memory-db';
+import {
+  appendRoomMemoryEvents,
+  buildBackfillRoomMemoryEvents,
+  clearRoomMemoryData,
+  getRoomMemoryDb,
+  resetRoomMemoryDbForTests,
+  type RoomMemoryReplayContext,
+} from '@/lib/store/room-memory-db';
 import type { RoomSourceFile } from '@/lib/room';
 
 function session(overrides: Partial<AppSession> = {}): AppSession {
@@ -468,4 +477,83 @@ test('active room trust strip uses drift as signal without exposing raw drift wa
   const trustText = state?.trustItems.map((item) => item.label).join(' ') ?? '';
   assert.match(trustText, /ควรตรวจบริบทก่อน/);
   assert.doesNotMatch(trustText, /fallback rescue used raw warning/);
+});
+
+test('selectActiveRoomReentry keeps the same room cycle visible after reentry', async () => {
+  resetRoomMemoryDbForTests();
+  const db = getRoomMemoryDb();
+
+  const task = createTaskContext({
+    roomId: 'cycle-room',
+    sourceText: 'ลูกค้ารอคำตอบเรื่องเดโมและ timeline ต้องชัด',
+    createdAt: 100,
+    lastAttemptAt: 200,
+    blockerSignals: ['waiting_client'],
+    currentPlan: {
+      actionTitle: 'ส่งคำตอบยืนยันเดโม',
+      successSignal: 'ลูกค้ารู้เวลาถัดไป',
+      steps: [
+        { id: 'step-1', text: 'ร่าง reply สั้นเพื่อยืนยันเวลานัด' },
+        { id: 'step-2', text: 'แนบ timeline คร่าว ๆ ถ้าจำเป็น' },
+      ],
+    },
+    reentryBrief: {
+      summary: 'กลับมาทำต่อที่เดโมเดิม',
+      topActions: [
+        {
+          roomId: 'cycle-room',
+          title: 'ส่งคำตอบยืนยันเดโม',
+          rationale: 'รักษา momentum ของห้องนี้',
+          resumeTarget: 'ONE_ACTION',
+        },
+      ],
+      ignoredNoise: [],
+      createdAt: 250,
+    },
+  });
+
+  const roomRecord = room('cycle-room', {
+    contextSummary: 'กลับมาทำต่อที่เดโมเดิม',
+    lastKnownGoodBrief: 'กลับมาทำต่อที่เดโมเดิม',
+    lastKnownGoodNextMoves: ['ส่งคำตอบยืนยันเดโม'],
+    lastKnownGoodAt: 250,
+    lastReentryBrief: {
+      summary: 'กลับมาทำต่อที่เดโมเดิม',
+      topActions: [
+        {
+          roomId: 'cycle-room',
+          title: 'ส่งคำตอบยืนยันเดโม',
+          rationale: 'รักษา momentum ของห้องนี้',
+          resumeTarget: 'ONE_ACTION',
+        },
+      ],
+      ignoredNoise: [],
+      createdAt: 250,
+    },
+    lastState: 'BOUNCE_BACK',
+    lastUpdatedAt: 250,
+    aiFreshness: 'fresh',
+    session: session({
+      roomId: 'cycle-room',
+      uiRoute: 'BOUNCE_BACK',
+      lastActive: 250,
+      task,
+    }),
+  });
+
+  await appendRoomMemoryEvents(buildBackfillRoomMemoryEvents({ task, room: roomRecord }), db);
+
+  const state = await selectActiveRoomReentry({
+    room: roomRecord,
+  });
+
+  assert.equal(state?.primaryAction, 'continue');
+  assert.equal(state?.primaryCta, 'ทำก้าวนี้');
+  assert.equal(state?.actionTitle, 'ส่งคำตอบยืนยันเดโม');
+  assert.equal(state?.summary, 'กลับมาทำต่อที่เดโมเดิม');
+  assert.ok(state?.trustItems.some((item) => item.id === 'reentry'));
+
+  await clearRoomMemoryData(db);
+  db.close();
+  resetRoomMemoryDbForTests();
 });
