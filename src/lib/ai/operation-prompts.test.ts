@@ -27,7 +27,7 @@ function makePending(kind: PendingInput['kind'], answer: string, prompt?: string
 
 // ---
 
-test('ONE_ACTION prompt: enough context biases toward concrete 5-20 minute action', () => {
+test('ONE_ACTION prompt: enough context biases toward concrete 15-30 minute action', () => {
   const task = makeTask({
     workflowType: 'client_resume',
     pendingInputs: [],
@@ -50,7 +50,7 @@ test('ONE_ACTION prompt: enough context biases toward concrete 5-20 minute actio
     selectionMethod: 'retrieval',
   });
 
-  assert.ok(ACTION_SYSTEM_PROMPT.includes('5-20 นาที'), 'system prompt must set the concrete time horizon');
+  assert.ok(ACTION_SYSTEM_PROMPT.includes('15-30 นาที'), 'system prompt must set the concrete time horizon');
   assert.ok(ACTION_SYSTEM_PROMPT.includes('"เตรียม..."'), 'system prompt must ban vague meta openers');
   assert.ok(ACTION_SYSTEM_PROMPT.includes('"วางแผน..."'), 'system prompt must ban planning-only openers');
   assert.ok(ACTION_SYSTEM_PROMPT.includes('"ทบทวน..."'), 'system prompt must ban review-only openers');
@@ -59,12 +59,15 @@ test('ONE_ACTION prompt: enough context biases toward concrete 5-20 minute actio
   assert.ok(ACTION_SYSTEM_PROMPT.includes('ห้ามให้คำแนะนำ productivity generic'), 'action prompt must reject generic productivity advice');
   assert.ok(prompt.includes('actionDecision:'), 'user prompt must include actionDecision block');
   assert.ok(prompt.includes('actionMode: propose'), 'enough context should use propose mode');
-  assert.ok(prompt.includes('modeInstruction: propose one concrete 5-20 minute next action'), 'propose mode should demand a concrete 5-20 minute action');
+  assert.ok(prompt.includes('behaviorIntent: client_delivery'), 'prompt should expose behavior intent for tone selection');
+  assert.ok(prompt.includes('modeInstruction: propose one concrete 15-30 minute next action'), 'propose mode should demand a concrete 15-30 minute action');
   assert.ok(prompt.includes('Retrieved evidence:'), 'evidence block must remain present');
 });
 
 test('operation prompts include support-mode guardrails for personal friction', () => {
-  assert.ok(ACTION_SYSTEM_PROMPT.includes('แรงเสียดทานส่วนตัว'), 'action prompt should recognize personal friction as its own mode');
+  assert.ok(ACTION_SYSTEM_PROMPT.includes('behaviorIntent = personal_friction'), 'action prompt should recognize personal friction as its own mode');
+  assert.ok(ACTION_SYSTEM_PROMPT.includes('behaviorIntent = admin_task'), 'action prompt should route admin tasks away from client delivery tone');
+  assert.ok(ACTION_SYSTEM_PROMPT.includes('behaviorIntent = client_delivery'), 'action prompt should preserve real client delivery context');
   assert.ok(ACTION_SYSTEM_PROMPT.includes('ห้ามแต่งบริบทลูกค้าหรือไฟล์ขึ้นมาเอง'), 'action prompt must not invent client/file context');
   assert.ok(RESCUE_SYSTEM_PROMPT.includes('mirror คำสำคัญจากบริบทผู้ใช้'), 'rescue prompt should mirror user wording before diagnosis');
   assert.ok(RESCUE_SYSTEM_PROMPT.includes('low_energy หรือ shrink/pause_cleanly'), 'rescue prompt should route personal friction gently');

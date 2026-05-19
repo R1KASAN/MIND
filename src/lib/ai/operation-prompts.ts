@@ -62,6 +62,12 @@ function resolveActionPromptMode(task: TaskContext): 'propose' | 'ask' {
   return 'propose';
 }
 
+function describeBehaviorIntent(task: TaskContext) {
+  if (task.taskShape?.behaviorIntent) return task.taskShape.behaviorIntent;
+  if (task.taskShape?.deliverableType && task.taskShape.deliverableType !== 'unknown') return 'client_delivery';
+  return 'admin_task';
+}
+
 function buildActionDecisionGuidance(task: TaskContext) {
   const unansweredCount = countUnansweredPendingInputs(task);
   const confidence = task.taskShape?.confidence ?? 0.5;
@@ -75,9 +81,10 @@ function buildActionDecisionGuidance(task: TaskContext) {
     `actionMode: ${actionMode}`,
     `unansweredPendingInputs: ${unansweredCount}`,
     `taskShapeConfidence: ${task.taskShape?.confidence ?? 'ไม่ระบุ'}`,
+    `behaviorIntent: ${describeBehaviorIntent(task)}`,
     actionMode === 'ask'
       ? `modeInstruction: ask exactly one focused clarifying question before proposing a detailed concrete action; reason=${askReasons.join(', ')}`
-      : 'modeInstruction: propose one concrete 5-20 minute next action grounded in available evidence and constraints',
+      : 'modeInstruction: propose one concrete 15-30 minute next action grounded in available evidence and constraints',
   ].join('\n');
 }
 
@@ -88,6 +95,7 @@ export function buildOperationTaskContext(task: TaskContext) {
     ? [
         `deliverableType: ${task.taskShape.deliverableType}`,
         `immediateNeed: ${task.taskShape.immediateNeed}`,
+        `behaviorIntent: ${describeBehaviorIntent(task)}`,
         `missingInputs: ${(task.taskShape.missingInputs ?? []).join(', ') || 'ไม่มี'}`,
         `workContext: ${task.taskShape.workContext}`,
         `confidence: ${task.taskShape.confidence ?? 'ไม่ระบุ'}`,
@@ -174,6 +182,7 @@ export function buildActionTaskContext(task: TaskContext) {
     ? [
         `deliverableType: ${task.taskShape.deliverableType}`,
         `immediateNeed: ${task.taskShape.immediateNeed}`,
+        `behaviorIntent: ${describeBehaviorIntent(task)}`,
         `missingInputs: ${(task.taskShape.missingInputs ?? []).join(', ') || 'ไม่มี'}`,
         `workContext: ${truncateText(task.taskShape.workContext, 180)}`,
         `confidence: ${task.taskShape.confidence ?? 'ไม่ระบุ'}`,
@@ -270,6 +279,7 @@ export const INTAKE_SYSTEM_PROMPT = `
 - candidateActions ต้องไม่เกิน 3 รายการ
 - roomDigest ต้องสรุปบริบทจริง ไม่ใช่ประโยคกว้าง
 - taskShape ต้องสรุปว่ากำลังทำ deliverable อะไร และ immediate need ตอนนี้คืออะไร
+- behaviorIntent ต้องเป็นหนึ่งใน personal_friction, client_delivery, admin_task และใช้เพื่อเลือก tone ไม่ใช่เพื่อแต่งบริบทใหม่
 - ถ้าผู้ใช้กำลังเตรียม proposal, scope, requirement, timeline หรือ estimate ให้เอนเอียงไปทาง client_resume
 - คำว่า "ลูกค้า" อย่างเดียวไม่พอจะจัดเป็น client_response
 - จัดเป็น client_response เฉพาะเมื่อ user มี intent ชัดว่าจะตอบ ส่ง หรือถามกลับตอนนี้
@@ -280,6 +290,7 @@ export const INTAKE_SYSTEM_PROMPT = `
   {
     "deliverableType": "reply | proposal | timeline | estimate | execution | unknown",
     "immediateNeed": "send_reply_now | define_scope | prepare_inputs | resume_execution",
+    "behaviorIntent": "personal_friction | client_delivery | admin_task",
     "missingInputs": ["string"],
     "workContext": "string",
     "confidence": 0.0
@@ -299,7 +310,7 @@ export const ACTION_SYSTEM_PROMPT = `
 
 กฎ:
 - ตอบเป็น JSON object เดียวเท่านั้น
-- one next action ต้องเป็นสิ่งที่ user ทำจบได้จริงใน 5-20 นาที
+- one next action ต้องเป็นสิ่งที่ user ทำจบได้จริงใน 15-30 นาที
 - alternatives ไม่เกิน 3
 - ห้ามวางแผนกว้าง ๆ
 - ถ้ามี evidence/context เพียงพอ ห้ามเริ่ม title ของ action ด้วยคำ meta กว้าง ๆ เช่น "เตรียม...", "วางแผน...", "ทบทวน..." ให้เลือกกริยาที่ลงมือจริง เช่น "ร่างอีเมลตอบกลับเรื่องงบประมาณ X" หรือ "เติมตัวเลข Y ลงในสไลด์"
@@ -311,7 +322,9 @@ export const ACTION_SYSTEM_PROMPT = `
 - ห้ามให้คำแนะนำ productivity generic ถ้าไม่ได้ผูกกับสถานการณ์เฉพาะใน sourceText, taskShape หรือ evidence
 - ถ้า taskShape.immediateNeed = define_scope ให้ action จัด requirement, scope, unknowns ก่อน timeline หรือราคา
 - ถ้า taskShape.immediateNeed = prepare_inputs ให้ action รวบข้อมูลขั้นต่ำสำหรับ timeline หรือ estimate ก่อน
-- ถ้า taskShape.deliverableType = unknown และบริบทเป็นแรงเสียดทานส่วนตัว ให้เสนอ action ที่จัดการสภาพผู้ใช้ก่อนแล้วค่อยพากลับไปทำงานก้าวเล็ก ห้ามแต่งบริบทลูกค้าหรือไฟล์ขึ้นมาเอง
+- ถ้า behaviorIntent = personal_friction ให้เสนอ action ที่จัดการสภาพผู้ใช้ก่อนแล้วค่อยพากลับไปทำงานก้าวเล็ก ห้ามแต่งบริบทลูกค้าหรือไฟล์ขึ้นมาเอง
+- ถ้า behaviorIntent = admin_task ให้ใช้โทนเคลียร์ภาระ/งานแอดมิน ไม่ลากเข้า proposal หรือ client delivery เอง
+- ถ้า behaviorIntent = client_delivery ให้รักษาบริบทงานลูกค้าหรือ deliverable จริงจาก room memory
 - ห้าม default ไปที่ "สรุปข้อความลูกค้า" หรือ "ตอบลูกค้า" ถ้างานจริงเป็น proposal/resume task
 - alternatives ต้องเป็นก้าวที่ concrete และเริ่มได้จริง ไม่ใช่ชื่อกว้าง ๆ เช่น "จัดการ blocker ที่มีอยู่" หรือ "สรุปข้อมูลที่มีอยู่"
 - ถ้ามี negotiation mode ให้ปรับ action ตาม mode นั้นโดยยังยึด task เดิม
