@@ -132,6 +132,7 @@ export function buildSynthesisInput(task: TaskContext): string {
         'task_shape:',
         `deliverable_type: ${task.taskShape.deliverableType}`,
         `immediate_need: ${task.taskShape.immediateNeed}`,
+        `behavior_intent: ${task.taskShape.behaviorIntent ?? 'admin_task'}`,
         `missing_inputs: ${task.taskShape.missingInputs.join(', ') || 'ไม่มี'}`,
         `work_context: ${task.taskShape.workContext}`,
         `confidence: ${task.taskShape.confidence ?? 'ไม่ระบุ'}`,

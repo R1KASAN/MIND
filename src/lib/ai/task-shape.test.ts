@@ -18,6 +18,7 @@ const CLASSIFICATION_CASES: Array<{
   name: string;
   input: string;
   expectedType: string;
+  expectedIntent?: string;
   notType?: string;
   allowUnknown?: boolean;
 }> = [
@@ -26,17 +27,20 @@ const CLASSIFICATION_CASES: Array<{
     name: 'EN agency chaos => execution',
     input: 'Client rejected font. Video is delayed. Need urgent plan to split work.',
     expectedType: 'execution',
+    expectedIntent: 'client_delivery',
   },
   {
     name: 'TH agency chaos => execution',
     input: 'ลูกค้าตีกลับฟอนต์ วิดีโอดีเลย์ ต้องแบ่งงานด่วนให้ทีม',
     expectedType: 'execution',
+    expectedIntent: 'client_delivery',
   },
   // proposal / planning — combined signals
   {
     name: 'TH clinic timeline+estimate+scope => proposal',
     input: 'ลูกค้าอยากทำแอปจองคิวคลินิก แต่ requirement ยังไม่นิ่ง มีแค่ note กระจัดกระจาย ขอ timeline กับ estimate ราคาเบื้องต้นหน่อย',
     expectedType: 'proposal',
+    expectedIntent: 'client_delivery',
   },
   {
     name: 'TH estimate/budget synonyms => proposal-like',
@@ -64,19 +68,38 @@ const CLASSIFICATION_CASES: Array<{
     name: 'reply intent => reply',
     input: 'ต้องตอบลูกค้าก่อน',
     expectedType: 'reply',
+    expectedIntent: 'client_delivery',
   },
   {
     name: 'personal friction stays unknown instead of fake client work',
     input: 'หิวข้าวแต่ต้องทำงาน',
     expectedType: 'unknown',
+    expectedIntent: 'personal_friction',
+    allowUnknown: true,
+  },
+  {
+    name: 'personal friction typo still stays personal',
+    input: 'หัวข้าวแต่ต้องทำงาน',
+    expectedType: 'unknown',
+    expectedIntent: 'personal_friction',
+    allowUnknown: true,
+  },
+  {
+    name: 'admin task stays admin instead of fake client work',
+    input: 'จ่ายบิลค่าอินเทอร์เน็ตแล้วจัดไฟล์ใบเสร็จ',
+    expectedType: 'unknown',
+    expectedIntent: 'admin_task',
     allowUnknown: true,
   },
 ];
 
-for (const { name, input, expectedType, notType, allowUnknown } of CLASSIFICATION_CASES) {
+for (const { name, input, expectedType, expectedIntent, notType, allowUnknown } of CLASSIFICATION_CASES) {
   test(name, () => {
     const shape = deriveTaskShapeFromText(input);
     assert.equal(shape.deliverableType, expectedType, `deliverableType for: "${input}"`);
+    if (expectedIntent) {
+      assert.equal(shape.behaviorIntent, expectedIntent, `behaviorIntent for: "${input}"`);
+    }
     if (!allowUnknown) {
       assert.notEqual(shape.deliverableType, 'unknown', `must not be unknown: "${input}"`);
     }
@@ -171,6 +194,29 @@ test('personal friction fallback keeps the user context instead of inventing cli
 
   assert.equal(shape.deliverableType, 'unknown');
   assert.equal(shape.immediateNeed, 'resume_execution');
-  assert.match(combinedText, /หิว|กิน|แรงเสียดทาน|พลังงาน|ก้าว 5 นาที/);
+  assert.equal(shape.behaviorIntent, 'personal_friction');
+  assert.match(combinedText, /หิว|แรงเสียดทาน|พลังงาน|เติม|ก้าว/);
   assert.doesNotMatch(combinedText, /ลูกค้า|โปรเจกต์|proposal|requirement|ไฟล์/);
+});
+
+test('admin task fallback keeps admin tone instead of client delivery tone', () => {
+  const shape = deriveTaskShapeFromText('จ่ายบิลค่าอินเทอร์เน็ตแล้วจัดไฟล์ใบเสร็จ');
+  const workflowType = inferWorkflowTypeFromTaskShape(shape);
+  const frame = buildTaskFrameFallback(workflowType, shape);
+  const candidates = buildIntakeFallbackCandidates(workflowType, shape);
+  const action = buildActionFallbackCopy(workflowType, shape);
+  const combinedText = [
+    shape.workContext,
+    frame.objective,
+    frame.stage,
+    ...candidates.map((candidate) => `${candidate.title} ${candidate.rationale}`),
+    action.chosenTitle,
+    action.chosenRationale,
+    action.situationSummary,
+  ].join(' ');
+
+  assert.equal(shape.deliverableType, 'unknown');
+  assert.equal(shape.behaviorIntent, 'admin_task');
+  assert.match(combinedText, /แอดมิน|ภาระ|บิล|เอกสาร|จัดการ/);
+  assert.doesNotMatch(combinedText, /ลูกค้า|proposal|requirement|estimate|timeline/);
 });

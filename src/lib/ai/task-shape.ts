@@ -14,8 +14,15 @@ export const TASK_SHAPE_IMMEDIATE_NEEDS = [
   'resume_execution',
 ] as const;
 
+export const TASK_BEHAVIOR_INTENTS = [
+  'personal_friction',
+  'client_delivery',
+  'admin_task',
+] as const;
+
 export type TaskShapeDeliverableType = (typeof TASK_SHAPE_DELIVERABLE_TYPES)[number];
 export type TaskShapeImmediateNeed = (typeof TASK_SHAPE_IMMEDIATE_NEEDS)[number];
+export type TaskBehaviorIntent = (typeof TASK_BEHAVIOR_INTENTS)[number];
 export type TaskShapeWorkflowType = 'client_response' | 'client_resume';
 
 export interface TaskShape {
@@ -23,6 +30,7 @@ export interface TaskShape {
   immediateNeed: TaskShapeImmediateNeed;
   missingInputs: string[];
   workContext: string;
+  behaviorIntent?: TaskBehaviorIntent;
   confidence?: number;
 }
 
@@ -31,6 +39,7 @@ interface PartialTaskShapeInput {
   immediateNeed?: unknown;
   missingInputs?: unknown;
   workContext?: unknown;
+  behaviorIntent?: unknown;
   confidence?: unknown;
 }
 
@@ -64,6 +73,12 @@ function coerceDeliverableType(value: unknown): TaskShapeDeliverableType | undef
 function coerceImmediateNeed(value: unknown): TaskShapeImmediateNeed | undefined {
   return TASK_SHAPE_IMMEDIATE_NEEDS.includes(value as TaskShapeImmediateNeed)
     ? value as TaskShapeImmediateNeed
+    : undefined;
+}
+
+function coerceBehaviorIntent(value: unknown): TaskBehaviorIntent | undefined {
+  return TASK_BEHAVIOR_INTENTS.includes(value as TaskBehaviorIntent)
+    ? value as TaskBehaviorIntent
     : undefined;
 }
 
@@ -186,6 +201,7 @@ function hasPersonalFrictionSignal(normalized: string) {
   return includesAny(normalized, [
     'หิว',
     'หิวข้าว',
+    'หัวข้าว',
     'ยังไม่ได้กิน',
     'ไม่ได้กินข้าว',
     'ง่วง',
@@ -200,8 +216,33 @@ function hasPersonalFrictionSignal(normalized: string) {
   ]);
 }
 
+function hasAdminTaskSignal(normalized: string) {
+  return includesAny(normalized, [
+    'admin',
+    'แอดมิน',
+    'ธุรการ',
+    'จ่ายบิล',
+    'บิล',
+    'ใบเสร็จ',
+    'เอกสาร',
+    'จัดไฟล์',
+    'จัดตาราง',
+    'นัดหมาย',
+    'จอง',
+    'ต่อทะเบียน',
+    'เคลียร์ inbox',
+    'เคลียร์อีเมล',
+    'ทำบัญชี',
+  ]);
+}
+
 function isPersonalFrictionTaskShape(taskShape: TaskShape) {
-  return taskShape.deliverableType === 'unknown' && taskShape.workContext.includes('แรงเสียดทานส่วนตัว');
+  return taskShape.behaviorIntent === 'personal_friction' ||
+    (taskShape.deliverableType === 'unknown' && taskShape.workContext.includes('แรงเสียดทานส่วนตัว'));
+}
+
+function isAdminTaskShape(taskShape: TaskShape) {
+  return taskShape.behaviorIntent === 'admin_task';
 }
 
 export function isProposalLike(deliverableType: TaskShapeDeliverableType) {
@@ -297,6 +338,17 @@ function detectImmediateNeedFromText(
   return undefined;
 }
 
+function detectBehaviorIntentFromText(
+  text: string,
+  deliverableType: TaskShapeDeliverableType,
+): TaskBehaviorIntent {
+  const normalized = normalizeTextForMatch(text);
+  if (hasPersonalFrictionSignal(normalized)) return 'personal_friction';
+  if (deliverableType !== 'unknown' || hasExplicitReplyIntent(text) || hasDemoRequestIntent(text)) return 'client_delivery';
+  if (hasAdminTaskSignal(normalized)) return 'admin_task';
+  return 'admin_task';
+}
+
 function deriveMissingInputsFromText(text: string, deliverableType: TaskShapeDeliverableType) {
   const normalized = normalizeTextForMatch(text);
   const missingInputs: string[] = [];
@@ -362,6 +414,10 @@ function buildWorkContextFromText(
     return 'ผู้ใช้ติดที่แรงเสียดทานส่วนตัว เช่น หิว เหนื่อย หรือยังไม่พร้อม แต่ยังต้องกลับไปทำงานต่อ';
   }
 
+  if (hasAdminTaskSignal(normalized)) {
+    return 'ผู้ใช้กำลังจัดการงานแอดมินหรืองานส่วนตัวที่ต้องเคลียร์ให้เดินต่อได้';
+  }
+
   if (missingInputs.length > 0 || includesAny(normalized, ['ยังไม่ได้เริ่ม', 'ค้างอยู่', 'resume'])) {
     return 'งานนี้ยังเริ่มหรือกลับมาเริ่มได้ไม่เต็มที่ เพราะข้อมูลและจุดตั้งต้นยังไม่ถูกล็อก';
   }
@@ -399,6 +455,9 @@ export function deriveTaskShapeFromText(text: string, partial?: PartialTaskShape
   const workContext =
     normalizeOptionalString(partial?.workContext) ??
     buildWorkContextFromText(normalizedText, deliverableType, immediateNeed, missingInputs);
+  const behaviorIntent =
+    coerceBehaviorIntent(partial?.behaviorIntent) ??
+    detectBehaviorIntentFromText(normalizedText, deliverableType);
   const confidence = coerceConfidence(partial?.confidence) ?? inferConfidence(normalizedText, deliverableType, immediateNeed);
 
   return {
@@ -406,6 +465,7 @@ export function deriveTaskShapeFromText(text: string, partial?: PartialTaskShape
     immediateNeed,
     missingInputs,
     workContext,
+    behaviorIntent,
     confidence,
   };
 }
@@ -469,9 +529,16 @@ export function buildTaskFrameFallback(
     };
   }
 
+  if (isAdminTaskShape(taskShape)) {
+    return {
+      objective: 'เคลียร์งานแอดมินหรือภาระเล็กที่ค้างอยู่ให้เริ่มต่อได้',
+      stage: 'กำลังเลือกก้าวสั้น ๆ ที่ทำให้เรื่องนี้ขยับโดยไม่ต้องวางแผนใหญ่',
+    };
+  }
+
   return {
-    objective: 'สรุปสถานะของงานค้างและหาก้าวแรกที่เริ่มได้ทันที',
-    stage: 'กำลังกลับเข้าบริบทของโปรเจกต์และจัดก้าวแรกให้เริ่มง่าย',
+    objective: 'หาก้าวแรกที่เริ่มได้ทันทีจากบริบทที่ผู้ใช้ให้มา',
+    stage: 'กำลังลดบริบทให้เหลือหนึ่งก้าวที่เริ่มได้จริง',
   };
 }
 
@@ -575,13 +642,28 @@ export function buildIntakeFallbackCandidates(
   if (isPersonalFrictionTaskShape(taskShape)) {
     return [
       {
-        title: 'กินหรือเตรียมอะไรเล็ก ๆ แล้วตั้งก้าวงาน 5 นาทีแรก',
-        rationale: 'โจทย์ตอนนี้ไม่ใช่ขาดแผนงาน แต่ร่างกายยังไม่พร้อมพอจะเริ่มทำงานต่อ',
+        title: 'สะท้อนว่าตอนนี้ติดที่พลังงาน แล้วเลือกก้าวงานเล็กที่สุด',
+        rationale: 'โจทย์ตอนนี้ไม่ใช่ขาดแผนงาน แต่ร่างกายหรือสมาธิยังไม่พร้อมพอจะเริ่มเต็มแรง',
         kind: 'resume_first' as const,
       },
       {
-        title: 'เลือกงานชิ้นเล็กที่สุดที่ทำได้หลังพักกินข้าว',
-        rationale: 'ช่วยให้กลับเข้าจังหวะงานโดยไม่ต้องฝืนเริ่มจากก้อนใหญ่ทันที',
+        title: 'ถามตัวเองหนึ่งข้อว่าต้องเติมอะไรก่อนกลับไปทำงาน',
+        rationale: 'ช่วยให้คำตอบไม่กลายเป็น productivity template และยังรักษาบริบทของผู้ใช้ไว้',
+        kind: 'dependency_first' as const,
+      },
+    ];
+  }
+
+  if (isAdminTaskShape(taskShape)) {
+    return [
+      {
+        title: 'เลือกงานแอดมินหนึ่งชิ้นที่ปิดได้ใน 15 นาที',
+        rationale: 'ช่วยให้ภาระเล็กที่ค้างอยู่ขยับจริงโดยไม่ต้องจัดระบบใหม่ทั้งหมด',
+        kind: 'resume_first' as const,
+      },
+      {
+        title: 'แยกว่าต้องเปิดแอป เอกสาร หรือข้อมูลไหนก่อน',
+        rationale: 'เหมาะเมื่อยังติดที่จุดเริ่มมากกว่าติดที่แผนงาน',
         kind: 'dependency_first' as const,
       },
     ];
@@ -589,13 +671,13 @@ export function buildIntakeFallbackCandidates(
 
   return [
     {
-      title: 'สรุปสถานะล่าสุดของโปรเจกต์จากบริบทที่มี',
-      rationale: 'ช่วยให้กลับเข้าบริบทของงานค้างได้เร็วโดยไม่ต้องไล่อ่านใหม่ทั้งหมด',
+      title: 'สะท้อนสิ่งที่ผู้ใช้บอก แล้วเลือกก้าวแรกที่เล็กพอเริ่มได้',
+      rationale: 'ช่วยให้คำตอบเกาะบริบทจริงแทนการเติมภาษางานลูกค้าหรือโปรเจกต์เอง',
       kind: 'resume_first' as const,
     },
     {
-      title: 'ระบุส่วนที่ยังค้างหรือยังไม่ชัดก่อนเริ่มงานต่อ',
-      rationale: 'เหมาะเมื่อยังไม่แน่ใจว่าต้องเริ่มจากจุดไหนหรือรออะไรอยู่',
+      title: 'ถามกลับสั้น ๆ ว่าต้องการขยับเรื่องไหนก่อน',
+      rationale: 'เหมาะเมื่อบริบทสั้นเกินกว่าจะเดาก้าวเฉพาะโดยไม่หลุดจากเจตนา',
       kind: 'dependency_first' as const,
     },
   ];
@@ -736,40 +818,61 @@ export function buildActionFallbackCopy(
 
   if (isPersonalFrictionTaskShape(taskShape)) {
     return {
-      chosenTitle: 'กินอะไรเล็ก ๆ แล้วกลับมาเริ่มงานจากก้าว 5 นาที',
-      chosenRationale: 'จากบริบท ผู้ใช้ติดที่หิวหรือแรงกายยังไม่พร้อม ไม่ใช่ขาดแผนงานใหม่ ดังนั้นควรลด friction ก่อนแล้วค่อยเริ่มงานชิ้นเล็ก',
-      successSignal: 'ได้กินหรือเตรียมของกินง่าย ๆ และรู้ก้าวงานสั้น ๆ ที่จะเริ่มต่อทันที',
-      whyThisNow: 'ถ้าฝืนเริ่มงานทั้งที่หิว งานจะยิ่งหนืดและตัดสินใจยาก การเติมพลังเล็กน้อยก่อนช่วยให้เริ่มต่อได้จริงกว่า',
-      situationSummary: 'ผู้ใช้หิวแต่ยังต้องทำงาน จึงควรจัดการพลังงานขั้นต่ำก่อนแล้วกลับมาทำงานด้วยก้าวเล็ก',
+      chosenTitle: 'เลือกสิ่งเดียวที่ต้องเติมก่อนกลับไปทำงานก้าวเล็ก',
+      chosenRationale: 'จากบริบท ผู้ใช้ติดที่แรงกายหรือสมาธิ ไม่ใช่ขาดแผนงานใหม่ จึงควรสะท้อนสภาพตอนนี้แล้วลดก้าวให้เบาที่สุด',
+      successSignal: 'รู้สิ่งเล็ก ๆ ที่ต้องเติมตอนนี้ และมีก้าวงานหนึ่งก้าวที่เริ่มต่อได้',
+      whyThisNow: 'ถ้าข้ามสภาพหิว เหนื่อย หรือหมดแรง คำแนะนำจะกลายเป็น productivity template ที่ไม่ฟังผู้ใช้',
+      situationSummary: 'ผู้ใช้กำลังมีแรงเสียดทานส่วนตัวแต่ยังต้องทำงาน จึงควรช่วยลดภาระก่อนพากลับไปก้าวเล็ก',
       replyDraft: undefined,
       alternatives: [
         {
-          title: 'ตั้ง timer 10 นาทีเพื่อกินหรือเตรียมของกินก่อน',
-          rationale: 'เหมาะเมื่อยังต้องกลับมาทำงานต่อแต่ร่างกายยังไม่พร้อม',
+          title: 'ถามกลับสั้น ๆ ว่าตอนนี้ต้องกิน พัก หรือเริ่มงานเบา ๆ ก่อน',
+          rationale: 'เหมาะเมื่อไม่ควรเดาแทนผู้ใช้ว่าแรงเสียดทานหลักคืออะไร',
         },
         {
-          title: 'เปิดงานที่ต้องทำไว้ แล้วเลือกจุดเริ่มหนึ่งจุดหลังพักสั้น ๆ',
-          rationale: 'ช่วยลดแรงต้านตอนกลับมานั่งทำงานอีกครั้ง',
+          title: 'เลือกงานจุดเล็กที่สุดที่ทำได้หลังเติมพลัง',
+          rationale: 'ช่วยให้ยังขยับงานต่อได้โดยไม่ฝืนเริ่มจากก้อนใหญ่',
+        },
+      ],
+    };
+  }
+
+  if (isAdminTaskShape(taskShape)) {
+    return {
+      chosenTitle: 'เลือกงานแอดมินหนึ่งชิ้นแล้วปิดให้จบในรอบสั้น',
+      chosenRationale: 'บริบทนี้เป็นงานจัดการภาระ จึงควรลดให้เหลือสิ่งเดียวที่ทำจบได้เร็ว',
+      successSignal: 'ปิดภาระหนึ่งชิ้นหรือรู้ข้อมูลเดียวที่ต้องเปิดต่อ',
+      whyThisNow: 'งานแอดมินมักค้างเพราะจุดเริ่มไม่ชัด การเลือกหนึ่งชิ้นเล็กช่วยให้ขยับโดยไม่ต้องจัดระบบใหญ่',
+      situationSummary: 'ผู้ใช้กำลังจัดการงานแอดมินหรือภาระส่วนตัว จึงควรเลือกก้าวเล็กที่ปิดได้จริงก่อน',
+      replyDraft: undefined,
+      alternatives: [
+        {
+          title: 'เปิดแหล่งข้อมูลที่เกี่ยวข้องก่อน แล้วค่อยเลือกงานหนึ่งชิ้น',
+          rationale: 'เหมาะเมื่อยังไม่รู้ว่าต้องเริ่มจากแอปหรือเอกสารไหน',
+        },
+        {
+          title: 'ถามกลับว่าภาระนี้ต้องปิดวันนี้หรือแค่จัดคิวไว้',
+          rationale: 'เหมาะเมื่อ deadline ยังไม่ชัดและไม่ควรเดางานแทนผู้ใช้',
         },
       ],
     };
   }
 
   return {
-    chosenTitle: 'เริ่มจากก้าวที่แตะได้ทันที',
-    chosenRationale: 'ช่วยให้ขยับงานนี้ต่อได้โดยไม่ต้องคิดใหม่ทั้งก้อน',
-    successSignal: 'เห็นความคืบหน้าหนึ่งจุดของงานนี้',
-    whyThisNow: 'ตอนนี้ควรเริ่มจากก้าวที่ลดแรงเสียดทานก่อน เพื่อให้บริบทกลับมาเร็วที่สุด',
-    situationSummary: 'ตอนนี้ยังมีข้อมูลพอให้เริ่มจากก้าวเล็กที่ชัดเจนก่อน',
+    chosenTitle: 'สะท้อนสิ่งที่ผู้ใช้บอก แล้วเลือกก้าวแรกที่เล็กที่สุด',
+    chosenRationale: 'เมื่อบริบทสั้นหรือยังไม่เข้าหมวดชัด ควรฟังคำของผู้ใช้ก่อนแทนการเติมโลกงานลูกค้าขึ้นมาเอง',
+    successSignal: 'ได้ก้าวเดียวที่ยังเกาะบริบทจริงและไม่เพิ่มภาระเกินจำเป็น',
+    whyThisNow: 'การเริ่มจาก reflection สั้น ๆ ช่วยกันไม่ให้ fallback กลายเป็น template ที่กลบเสียงผู้ใช้',
+    situationSummary: 'ผู้ใช้ให้บริบทสั้น ๆ จึงควรสะท้อนเจตนานั้นก่อนเสนอหนึ่งก้าวเล็ก',
     replyDraft: undefined,
     alternatives: [
       {
-        title: 'สรุปว่างานนี้ค้างตรงไหนก่อนเริ่มต่อ',
-        rationale: 'ช่วยกลับเข้าบริบทของงานค้างโดยไม่ต้องไล่ดูทุกอย่างใหม่',
+        title: 'ถามกลับหนึ่งคำถามเพื่อจับเจตนาหลัก',
+        rationale: 'เหมาะเมื่อยังไม่ควรเดางานเฉพาะเอง',
       },
       {
-        title: 'ตัดก้าวแรกให้เล็กพอเริ่มได้ในไม่กี่นาที',
-        rationale: 'เหมาะเมื่อรู้ทิศแล้วแต่ยังเริ่มไม่ออกเพราะงานยังดูใหญ่เกินไป',
+        title: 'เลือกสิ่งเดียวที่ทำได้ใน 15 นาทีจากบริบทที่มี',
+        rationale: 'เหมาะเมื่อมีทิศพอแต่ต้องลดขนาดก้าว',
       },
     ],
   };

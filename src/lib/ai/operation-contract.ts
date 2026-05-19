@@ -269,6 +269,7 @@ function normalizeTaskShapeCandidate(value: unknown, sourceText: string, fallbac
   return deriveTaskShapeFromText(sourceText, {
     deliverableType: pickAlias(object ?? {}, ['deliverableType', 'deliverable_type']) ?? fallbackTaskShape?.deliverableType,
     immediateNeed: pickAlias(object ?? {}, ['immediateNeed', 'immediate_need']) ?? fallbackTaskShape?.immediateNeed,
+    behaviorIntent: pickAlias(object ?? {}, ['behaviorIntent', 'behavior_intent']) ?? fallbackTaskShape?.behaviorIntent,
     missingInputs: pickAlias(object ?? {}, ['missingInputs', 'missing_inputs']) ?? fallbackTaskShape?.missingInputs,
     workContext: pickAlias(object ?? {}, ['workContext', 'work_context']) ?? fallbackTaskShape?.workContext,
     confidence: pickAlias(object ?? {}, ['confidence']) ?? fallbackTaskShape?.confidence,

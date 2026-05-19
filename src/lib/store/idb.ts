@@ -704,6 +704,12 @@ function normalizeTaskShape(value: unknown): TaskShape | undefined {
     record.immediateNeed === 'resume_execution'
       ? record.immediateNeed
       : undefined;
+  const behaviorIntent =
+    record.behaviorIntent === 'personal_friction' ||
+    record.behaviorIntent === 'client_delivery' ||
+    record.behaviorIntent === 'admin_task'
+      ? record.behaviorIntent
+      : undefined;
   const missingInputs = Array.isArray(record.missingInputs)
     ? record.missingInputs.map((item) => normalizeOptionalString(item)).filter((item): item is string => Boolean(item))
     : [];
@@ -717,6 +723,7 @@ function normalizeTaskShape(value: unknown): TaskShape | undefined {
   return {
     deliverableType,
     immediateNeed,
+    behaviorIntent,
     missingInputs,
     workContext,
     confidence,

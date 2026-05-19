@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  TASK_BEHAVIOR_INTENTS,
   TASK_SHAPE_DELIVERABLE_TYPES,
   TASK_SHAPE_IMMEDIATE_NEEDS,
 } from '@/lib/ai/task-shape';
@@ -46,6 +47,7 @@ export const AiOperationMetaSchema = z.object({
 export const AiTaskShapeSchema = z.object({
   deliverableType: z.enum(TASK_SHAPE_DELIVERABLE_TYPES),
   immediateNeed: z.enum(TASK_SHAPE_IMMEDIATE_NEEDS),
+  behaviorIntent: z.enum(TASK_BEHAVIOR_INTENTS).optional(),
   missingInputs: stringArrayField(),
   workContext: z.string(),
   confidence: z.preprocess((value) => {
