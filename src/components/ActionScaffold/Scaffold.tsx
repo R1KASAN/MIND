@@ -234,12 +234,8 @@ export function Scaffold({
     }
 
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', maxWidth: '44rem', margin: '0 auto', gap: '0.95rem', paddingTop: '1.5rem' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', maxWidth: '44rem', margin: '0 auto', gap: '0.95rem', paddingTop: '1.5rem', paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom))' }}>
         <ScaffoldContextHeader actionTitle={action.title} stepLabel={currentStepLabel} />
-        <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>{action.title}</h2>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '-0.2rem' }}>
-          ตอนนี้อยู่ที่ {stepProgressLabel}
-        </p>
 
         <div className="action-hero-card" style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
@@ -300,9 +296,12 @@ export function Scaffold({
           >
             เสร็จแล้ว
           </button>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-            <button style={{ flex: '1 1 calc(50% - 0.25rem)' }} disabled={refineLoading} onClick={onMakeSmaller}>แบ่งก้าวนี้ให้เล็กลง</button>
-            <button style={{ flex: '1 1 calc(50% - 0.25rem)' }} disabled={refineLoading} onClick={onBackToInput}>กลับไปแก้บริบท</button>
+          <div className="scaffold-secondary-actions-group">
+            <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
+              <button style={{ flex: '1 1 calc(50% - 0.25rem)' }} disabled={refineLoading} onClick={onMakeSmaller}>แบ่งก้าวนี้ให้เล็กลง</button>
+              <button style={{ flex: '1 1 calc(50% - 0.25rem)' }} disabled={refineLoading} onClick={onBackToInput}>กลับไปแก้บริบท</button>
+            </div>
+            <button disabled={refineLoading} onClick={onRescue}>ฉันติดขัด / ช่วยวินิจฉัยจุดที่บล็อกอยู่</button>
           </div>
           <details className="supporting-panel" style={{ width: '100%', maxWidth: '44rem' }}>
             <summary
@@ -338,7 +337,6 @@ export function Scaffold({
               ))}
             </div>
           </details>
-          <button disabled={refineLoading} onClick={onRescue}>ฉันติดขัด / ช่วยวินิจฉัยจุดที่บล็อกอยู่</button>
         </div>
       </div>
     );
@@ -401,12 +399,8 @@ export function Scaffold({
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', maxWidth: '44rem', margin: '0 auto', gap: '1rem', paddingTop: '2rem' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', maxWidth: '44rem', margin: '0 auto', gap: '1rem', paddingTop: '2rem', paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom))' }}>
       <ScaffoldContextHeader actionTitle={action.title} stepLabel={currentStepLabel} />
-      <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>{action.title}</h2>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '-0.35rem' }}>
-        ตอนนี้อยู่ที่ {stepProgressLabel}
-      </p>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '1rem' }}>
         {visibleSteps.map((step, idx) => (

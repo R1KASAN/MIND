@@ -180,10 +180,54 @@ async function run() {
       throw new Error('Rescue diagnosis explanation is empty!');
     }
 
+    // Assert explanation contains specific context anchors (e.g. ABC Corp, server, แชต, ล่ม, ปุ่ม, สไลด์)
+    const contextAnchors = ['ABC Corp', 'เซิร์ฟเวอร์', 'แชต', 'ล่ม', 'ปุ่ม', 'สไลด์'];
+    const matchedAnchors = contextAnchors.filter(a => diagnosisText.includes(a));
+    if (matchedAnchors.length < 1) {
+      throw new Error(`Rescue explanation did not match any context anchors! Got: "${diagnosisText}"`);
+    }
+    console.log(`Rescue context anchors found: [${matchedAnchors.join(', ')}]`);
+
+    // ── Semantic Quality: Banned phrases must not appear ──
+    const BANNED_PHRASES = ['AI ยังตอบไม่ทัน', 'ลดแรงเริ่ม', 'พลังงานต่ำ', 'ทำแค่ 5 นาทีแรก'];
+    for (const banned of BANNED_PHRASES) {
+      if (diagnosisText.includes(banned)) {
+        throw new Error(`Rescue diagnosis contains banned phrase: "${banned}". Full text: "${diagnosisText}"`);
+      }
+    }
+    console.log('Rescue diagnosis: no banned phrases found.');
+
+    // ── Semantic Quality: Must contain a causal explanation (not just anchors) ──
+    const hasCausalExplanation = (
+      diagnosisText.includes('เพราะ') ||
+      diagnosisText.includes('ต้อง') ||
+      diagnosisText.includes('ยัง') ||
+      diagnosisText.includes('ขาด') ||
+      diagnosisText.includes('ไม่ได้')
+    );
+    if (!hasCausalExplanation) {
+      throw new Error(`Rescue diagnosis lacks causal explanation. Got: "${diagnosisText}"`);
+    }
+    console.log('Rescue diagnosis contains a causal blockage explanation.');
+    console.log('Rescue context-matching explanation asserted successfully.');
+
     // Verify recommended way out exists
     const rescueStepsLabel = page.getByText('ทางออกที่แนะนำตอนนี้');
     await rescueStepsLabel.waitFor({ state: 'visible' });
     console.log('ทางออกที่แนะนำตอนนี้ is present.');
+
+    // ── Semantic Quality: Recovery steps must not contain banned phrases ──
+    const rescueStepsContainer = page.locator('text=ทางออกที่แนะนำตอนนี้').locator('xpath=..');
+    const rescueStepsTexts = await rescueStepsContainer.locator('div').allTextContents();
+    console.log(`Recovery steps: ${JSON.stringify(rescueStepsTexts)}`);
+    for (const stepText of rescueStepsTexts) {
+      for (const banned of BANNED_PHRASES) {
+        if (stepText.includes(banned)) {
+          throw new Error(`Recovery step contains banned phrase: "${banned}". Step: "${stepText}"`);
+        }
+      }
+    }
+    console.log('Recovery steps: no banned phrases found.');
 
     // Verify recovery action buttons exist
     const makeSmallerBtn = page.getByRole('button', { name: 'แบ่งก้าวนี้ให้เล็กลง' });

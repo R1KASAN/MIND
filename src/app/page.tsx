@@ -1968,8 +1968,11 @@ export default function StateMachinePage() {
           </div>
 
           <div className="mind-shell-route">
-            <p className="mind-shell-route-kicker">{routeMeta.kicker}</p>
-            <p className="mind-shell-route-title">{routeMeta.title}</p>
+            <div className="mind-shell-route-header" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.1rem' }}>
+              <span className="mind-shell-route-kicker" style={{ margin: 0, padding: 0 }}>{routeMeta.kicker}</span>
+              <span className="mind-shell-route-separator" style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', opacity: 0.5, userSelect: 'none' }}>›</span>
+              <h1 className="mind-shell-route-title" style={{ margin: 0, padding: 0 }}>{routeMeta.title}</h1>
+            </div>
             <p className="mind-shell-route-detail">{routeMeta.detail}</p>
           </div>
 

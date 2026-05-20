@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from 'react';
 import { useTrackMountEvent } from '@/lib/instrumentation';
 import type { StudioSnapshot } from '@/lib/orchestrator/studio';
 
@@ -26,6 +27,13 @@ export function ContextSnapshot({
   onSelectPrimaryFile,
   retryingFileId = null,
 }: Props) {
+  const [summaryExpanded, setSummaryExpanded] = useState(false);
+  const summaryText = snapshot.summary || '';
+  const shouldTruncateSummary = summaryText.length > 200;
+  const displaySummary = shouldTruncateSummary && !summaryExpanded
+    ? `${summaryText.slice(0, 180)}…`
+    : summaryText;
+
   useTrackMountEvent('studio_snapshot_viewed', { surface }, trackView);
   const provenance = snapshot.provenance;
   const detailLabel = provenance ? 'ดูว่าทำไม' : 'ดูเพิ่ม';
@@ -62,9 +70,30 @@ export function ContextSnapshot({
         )}
       </div>
 
-      <p className="studio-snapshot-summary">
-        {snapshot.summary}
-      </p>
+      <div className="studio-snapshot-summary-container">
+        <p className="studio-snapshot-summary" style={{ margin: 0 }}>
+          {displaySummary}
+        </p>
+        {shouldTruncateSummary && (
+          <button
+            type="button"
+            onClick={() => setSummaryExpanded(!summaryExpanded)}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              padding: '0.2rem 0',
+              fontSize: '0.78rem',
+              color: 'var(--accent, #8B8CF6)',
+              cursor: 'pointer',
+              textDecoration: 'underline',
+              display: 'inline-block',
+              marginTop: '0.25rem',
+            }}
+          >
+            {summaryExpanded ? 'ย่อสรุป' : 'อ่านสรุปทั้งหมด'}
+          </button>
+        )}
+      </div>
 
       <div className="studio-snapshot-meta">
         <span className="studio-chip">{snapshot.contextLabel}</span>

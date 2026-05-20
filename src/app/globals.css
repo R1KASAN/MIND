@@ -43,6 +43,12 @@ body {
   position: relative;
 }
 
+@media (min-width: 1024px) {
+  .container {
+    max-width: 1440px;
+  }
+}
+
 button {
   font-family: inherit;
   border: none;
@@ -3471,5 +3477,50 @@ select:focus {
   .pmf-score-grid,
   .pmf-instructions {
     grid-template-columns: 1fr;
+  }
+}
+
+/* --- MIND UI Design Optimization Additions --- */
+
+.evidence-affordance-summary:hover {
+  background: rgba(94, 106, 210, 0.14) !important;
+  border-color: rgba(94, 106, 210, 0.28) !important;
+}
+
+.rescue-card-info {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius, 8px);
+  padding: 1.15rem;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.rescue-card-info:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.rescue-card-recommended {
+  background: rgba(94, 106, 210, 0.1);
+  border: 1px solid rgba(94, 106, 210, 0.24);
+  border-radius: var(--radius, 8px);
+  padding: 1.15rem;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.rescue-card-recommended:hover {
+  background: rgba(94, 106, 210, 0.14);
+  border-color: rgba(94, 106, 210, 0.36);
+}
+
+@media (max-width: 767px) {
+  .scaffold-secondary-actions-group {
+    border-top: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+    padding-top: 1rem;
+    margin-top: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    width: 100%;
   }
 }

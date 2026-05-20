@@ -73,13 +73,22 @@ export function Rescue({
   focusMode = true,
 }: Props) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', paddingTop: '2rem', paddingBottom: 'env(safe-area-inset-bottom)' }}>
-      <div>
-        <h2 style={{ fontSize: '1.35rem', fontWeight: 650 }}>ลองเลือกดูว่า “ติด” เพราะอะไร</h2>
-        <p style={{ color: 'var(--text-secondary)', marginTop: '0.35rem' }}>
-          ถ้าก้าวนี้ยังใช้ได้ ให้ใช้ต่อได้เลย ถ้าใหญ่ไปให้แบ่งย่อย หรือถ้าบริบทไม่ตรงให้กลับไปแก้ข้อมูลเดิม
-        </p>
-      </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.85rem', paddingTop: '1.5rem', paddingBottom: 'calc(2rem + env(safe-area-inset-bottom))' }}>
+      {!rescueState ? (
+        <div>
+          <h2 style={{ fontSize: '1.35rem', fontWeight: 650 }}>ลองเลือกดูว่า “ติด” เพราะอะไร</h2>
+          <p style={{ color: 'var(--text-secondary)', marginTop: '0.35rem' }}>
+            ถ้าก้าวนี้ยังใช้ได้ ให้ใช้ต่อได้เลย ถ้าใหญ่ไปให้แบ่งย่อย หรือถ้าบริบทไม่ตรงให้กลับไปแก้ข้อมูลเดิม
+          </p>
+        </div>
+      ) : (
+        <div>
+          <h2 style={{ fontSize: '1.35rem', fontWeight: 650 }}>ผลการวิเคราะห์จุดติดขัด</h2>
+          <p style={{ color: 'var(--text-secondary)', marginTop: '0.35rem' }}>
+            MIND วิเคราะห์และแนะนำทางออกเพื่อให้งานขยับต่อได้ง่ายที่สุด
+          </p>
+        </div>
+      )}
 
       {loading && (
         <AIProcessingIndicator
@@ -91,24 +100,14 @@ export function Rescue({
 
       {rescueState && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          <div style={{
-            padding: '1.1rem',
-            borderRadius: 'var(--radius)',
-            background: 'rgba(255,255,255,0.04)',
-            border: '1px solid rgba(255,255,255,0.08)',
-          }}>
+          <div className="rescue-card-info">
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.45rem' }}>
               MIND มองว่าติดตรงนี้
             </p>
             <p style={{ margin: 0, lineHeight: 1.6 }}>{rescueState.diagnosis.explanation}</p>
           </div>
 
-          <div style={{
-            padding: '1.1rem',
-            borderRadius: 'var(--radius)',
-            background: 'rgba(94, 106, 210, 0.12)',
-            border: '1px solid rgba(94, 106, 210, 0.3)',
-          }}>
+          <div className="rescue-card-recommended">
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.45rem' }}>
               ทางออกที่แนะนำตอนนี้
             </p>

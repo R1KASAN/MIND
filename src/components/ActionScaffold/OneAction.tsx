@@ -129,7 +129,7 @@ export function OneAction({
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '1rem', paddingTop: '0.25rem', alignItems: 'stretch', textAlign: 'left' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '1rem', paddingTop: '0.25rem', paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom))', alignItems: 'stretch', textAlign: 'left' }}>
       {data.requires_clarification && (
         <div style={{ padding: '1rem', background: 'var(--accent)', borderRadius: 'var(--radius)', width: '100%' }}>
           <strong>ขอข้อมูลเพิ่ม:</strong> {data.clarification_nudge}

@@ -66,11 +66,13 @@ export function StepEvidencePanel({ step }: Props) {
         <span
           className="supporting-label"
           style={{
-            border: '1px solid rgba(255,255,255,0.12)',
-            borderRadius: '999px',
-            padding: '0.28rem 0.58rem',
-            fontSize: '0.74rem',
-            color: 'var(--text-secondary)',
+            background: 'var(--bg-surface-muted, #2A2B31)',
+            borderRadius: 'var(--radius-sm, 4px)',
+            padding: '0.22rem 0.45rem',
+            fontSize: '0.68rem',
+            fontWeight: 500,
+            color: 'var(--text-muted, #A0AEC0)',
+            border: '1px solid rgba(255,255,255,0.06)',
           }}
         >
           ร่างจาก MIND
@@ -79,12 +81,13 @@ export function StepEvidencePanel({ step }: Props) {
           <span
             className="supporting-label"
             style={{
-              border: '1px solid rgba(94,106,210,0.34)',
-              background: 'rgba(94,106,210,0.12)',
-              borderRadius: '999px',
-              padding: '0.28rem 0.58rem',
-              fontSize: '0.74rem',
-              color: 'var(--text-primary)',
+              background: 'var(--bg-surface-muted, #2A2B31)',
+              borderRadius: 'var(--radius-sm, 4px)',
+              padding: '0.22rem 0.45rem',
+              fontSize: '0.68rem',
+              fontWeight: 500,
+              color: 'var(--text-muted, #A0AEC0)',
+              border: '1px solid rgba(255,255,255,0.06)',
             }}
           >
             {confidenceLabel}
@@ -94,12 +97,13 @@ export function StepEvidencePanel({ step }: Props) {
           <span
             className="supporting-label"
             style={{
-              border: '1px solid rgba(255,99,132,0.3)',
-              background: 'rgba(255,99,132,0.1)',
-              borderRadius: '999px',
-              padding: '0.28rem 0.58rem',
-              fontSize: '0.74rem',
-              color: 'var(--danger)',
+              background: 'rgba(255,99,132,0.08)',
+              borderRadius: 'var(--radius-sm, 4px)',
+              padding: '0.22rem 0.45rem',
+              fontSize: '0.68rem',
+              fontWeight: 500,
+              color: 'var(--danger, #FF6382)',
+              border: '1px solid rgba(255,99,132,0.18)',
             }}
           >
             ทำด้วยมือเท่านั้น · ไม่รันอัตโนมัติ
@@ -109,15 +113,16 @@ export function StepEvidencePanel({ step }: Props) {
           <span
             className="supporting-label"
             style={{
-              border: '1px solid rgba(87,210,162,0.24)',
-              background: 'rgba(87,210,162,0.08)',
-              borderRadius: '999px',
-              padding: '0.28rem 0.58rem',
-              fontSize: '0.74rem',
-              color: 'var(--text-primary)',
+              background: 'var(--bg-surface-muted, #2A2B31)',
+              borderRadius: 'var(--radius-sm, 4px)',
+              padding: '0.22rem 0.45rem',
+              fontSize: '0.68rem',
+              fontWeight: 500,
+              color: 'var(--text-muted, #A0AEC0)',
+              border: '1px solid rgba(255,255,255,0.06)',
             }}
           >
-            Edited by you
+            แก้ไขโดยคุณ
           </span>
         )}
       </div>
@@ -159,16 +164,22 @@ export function StepEvidencePanel({ step }: Props) {
           <summary
             style={{
               cursor: 'pointer',
-              color: 'var(--accent)',
+              color: 'var(--accent, #8B8CF6)',
               fontSize: '0.84rem',
               fontWeight: 600,
               listStyle: 'none',
               display: 'inline-flex',
               alignItems: 'center',
               gap: '0.35rem',
+              padding: '0.25rem 0.55rem',
+              background: 'rgba(94, 106, 210, 0.08)',
+              border: '1px solid rgba(94, 106, 210, 0.16)',
+              borderRadius: '4px',
+              transition: 'background 0.2s ease, border-color 0.2s ease',
             }}
+            className="evidence-affordance-summary"
           >
-            <span style={{ textDecoration: 'underline', textUnderlineOffset: '3px' }}>ดูที่มาของก้าวนี้</span>
+            <span>ดูที่มาและหลักฐานของก้าวนี้</span>
             <span aria-hidden="true" style={{ fontSize: '0.8em', transition: 'transform 0.2s', transform: detailsOpen ? 'rotate(180deg)' : 'none' }}>↓</span>
           </summary>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem', marginTop: '0.7rem' }}>
