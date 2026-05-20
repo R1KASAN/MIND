@@ -54,10 +54,10 @@ export function buildBootstrapMicroSteps(action: {
     ];
   }
 
-  const signal = action.successSignal?.trim() || 'เห็นความคืบหน้าหนึ่งจุดของงานนี้';
+  const signal = action.successSignal?.trim() || 'เห็นความคืบหน้าหนึ่งจุดที่ตรวจได้';
   return [
-    `ดูข้อมูลที่คุณมีตอนนี้เกี่ยวกับ "${action.title}"`,
-    `ทำก้าวหลักนี้ทันที: ${action.title}`,
+    `ทวนข้อมูลที่มีอยู่ตอนนี้เกี่ยวกับ "${action.title}"`,
+    `เริ่มจากส่วนที่เล็กที่สุดของ "${action.title}"`,
     `เช็กผลว่าตอนนี้ ${signal}`,
   ];
 }

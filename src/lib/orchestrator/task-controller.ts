@@ -879,13 +879,13 @@ export function createTaskController(bindings: TaskControllerBindings) {
       diagnosis: {
         primaryReason: options?.seedReason ?? 'unknown',
         explanation:
-          'MIND ยังวินิจฉัยไม่สำเร็จในรอบนี้ แต่บริบทงานและข้อความเดิมของคุณยังอยู่ครบ ลองย่อยให้เล็กลงอีก หรือพักไว้แล้วกลับมาลอง rescue ใหม่ได้',
+          'บริบทเดิมยังอยู่ครบ แต่รอบนี้ยังสรุปจุดติดได้ไม่ชัดพอ ให้เริ่มจากส่วนที่เล็กที่สุดหรือพักไว้แล้วกลับมาต่อเมื่อพร้อม',
       },
       rescuePlan: {
         mode: 'shrink',
         steps: [
           'กลับไปทำแค่ส่วนเล็กที่สุดของ step นี้ก่อน',
-          'ถ้ายังติดอยู่จริง งานนี้ยังถูกเก็บไว้เหมือนเดิม ค่อยกลับมาลองใหม่เมื่อพร้อม',
+          'ถ้ายังติดอยู่จริง บริบทนี้ยังถูกเก็บไว้เหมือนเดิม ค่อยกลับมาลองใหม่เมื่อพร้อม',
         ],
       },
       suggestedMessage: undefined,
@@ -958,13 +958,13 @@ export function createTaskController(bindings: TaskControllerBindings) {
         diagnosis: {
           primaryReason: 'unknown',
           explanation:
-            'MIND ยังวินิจฉัยไม่สำเร็จในรอบนี้ แต่บริบทงานและข้อความเดิมของคุณยังอยู่ครบ ลองย่อยให้เล็กลงอีก หรือพักไว้แล้วกลับมาลอง rescue ใหม่ได้',
+            'บริบทเดิมยังอยู่ครบ แต่รอบนี้ยังสรุปจุดติดได้ไม่ชัดพอ ให้เริ่มจากส่วนที่เล็กที่สุดหรือพักไว้แล้วกลับมาต่อเมื่อพร้อม',
         },
         rescuePlan: {
           mode: 'shrink',
           steps: [
             'กลับไปทำแค่ส่วนเล็กที่สุดของ step นี้ก่อน',
-            'ถ้ายังติดอยู่จริง งานนี้ยังถูกเก็บไว้เหมือนเดิม ค่อยกลับมาลองใหม่เมื่อพร้อม',
+            'ถ้ายังติดอยู่จริง บริบทนี้ยังถูกเก็บไว้เหมือนเดิม ค่อยกลับมาลองใหม่เมื่อพร้อม',
           ],
         },
         suggestedMessage: undefined,
@@ -1054,7 +1054,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
     const currentTask = getSessionTask(base);
     const steps = [
       `เปิดสิ่งที่ต้องใช้เพื่อเริ่ม "${actionTitle}"`,
-      'โฟกัสแค่ 2 นาทีแรกของงานนี้พอ',
+      'โฟกัสแค่ 2 นาทีแรกของก้าวนี้พอ',
       'ขยับก้าวเล็กถัดไปให้เริ่มเดินจริง',
     ];
     const actionDraft: Action = {

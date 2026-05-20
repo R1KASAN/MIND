@@ -19,6 +19,7 @@ import {
   inferWorkflowTypeFromTaskShape,
   type TaskShape,
 } from '@/lib/ai/task-shape';
+import { inferIntakeClarificationNeed } from '@/lib/ai/intake-clarification-rules';
 import type { RescueReason } from '@/lib/store/idb';
 
 export type AiOperationValidationFailureKind =
@@ -316,6 +317,18 @@ function normalizeIntakeCandidateWithFallback(value: unknown, options?: {
   // Salvage partial candidate entries: if AI gave some but with missing fields,
   // fill only the missing fields from fallback rather than replacing the whole entry.
   const candidateActionsSource = usingFallbackCandidates ? fallbackCandidates : candidateActionsRaw;
+  const rawRequiresClarification = Boolean(pickAlias(object, ['requiresClarification', 'requires_clarification']) ?? false);
+  const rawClarificationQuestion = coerceString(
+    pickAlias(object, ['clarificationQuestion', 'clarification_question', 'clarification_nudge']),
+  );
+  const clarificationInference = inferIntakeClarificationNeed({
+    sourceText,
+    taskShape,
+    aiRequiresClarification: rawRequiresClarification,
+    aiClarificationQuestion: rawClarificationQuestion,
+  });
+  const clarificationQuestion =
+    clarificationInference.clarificationQuestion ?? rawClarificationQuestion;
 
   return {
     workflowType: fallbackWorkflowType,
@@ -326,15 +339,8 @@ function normalizeIntakeCandidateWithFallback(value: unknown, options?: {
       stakeholders: pickAlias(taskFrameObject, ['stakeholders', 'people']),
     },
     blockers: pickAlias(object, ['blockers', 'detected_blockers']),
-    requiresClarification:
-      sourceText.includes('FORCE_CLARIFICATION')
-        ? true
-        : (pickAlias(object, ['requiresClarification', 'requires_clarification']) ?? false),
-    clarificationQuestion:
-      pickAlias(object, ['clarificationQuestion', 'clarification_question', 'clarification_nudge']) ??
-      (sourceText.includes('FORCE_CLARIFICATION')
-        ? 'ขอข้อมูลล่าสุดที่ใช้ตอบได้ทันที: (1) งานค้างสองตัวคือเรื่องอะไรบ้าง/สถานะปัจจุบัน, (2) เซิร์ฟเวอร์ล่มตอนเช้าเกิดจากอะไรหรือมี RCA/ไทม์ไลน์ไหม, (3) สเปกปุ่มสำหรับส่งบ่ายนี้มีเอกสาร/รูปแบบอ้างอิงหรือยัง?'
-        : undefined),
+    requiresClarification: clarificationInference.requiresClarification,
+    clarificationQuestion,
     taskShape,
     candidateActions: candidateActionsSource.map((candidate, index) => {
       const actionObject = asObject(candidate) ?? {};
@@ -378,8 +384,8 @@ function buildFallbackActionContent(options?: {
     : undefined;
   return {
     chosenTitle: options?.fallbackChosenTitle ?? fallbackCopy?.chosenTitle ?? 'เริ่มจากก้าวที่แตะได้ทันที',
-    chosenRationale: options?.fallbackChosenRationale ?? fallbackCopy?.chosenRationale ?? 'ช่วยให้ขยับงานนี้ต่อได้โดยไม่ต้องคิดใหม่ทั้งก้อน',
-    successSignal: options?.fallbackSuccessSignal ?? fallbackCopy?.successSignal ?? 'เห็นความคืบหน้าหนึ่งจุดของงานนี้',
+    chosenRationale: options?.fallbackChosenRationale ?? fallbackCopy?.chosenRationale ?? 'ช่วยให้เริ่มจากส่วนที่ชัดที่สุดโดยไม่ต้องคิดใหม่ทั้งก้อน',
+    successSignal: options?.fallbackSuccessSignal ?? fallbackCopy?.successSignal ?? 'เห็นความคืบหน้าหนึ่งจุดที่ตรวจได้',
     whyThisNow: options?.fallbackWhyThisNow ?? fallbackCopy?.whyThisNow ?? 'ตอนนี้ควรเริ่มจากก้าวที่ลดแรงเสียดทานก่อน เพื่อให้บริบทกลับมาเร็วที่สุด',
     situationSummary: options?.fallbackSituationSummary ?? fallbackCopy?.situationSummary ?? 'ตอนนี้ยังมีข้อมูลพอให้เริ่มจากก้าวเล็กที่ชัดเจนก่อน',
     replyDraft: options?.fallbackReplyDraft ?? fallbackCopy?.replyDraft,
@@ -551,7 +557,7 @@ function buildPlainTextActionCandidate(raw: string, options?: {
   };
 }
 
-const GENERIC_STEP_PATTERN = /(เปิดบริบท|ทำก้าวหลักนี้ทันที|จัดการงานนี้)/;
+const GENERIC_STEP_PATTERN = /(เปิดบริบท|ทำก้าวหลักนี้ทันที|จัดการงานนี้|ขยับงานต่อ|งานนี้)/;
 const FILE_REF_PATTERN = /(ไฟล์|เอกสาร)/;
 
 /**
@@ -571,11 +577,17 @@ export function validateStarterMicroSteps(
     const trimmed = item.trim();
     if (trimmed.length === 0) return undefined;
     if (GENERIC_STEP_PATTERN.test(trimmed)) {
-      console.info('[MIND][contract] starterMicroSteps rejected: generic pattern detected', { step: trimmed });
+      console.info('[MIND][starter_microsteps_rejected_generic]', {
+        reason: 'starter_microsteps_rejected_generic',
+        step: trimmed,
+      });
       return undefined;
     }
     if (!hasFileEvidence && FILE_REF_PATTERN.test(trimmed)) {
-      console.info('[MIND][contract] starterMicroSteps rejected: file reference without file evidence', { step: trimmed });
+      console.info('[MIND][starter_microsteps_rejected_generic]', {
+        reason: 'file_reference_without_evidence',
+        step: trimmed,
+      });
       return undefined;
     }
     steps.push(trimmed);
@@ -792,7 +804,7 @@ function buildFallbackScaffoldTexts(options?: {
   const primarySeed =
     normalizedCurrentStep ||
     normalizedFallbackSteps[0] ||
-    'เริ่มจากแตะส่วนเล็กที่สุดของงานนี้ก่อน';
+    'เริ่มจากส่วนเล็กที่สุดที่ยังชัดก่อน';
 
   const secondarySeed =
     normalizedFallbackSteps.find((step) => step !== primarySeed) ||
@@ -827,18 +839,18 @@ function inferRescueModeFromReason(reason: RescueReason) {
 }
 
 function buildFallbackRescueExplanation(reason: RescueReason, actionTitle?: string, currentStep?: string) {
-  const focus = coerceString(currentStep) || coerceString(actionTitle) || 'งานนี้';
+  const focus = coerceString(currentStep) || coerceString(actionTitle) || 'ก้าวนี้';
   switch (reason) {
     case 'missing_context':
       return `ตอนนี้ยังขาดข้อมูลสำคัญสำหรับไปต่อใน "${focus}" เลยควรเก็บ context ที่หายให้ครบก่อน`;
     case 'dependency':
-      return `งานนี้ติดที่ต้องรอคนอื่นหรือข้อมูลภายนอกก่อน "${focus}" จะเดินต่อได้`;
+      return `ก้าวนี้ติดที่ต้องรอคนอื่นหรือข้อมูลภายนอกก่อน "${focus}" จะเดินต่อได้`;
     case 'unclear_scope':
       return `ตอนนี้ขอบเขตของ "${focus}" ยังไม่ชัดพอ เลยทำให้เริ่มแล้วหลุดง่าย`;
     case 'too_big':
       return `ก้าวปัจจุบันของ "${focus}" ยังใหญ่เกินไปสำหรับเริ่มทันที ควรตัดให้เล็กลงก่อน`;
     case 'low_energy':
-      return `งานนี้ไม่ได้ติดที่ความเข้าใจอย่างเดียว แต่พลังงานตอนนี้ยังไม่พอสำหรับเริ่มก้าวใหญ่`;
+      return `ก้าวนี้ไม่ได้ติดที่ความเข้าใจอย่างเดียว แต่สภาพตอนนี้ยังไม่พร้อมสำหรับเริ่มก้าวใหญ่`;
     case 'unknown':
     default:
       return `ตอนนี้รู้แค่ว่า "${focus}" ยังขยับไม่ออก จึงควรเลือก rescue path ที่ลดแรงเสียดทานก่อน`;
@@ -846,7 +858,7 @@ function buildFallbackRescueExplanation(reason: RescueReason, actionTitle?: stri
 }
 
 function buildFallbackRescueSteps(mode: 'clarify' | 'follow_up' | 'shrink' | 'switch_track' | 'pause_cleanly', actionTitle?: string, currentStep?: string) {
-  const focus = coerceString(currentStep) || coerceString(actionTitle) || 'งานนี้';
+  const focus = coerceString(currentStep) || coerceString(actionTitle) || 'ก้าวนี้';
   switch (mode) {
     case 'clarify':
       return [

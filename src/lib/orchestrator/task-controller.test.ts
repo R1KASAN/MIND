@@ -2096,10 +2096,8 @@ test('handleEnterRescue falls back with safe-copy language when rescue fails', a
     await controller.handleEnterRescue();
     const rescueExplanation = (latestRescueState as AiRescueResponse | null)?.diagnosis.explanation ?? '';
 
-    assert.equal(
-      rescueExplanation.includes('บริบทงานและข้อความเดิมของคุณยังอยู่ครบ'),
-      true,
-    );
+    assert.match(rescueExplanation, /บริบทเดิม|ส่วนที่เล็กที่สุด|กลับมาต่อ/);
+    assert.doesNotMatch(rescueExplanation, /AI ยังตอบไม่ทัน|ลดแรงเริ่ม|พลังงานต่ำ|งานนี้|MIND ยังวินิจฉัย/);
     assert.equal(latestSession?.uiRoute, 'RESCUE');
     assert.equal(latestSession?.status, 'RESCUE');
     assert.equal(latestSession?.task?.lifecycleState, 'stalled');

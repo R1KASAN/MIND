@@ -192,7 +192,7 @@ function buildCausalDiagnosis(
   let secondaryPhrase = '';
   let risk = '';
 
-  const mainAnchor = anchors[0] || (isThai ? 'งานนี้' : 'this task');
+  const mainAnchor = anchors[0] || (isThai ? 'ก้าวนี้' : 'this step');
 
   if (isThai) {
     if (primary === 'customer_pressure') {

@@ -593,6 +593,8 @@ test('validateStarterMicroSteps rejects generic patterns', () => {
   assert.equal(validateStarterMicroSteps(['ดูข้อมูล', 'ทำก้าวหลักนี้ทันที: งาน', 'เช็ก'], false), undefined);
   assert.equal(validateStarterMicroSteps(['เปิดบริบทเรื่องนี้', 'ทำ', 'ดู'], false), undefined);
   assert.equal(validateStarterMicroSteps(['จัดการงานนี้ก่อน', 'ทำ', 'ดู'], false), undefined);
+  assert.equal(validateStarterMicroSteps(['งานนี้ต้องเช็กก่อน', 'ทำ', 'ดู'], false), undefined);
+  assert.equal(validateStarterMicroSteps(['ขยับงานต่อด้วยการเปิดแชต', 'ทำ', 'ดู'], false), undefined);
 });
 
 test('validateStarterMicroSteps rejects file references when no file evidence', () => {
@@ -648,8 +650,7 @@ test('buildPayloadFromAiActionResponse falls back to bootstrap when starterMicro
   const payload = buildPayloadFromAiActionResponse('client_response', response, []);
   assert.equal(payload.recommended_action.micro_steps_source, 'fallback');
   assert.equal(payload.recommended_action.micro_steps.length, 3);
-  // First step should now use the updated neutral copy
-  assert.match(payload.recommended_action.micro_steps[0], /ดูข้อมูลที่คุณมีตอนนี้เกี่ยวกับ/);
+  assert.match(payload.recommended_action.micro_steps[0], /ทวนข้อมูลที่มีอยู่ตอนนี้เกี่ยวกับ/);
 });
 
 test('buildBootstrapMicroSteps uses neutral copy (P0 change)', () => {
@@ -659,6 +660,6 @@ test('buildBootstrapMicroSteps uses neutral copy (P0 change)', () => {
   });
 
   assert.equal(steps.length, 3);
-  assert.match(steps[0], /ดูข้อมูลที่คุณมีตอนนี้เกี่ยวกับ/);
-  assert.doesNotMatch(steps[0], /เปิดบริบทหรือไฟล์/);
+  assert.match(steps[0], /ทวนข้อมูลที่มีอยู่ตอนนี้เกี่ยวกับ/);
+  assert.doesNotMatch(steps.join(' '), /งานนี้|จัดการงานนี้|ขยับงานต่อ|ทำก้าวหลักนี้ทันที|เปิดบริบทหรือไฟล์/);
 });

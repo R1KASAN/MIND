@@ -83,6 +83,35 @@ test('parseAiIntakeResponse classifies demo-request client emails as reply-first
   assert.equal(parsed.candidateActions[0]?.title, 'สรุป pain point ของลูกค้าและร่างข้อความตอบนัด demo ก่อน');
 });
 
+test('parseAiIntakeResponse requests clarification for ABC Corp latest-status uncertainty without FORCE_CLARIFICATION', () => {
+  const sourceText = [
+    'ABC Corp ทวงงานค้าง 2 ตัวในแชต',
+    'โปรดักชันล่มตั้งแต่เช้า แต่ผมยังไม่รู้สถานะล่าสุด',
+    'ทีมถามสเปกปุ่มบ่ายนี้',
+    'สไลด์ลูกค้าบ่ายสองยังโล่ง',
+    'ผมตื้อและหิวมาก ไม่รู้ควรเริ่มจากอะไร',
+  ].join('\n');
+  const parsed = parseAiIntakeResponse(JSON.stringify({
+    roomDigest: 'ABC Corp กดดันเรื่องงานค้างและ incident แต่สถานะล่าสุดยังไม่ชัด',
+    requiresClarification: false,
+    blockers: ['unclear_scope'],
+    meta: {
+      model: 'qwen2.5:3b',
+      repair_used: false,
+    },
+  }), {
+    fallbackSourceText: sourceText,
+    fallbackRoomDigest: sourceText,
+    fallbackObjective: 'เลือกก้าวแรกที่ปลอดภัยสำหรับ ABC Corp',
+    fallbackStage: 'ยังไม่รู้สถานะล่าสุดของ incident และงานค้าง',
+  });
+
+  assert.equal(parsed.requiresClarification, true);
+  assert.match(parsed.clarificationQuestion ?? '', /prod|incident/);
+  assert.match(parsed.clarificationQuestion ?? '', /ABC Corp|งานค้าง|สถานะ/);
+  assert.doesNotMatch(sourceText, /FORCE_CLARIFICATION/);
+});
+
 test('parseAiActionResponse accepts a negotiated action payload', () => {
   const parsed = parseAiActionResponse(JSON.stringify({
     chosenAction: {
