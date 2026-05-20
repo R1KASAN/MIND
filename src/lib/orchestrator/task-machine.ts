@@ -42,11 +42,117 @@ export function buildPayloadFromAction(action: Action): AiSynthesisResponse {
   };
 }
 
+/**
+ * Extract room-relevant anchor words from sourceText for grounding checks.
+ * Returns short noun phrases that identify the real work context:
+ * company/client names, system nouns, incident keywords, etc.
+ */
+export function extractRoomAnchors(sourceText: string): string[] {
+  if (!sourceText) return [];
+  const anchors: string[] = [];
+  // Company / client name patterns (English proper nouns, Thai ลูกค้า-prefixed names)
+  const companyMatches = sourceText.match(/[A-Z][A-Za-z]+(?: [A-Z][A-Za-z]+){0,2}(?:\s+(?:Corp|Inc|Ltd|Co\.))?/g);
+  if (companyMatches) {
+    for (const m of companyMatches) {
+      const trimmed = m.trim();
+      if (trimmed.length >= 3 && trimmed.length <= 40) anchors.push(trimmed);
+    }
+  }
+  // Thai/English work-context nouns
+  const contextPatterns = [
+    /เซิร์ฟเวอร์/g, /server/gi, /CPU/g, /RCA/g,
+    /prod(?:uction)?/gi, /Dashboard/gi, /payment/gi, /API/gi,
+    /แชต/g, /ไลน์/g, /อีเมล/g, /สไลด์/g,
+    /ลูกค้า/g, /ทวง/g, /ล่ม/g, /spike/gi,
+    /proposal/gi, /timeline/gi, /estimate/gi,
+    /requirement/gi, /scope/gi,
+  ];
+  for (const pattern of contextPatterns) {
+    if (pattern.test(sourceText)) {
+      const word = pattern.source.replace(/\\s\+/g, ' ').replace(/[/\\gi]/g, '');
+      if (!anchors.includes(word)) anchors.push(word);
+    }
+    pattern.lastIndex = 0; // reset global regex
+  }
+  return [...new Set(anchors)].slice(0, 8);
+}
+
+/** Self-care / reset keywords that indicate a generic energy step. */
+const SELF_CARE_PATTERN = /กิน|พัก|พลัง|เติม|หายใจ|น้ำ|สายตา|ง่วง|หิว|เบา\s*ๆ|สมอง|ฟื้น|reset|ผ่อน/;
+
+/**
+ * Soft semantic guard: reject AI micro-steps that are fully anchorless/template-like
+ * when room anchors are available. Returns the steps unchanged if they pass,
+ * or undefined to signal that fallback should be used.
+ *
+ * Rules:
+ * - If no room anchors exist, always pass (nothing to ground against).
+ * - At least 2 of 3 steps must mention at least one room anchor.
+ * - One self-care/reset step is allowed but not three.
+ * - All 3 steps being generic/self-care is rejected.
+ */
+export function guardMicroStepsGrounding(
+  steps: string[],
+  sourceText: string,
+): string[] | undefined {
+  if (steps.length !== 3) return undefined;
+  const anchors = extractRoomAnchors(sourceText);
+  if (anchors.length === 0) return steps; // no anchors => nothing to enforce
+
+  const lower = (s: string) => s.toLowerCase();
+  let groundedCount = 0;
+  let selfCareCount = 0;
+
+  for (const step of steps) {
+    const stepLower = lower(step);
+    const isGrounded = anchors.some((anchor) => stepLower.includes(lower(anchor)));
+    const isSelfCare = SELF_CARE_PATTERN.test(step);
+    if (isGrounded) groundedCount++;
+    if (isSelfCare && !isGrounded) selfCareCount++;
+  }
+
+  // All 3 self-care => reject
+  if (selfCareCount >= 3) {
+    console.info('[MIND][micro_steps_guard_rejected]', {
+      reason: 'all_self_care',
+      anchors,
+      steps,
+    });
+    return undefined;
+  }
+
+  // Fewer than 2 grounded when anchors exist => reject
+  if (groundedCount < 2) {
+    console.info('[MIND][micro_steps_guard_rejected]', {
+      reason: 'insufficient_grounding',
+      groundedCount,
+      anchors,
+      steps,
+    });
+    return undefined;
+  }
+
+  return steps;
+}
+
 export function buildBootstrapMicroSteps(action: {
   title: string;
   successSignal?: string;
-}, taskShape?: TaskShape) {
+}, taskShape?: TaskShape, sourceText?: string) {
   if (taskShape?.behaviorIntent === 'personal_friction') {
+    // If source text has real work anchors, ground the fallback in context
+    const anchors = extractRoomAnchors(sourceText ?? '');
+    if (anchors.length >= 2) {
+      const topAnchor = anchors[0];
+      const secondAnchor = anchors[1];
+      return [
+        `พักหายใจ 2 นาทีแล้วกลับมาเรื่อง ${topAnchor}`,
+        `เปิดแค่หน้าจอเดียวที่เกี่ยวกับ ${topAnchor} / ${secondAnchor}`,
+        `ทำก้าวเล็กชิ้นเดียวของ "${action.title}" ให้จบก่อน`,
+      ];
+    }
+
+    // Pure overload, no work anchors — keep gentle generic
     return [
       'เช็กก่อนว่าตอนนี้ต้องเติมอะไรที่สุด: กิน พัก หรือเริ่มงานเบา ๆ',
       'เลือกงานก้าวแรกที่เล็กพอทำได้ โดยไม่ต้องเปิดทุกอย่างพร้อมกัน',
@@ -67,11 +173,16 @@ export function buildPayloadFromAiActionResponse(
   response: AiActionResponse,
   blockers: string[],
   taskShape?: TaskShape,
+  sourceText?: string,
 ): AiSynthesisResponse {
   const aiSteps = response.starterMicroSteps;
-  const useAiSteps = aiSteps && aiSteps.length === 3 && aiSteps.every((s) => s.trim().length > 0);
-  const microSteps = useAiSteps ? [...aiSteps] : buildBootstrapMicroSteps(response.chosenAction, taskShape);
-  const microStepsSource: 'ai' | 'fallback' = useAiSteps ? 'ai' : 'fallback';
+  const rawValid = aiSteps && aiSteps.length === 3 && aiSteps.every((s) => s.trim().length > 0);
+  // Apply soft grounding guard when sourceText is available
+  const guardedSteps = rawValid && sourceText
+    ? guardMicroStepsGrounding([...aiSteps], sourceText)
+    : rawValid ? [...aiSteps] : undefined;
+  const microSteps = guardedSteps ?? buildBootstrapMicroSteps(response.chosenAction, taskShape, sourceText);
+  const microStepsSource: 'ai' | 'fallback' = guardedSteps ? 'ai' : 'fallback';
 
   return {
     workflow_type: workflowType,
@@ -282,7 +393,7 @@ export function buildActionSuccessArtifacts(input: {
 }) {
   const { task, intake, actionResponse, evidenceContext, existingAction, persistedNegotiationMode } = input;
   const workflowType = intake.workflowType;
-  const payload = buildPayloadFromAiActionResponse(workflowType, actionResponse, intake.blockers, intake.taskShape);
+  const payload = buildPayloadFromAiActionResponse(workflowType, actionResponse, intake.blockers, intake.taskShape, task.sourceText);
   const actionState = buildActionStateFromPayload(workflowType, payload, task.roomId, existingAction);
 
   let constraints = task.constraints

@@ -11,6 +11,8 @@ import {
   buildReentryTaskArtifacts,
   deriveBounceBackRoute,
   deriveRoomBlockers,
+  extractRoomAnchors,
+  guardMicroStepsGrounding,
   hasResumableTask,
   routeFromResumeTarget,
 } from './task-machine';
@@ -256,6 +258,81 @@ test('buildBootstrapMicroSteps uses personal-friction steps instead of generic f
   assert.equal(steps.length, 3);
   assert.match(steps.join(' '), /กิน|พัก|เติม|พลัง|ก้าวแรก/);
   assert.doesNotMatch(steps.join(' '), /เปิดบริบทหรือไฟล์|ทำก้าวหลักนี้ทันที/);
+});
+
+test('buildBootstrapMicroSteps grounds personal-friction fallback when ABC Corp room anchors exist', () => {
+  const steps = buildBootstrapMicroSteps(
+    {
+      title: 'รวบข้อมูลตั้งต้นสำหรับ timeline และ estimate เบื้องต้น',
+      successSignal: 'ได้ข้อมูลพอเริ่ม estimate',
+    },
+    {
+      deliverableType: 'estimate',
+      immediateNeed: 'resume_execution',
+      behaviorIntent: 'personal_friction',
+      missingInputs: [],
+      workContext: 'หิวข้าวแต่ต้องทำงาน ลูกค้า ABC Corp ทวงใน chat',
+      confidence: 0.63,
+    },
+    'ลูกค้า ABC Corp ทวงงานค้างสองตัวในแชต ไลน์กลุ่มก็เด้งไม่หยุด เรื่องเซิร์ฟเวอร์โปรดักชันล่มเมื่อเช้ายังไม่ได้ตรวจดูละเอียดเลย',
+  );
+
+  assert.equal(steps.length, 3);
+  const joined = steps.join(' ');
+  // At least one step mentions ABC Corp anchor
+  assert.match(joined, /ABC Corp/);
+  // At least one step mentions the action title context
+  assert.match(joined, /timeline|estimate|รวบข้อมูล|ก้าวเล็ก/);
+  // Should not be all self-care generic
+  const selfCareCount = steps.filter((s) => /^เช็กก่อนว่า|^เลือกงานก้าว|^ทำแค่ก้าวแรก/.test(s)).length;
+  assert.ok(selfCareCount <= 1, 'at most 1 step is generic self-care');
+});
+
+test('buildBootstrapMicroSteps grounds personal-friction for different customer names (no ABC Corp overfitting)', () => {
+  const steps = buildBootstrapMicroSteps(
+    {
+      title: 'ดูสถานะ server incident ก่อน',
+      successSignal: 'รู้สถานะ server',
+    },
+    {
+      deliverableType: 'execution',
+      immediateNeed: 'resume_execution',
+      behaviorIntent: 'personal_friction',
+      missingInputs: [],
+      workContext: 'เหนื่อยมากแต่ XYZ Ltd ถามเรื่อง server ล่ม',
+      confidence: 0.55,
+    },
+    'XYZ Ltd ถามเรื่อง server prod ล่ม และทีมยังหา RCA ไม่ได้ สมองตื้อมากตอนนี้',
+  );
+
+  assert.equal(steps.length, 3);
+  const joined = steps.join(' ');
+  // Must mention XYZ Ltd (not ABC Corp)
+  assert.match(joined, /XYZ Ltd/);
+  // Must NOT mention ABC Corp
+  assert.doesNotMatch(joined, /ABC Corp/);
+});
+
+test('buildBootstrapMicroSteps keeps gentle generic for pure overload without anchors', () => {
+  const steps = buildBootstrapMicroSteps(
+    {
+      title: 'จัดการอะไรสักอย่าง',
+      successSignal: 'ทำอะไรได้',
+    },
+    {
+      deliverableType: 'unknown',
+      immediateNeed: 'resume_execution',
+      behaviorIntent: 'personal_friction',
+      missingInputs: [],
+      workContext: 'หิวข้าว หมดแรง ไม่รู้จะทำอะไรดี',
+      confidence: 0.3,
+    },
+    'หิวข้าว หมดแรง ไม่รู้จะทำอะไรดี',
+  );
+
+  assert.equal(steps.length, 3);
+  // This is pure personal friction — generic steps are OK
+  assert.match(steps.join(' '), /กิน|พัก|เติม|พลัง|ก้าวแรก/);
 });
 
 test('buildScaffoldSuccessArtifacts updates payload and step checkpoint', () => {
@@ -662,4 +739,132 @@ test('buildBootstrapMicroSteps uses neutral copy (P0 change)', () => {
   assert.equal(steps.length, 3);
   assert.match(steps[0], /ทวนข้อมูลที่มีอยู่ตอนนี้เกี่ยวกับ/);
   assert.doesNotMatch(steps.join(' '), /งานนี้|จัดการงานนี้|ขยับงานต่อ|ทำก้าวหลักนี้ทันที|เปิดบริบทหรือไฟล์/);
+});
+
+// ─── Grounding Guard Tests ────────────────────────────────────────────────────
+
+test('extractRoomAnchors extracts company names and Thai work-context words', () => {
+  const anchors = extractRoomAnchors(
+    'ลูกค้า ABC Corp ทวงงานค้างสองตัวในแชต เรื่องเซิร์ฟเวอร์โปรดักชันล่ม',
+  );
+  assert.ok(anchors.includes('ABC Corp'), 'finds English company name');
+  assert.ok(anchors.some((a) => a === 'เซิร์ฟเวอร์'), 'finds Thai server keyword');
+  assert.ok(anchors.some((a) => a === 'แชต'), 'finds Thai chat keyword');
+  assert.ok(anchors.some((a) => a === 'ลูกค้า'), 'finds Thai customer keyword');
+});
+
+test('extractRoomAnchors returns empty for anchorless text', () => {
+  const anchors = extractRoomAnchors('หิวข้าว หมดแรง ไม่รู้จะทำอะไรดี');
+  assert.equal(anchors.length, 0, 'no work anchors in pure personal text');
+});
+
+test('guardMicroStepsGrounding passes well-grounded steps with ABC Corp', () => {
+  const sourceText = 'ลูกค้า ABC Corp ทวงงานในแชต เซิร์ฟเวอร์ล่ม';
+  const steps = [
+    'พักหายใจ 2 นาที',
+    'เปิดแชต ABC Corp ล่าสุด',
+    'ร่างข้อความสถานะสั้นเกี่ยวกับเซิร์ฟเวอร์ให้ลูกค้า',
+  ];
+  const result = guardMicroStepsGrounding(steps, sourceText);
+  assert.ok(result, 'grounded steps should pass');
+  assert.deepEqual(result, steps);
+});
+
+test('guardMicroStepsGrounding rejects all-self-care steps when anchors exist', () => {
+  const sourceText = 'ลูกค้า ABC Corp ทวงงานในแชต เซิร์ฟเวอร์ล่ม';
+  const steps = [
+    'เช็กว่าต้องเติมอะไร กิน พัก หรือเริ่มงานเบา ๆ',
+    'เลือกงานก้าวแรกที่เล็กพอ',
+    'ทำก้าวแรกแล้วดูว่าพลังพอกลับไปต่อไหม',
+  ];
+  const result = guardMicroStepsGrounding(steps, sourceText);
+  assert.equal(result, undefined, 'all self-care should be rejected');
+});
+
+test('guardMicroStepsGrounding rejects anchorless AI steps when room has anchors', () => {
+  const sourceText = 'ลูกค้า ABC Corp ทวงงานในแชต เซิร์ฟเวอร์ล่ม';
+  const steps = [
+    'เริ่มจากงานที่เล็กที่สุด',
+    'วางแผนก้าวถัดไป',
+    'สรุปผลลัพธ์',
+  ];
+  const result = guardMicroStepsGrounding(steps, sourceText);
+  assert.equal(result, undefined, 'anchorless steps should be rejected when anchors exist');
+});
+
+test('guardMicroStepsGrounding passes any steps when no anchors in sourceText', () => {
+  const sourceText = 'หิวข้าว หมดแรง';
+  const steps = [
+    'เช็กว่าต้องเติมอะไร กิน พัก',
+    'เลือกงานก้าวแรก',
+    'ทำก้าวแรก',
+  ];
+  const result = guardMicroStepsGrounding(steps, sourceText);
+  assert.ok(result, 'no anchors => guard is lenient');
+});
+
+test('buildPayloadFromAiActionResponse rejects anchorless AI steps and uses grounded fallback', () => {
+  const response: AiActionResponse = {
+    chosenAction: {
+      title: 'รวบข้อมูลตั้งต้นสำหรับ ABC Corp',
+      rationale: 'ลูกค้ารอ',
+      successSignal: 'ได้ข้อมูล',
+    },
+    alternatives: [],
+    whyThisNow: 'ตอนนี้',
+    situationSummary: 'ABC Corp ทวง',
+    starterMicroSteps: [
+      'เช็กก่อนว่าต้องเติมอะไร กิน พัก หรือเริ่มงานเบา ๆ',
+      'เลือกงานก้าวแรกที่เล็กพอทำได้',
+      'ทำแค่ก้าวแรกแล้วดูพลัง',
+    ],
+    meta: { model: 'mock', usedRoomFiles: [], repairUsed: false },
+  };
+
+  const sourceText = 'ลูกค้า ABC Corp ทวงงานค้างสองตัวในแชต เซิร์ฟเวอร์ล่ม';
+  const payload = buildPayloadFromAiActionResponse(
+    'client_resume', response, [],
+    {
+      deliverableType: 'estimate',
+      immediateNeed: 'resume_execution',
+      behaviorIntent: 'personal_friction',
+      missingInputs: [],
+      workContext: 'ลูกค้า ABC Corp',
+      confidence: 0.6,
+    },
+    sourceText,
+  );
+
+  // Should fallback because all 3 AI steps are self-care
+  assert.equal(payload.recommended_action.micro_steps_source, 'fallback');
+  // Fallback should be grounded (personal_friction + anchors = grounded fallback)
+  const joined = payload.recommended_action.micro_steps.join(' ');
+  assert.match(joined, /ABC Corp/, 'fallback should mention ABC Corp');
+});
+
+test('buildPayloadFromAiActionResponse keeps well-grounded AI steps', () => {
+  const response: AiActionResponse = {
+    chosenAction: {
+      title: 'ตอบ ABC Corp',
+      rationale: 'ลูกค้ารอ',
+      successSignal: 'ลูกค้ารู้สถานะ',
+    },
+    alternatives: [],
+    whyThisNow: 'ตอนนี้',
+    situationSummary: 'ABC Corp ทวง',
+    starterMicroSteps: [
+      'พักสายตา 2 นาที',
+      'เปิดแชต ABC Corp ล่าสุด',
+      'ร่างข้อความสถานะเรื่องเซิร์ฟเวอร์ให้ลูกค้า',
+    ],
+    meta: { model: 'mock', usedRoomFiles: [], repairUsed: false },
+  };
+
+  const sourceText = 'ลูกค้า ABC Corp ทวงงานค้างสองตัวในแชต เซิร์ฟเวอร์ล่ม';
+  const payload = buildPayloadFromAiActionResponse(
+    'client_resume', response, [], undefined, sourceText,
+  );
+
+  assert.equal(payload.recommended_action.micro_steps_source, 'ai');
+  assert.deepEqual(payload.recommended_action.micro_steps, response.starterMicroSteps);
 });
