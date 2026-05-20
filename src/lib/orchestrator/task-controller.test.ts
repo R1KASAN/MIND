@@ -660,7 +660,7 @@ test('handleCompleteScaffold enters completion summary on the last step', async 
   assert.equal(latestSession?.task?.currentPlan?.successSignal, 'สรุปและส่ง clarification ได้ครบ');
 });
 
-test('handleStartNewFromCompletedScaffold clears the task after marking the action completed', async () => {
+test('handleStartNewFromCompletedScaffold soft-resets the Room after marking the action completed', async () => {
   const payload = makePayload();
   const task = makeTask({
     lifecycleState: 'in_scaffold',
@@ -719,10 +719,13 @@ test('handleStartNewFromCompletedScaffold clears the task after marking the acti
   assert.equal(actionUpdates[0]?.id, 'action-1');
   assert.equal(actionUpdates[0]?.modifications.state, 'COMPLETED');
   assert.equal(latestSession?.uiRoute, 'DUMP_ENTRY');
-  assert.equal(latestSession?.task, undefined);
+  assert.equal(latestSession?.task?.lifecycleState, 'dumped');
+  assert.equal(latestSession?.task?.sourceText, task.sourceText);
+  assert.equal(latestSession?.task?.currentActionId, null);
+  assert.equal(latestSession?.task?.currentStepIndex, 0);
   assert.equal(latestSession?.currentPayload, undefined);
   assert.equal(latestSession?.currentActionId, null);
-  assert.equal(latestSession?.activeDumpContext, undefined);
+  assert.equal(latestSession?.activeDumpContext?.text, task.sourceText);
 });
 
 test('handleRejectAction sends the user to decision board without losing the original proposal', async () => {

@@ -57,11 +57,12 @@ function pickCurrentStep(task: TaskContext, action: Action | undefined, currentS
   );
 }
 
-function inferManualRescueReason(task: TaskContext): RescueReason {
+export function inferRescueFallbackReason(task: TaskContext): RescueReason {
   if (task.blockerSignals.includes('missing_file_or_context')) return 'missing_context';
   if (task.blockerSignals.includes('dependency')) return 'dependency';
   if (task.blockerSignals.includes('unclear_scope')) return 'unclear_scope';
   if (task.blockerSignals.includes('low_energy')) return 'low_energy';
+  if (task.taskShape?.behaviorIntent === 'personal_friction') return 'low_energy';
   if (task.blockerSignals.includes('too_big')) return 'too_big';
   if (task.lifecycleState === 'stalled') return 'too_big';
   return 'unknown';
@@ -78,7 +79,7 @@ export function buildManualRescueResponse(options: {
   const { task, action, currentStepIndex, durationMs = 0 } = options;
   const currentStep = pickCurrentStep(task, action, currentStepIndex);
   const actionTitle = action?.title ?? task.currentPlan?.actionTitle ?? task.taskFrame?.objective ?? 'งานนี้';
-  const reason = inferManualRescueReason(task);
+  const reason = inferRescueFallbackReason(task);
   const readyFiles = task.sourceFiles
     .filter((file) => file.status === 'ready')
     .map((file) => file.name);

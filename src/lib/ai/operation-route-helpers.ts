@@ -37,6 +37,51 @@ export class AiEndpointUnavailableError extends Error {
   }
 }
 
+export class AiRouteError extends Error {
+  constructor(
+    public type: string,
+    public reason: AiFailureReason,
+    public message: string,
+    public detail: string | undefined,
+    public status: number,
+    public retryable: boolean,
+    public model?: string,
+    public actions?: string[],
+    public telemetry?: {
+      passType?: AiOperationPassType;
+      durationMs?: number;
+      repairUsed?: boolean;
+    }
+  ) {
+    super(message);
+    this.name = 'AiRouteError';
+  }
+}
+
+export function handleAiRouteError(error: unknown) {
+  if (error instanceof AiRouteError) {
+    return failureResponse(
+      error.type,
+      error.reason,
+      error.message,
+      error.detail,
+      error.status,
+      error.retryable,
+      error.model,
+      error.actions,
+      error.telemetry
+    );
+  }
+  return failureResponse(
+    'system_error',
+    'unknown',
+    'เกิดข้อผิดพลาดในระบบ',
+    error instanceof Error ? error.message : String(error),
+    500,
+    false
+  );
+}
+
 export function classifyFailureReason(reason?: string | null): AiFailureReason {
   if (!reason) return 'unknown';
   const lower = reason.toLowerCase();
@@ -206,7 +251,7 @@ export async function runAiOperation<T>(options: {
   const health = await getAiHealth();
 
   if (health.status === 'model_missing') {
-    return failureResponse(
+    throw new AiRouteError(
       'ollama_unavailable',
       'model_missing',
       'ยังไม่พบโมเดลในเครื่อง',
@@ -304,7 +349,7 @@ export async function runAiOperation<T>(options: {
         repairUsed: false,
         durationMs: Date.now() - operationStartedAt,
       });
-      return NextResponse.json(finalize(validated, model, false, passType));
+      return finalize(validated, model, false, passType);
     } catch (error) {
       if (!(error instanceof AiOperationContractError)) throw error;
 
@@ -336,7 +381,7 @@ export async function runAiOperation<T>(options: {
           repairUsed: true,
           durationMs: Date.now() - operationStartedAt,
         });
-        return NextResponse.json(finalize(repaired, model, true, passType));
+        return finalize(repaired, model, true, passType);
       } catch (repairError) {
         if (repairError instanceof AiEndpointUnavailableError) {
           markModelFailure(model, repairError.message);
@@ -396,7 +441,7 @@ export async function runAiOperation<T>(options: {
       durationMs: Date.now() - operationStartedAt,
       detail: lastEndpointReason,
     });
-    return failureResponse(
+    throw new AiRouteError(
       'ollama_unavailable',
       classifyFailureReason(lastEndpointReason),
       'ไม่สามารถเชื่อมต่อ Ollama ได้ในขณะนี้',
@@ -428,7 +473,7 @@ export async function runAiOperation<T>(options: {
     durationMs: Date.now() - operationStartedAt,
     detail: lastValidationReason,
   });
-  return failureResponse(
+  throw new AiRouteError(
     'validation_failed',
     'unknown',
     'โมเดลตอบกลับในรูปแบบที่ไม่ถูกต้อง',

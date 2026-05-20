@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useTrackMountEvent, trackEvent } from '@/lib/instrumentation';
 import { AiSynthesisResponse } from '@/lib/ai/schema';
-import type { CurrentPlanStep, PlanGeneratedBy, PlanSourceKindLabel } from '@/lib/store/idb';
+import type { CurrentPlanStep } from '@/lib/store/idb';
 import { formatConfidenceLabel } from '@/lib/orchestrator/plan-provenance';
 import {
   SCAFFOLD_REFINE_LOADING_COPY,
@@ -136,6 +136,8 @@ export function Scaffold({
   const visibleSteps: CurrentPlanStep[] = steps.length > 0
     ? steps
     : action.micro_steps.map((step, index) => ({ id: `step-${index + 1}`, text: step }));
+  const stepsSource = action.micro_steps_source ?? 'fallback';
+  console.info('[MIND][UI_SCAFFOLD] Rendered CurrentPlanSteps:', JSON.stringify(visibleSteps, null, 2), 'source:', stepsSource);
   const activeStepIndex = Math.min(currentStepIndex, Math.max(visibleSteps.length - 1, 0));
   const currentStep = visibleSteps[activeStepIndex] ?? visibleSteps[0];
   const stepProgressLabel = visibleSteps.length === 0 ? 'ขั้นตอน 0' : `ขั้นตอน ${activeStepIndex + 1} / ${visibleSteps.length}`;
@@ -164,7 +166,7 @@ export function Scaffold({
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', maxWidth: '44rem', margin: '0 auto', gap: '0.95rem', paddingTop: '1.5rem' }}>
           <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>{action.title}</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '-0.2rem' }}>
-            งานรอบนี้จบแล้ว เหลือแค่ตัดสินใจว่าจะเริ่มใหม่หรือย้อนดูขั้นตอน
+            งานรอบนี้จบแล้ว บริบทจะยังอยู่ในห้องนี้เพื่อเริ่มรอบถัดไป
           </p>
 
           <div
@@ -182,13 +184,13 @@ export function Scaffold({
               คุณทำครบ {visibleSteps.length} ขั้นตอนของงานรอบนี้แล้ว
             </strong>
             <p style={{ margin: 0, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-              {successSignal ?? 'ถ้าจะไปต่อ ให้เริ่มงานใหม่หรือย้อนกลับไปดู step ล่าสุดได้'}
+              {successSignal ?? 'ถ้าจะไปต่อ ให้เริ่มรอบใหม่ในห้องนี้หรือย้อนกลับไปดู step ล่าสุดได้'}
             </p>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             <button className="primary" onClick={onStartNew}>
-              เริ่มงานใหม่
+              เริ่มรอบใหม่ในห้องนี้
             </button>
             <button onClick={onBackToSteps}>กลับไปดูขั้นตอน</button>
           </div>
@@ -298,8 +300,10 @@ export function Scaffold({
           >
             เสร็จแล้ว
           </button>
-          <button disabled={refineLoading} onClick={onMakeSmaller}>แบ่งก้าวนี้ให้เล็กลง</button>
-          <button disabled={refineLoading} onClick={onBackToInput}>กลับไปแก้บริบท</button>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <button style={{ flex: '1 1 calc(50% - 0.25rem)' }} disabled={refineLoading} onClick={onMakeSmaller}>แบ่งก้าวนี้ให้เล็กลง</button>
+            <button style={{ flex: '1 1 calc(50% - 0.25rem)' }} disabled={refineLoading} onClick={onBackToInput}>กลับไปแก้บริบท</button>
+          </div>
           <details className="supporting-panel" style={{ width: '100%', maxWidth: '44rem' }}>
             <summary
               style={{
@@ -313,7 +317,7 @@ export function Scaffold({
             >
               ดูขั้นตอนทั้งหมด
             </summary>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.85rem' }}>
+            <div data-source={stepsSource} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.85rem' }}>
               {visibleSteps.map((step, idx) => (
                 <div
                   key={step.id}
@@ -334,7 +338,7 @@ export function Scaffold({
               ))}
             </div>
           </details>
-          <button disabled={refineLoading} onClick={onRescue}>ช่วยดูให้หน่อยว่าติดตรงไหน</button>
+          <button disabled={refineLoading} onClick={onRescue}>ฉันติดขัด / ช่วยวินิจฉัยจุดที่บล็อกอยู่</button>
         </div>
       </div>
     );
@@ -362,7 +366,7 @@ export function Scaffold({
             คุณทำครบ {visibleSteps.length} ขั้นตอนของงานรอบนี้แล้ว
           </strong>
           <p style={{ margin: 0, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-            {successSignal ?? 'ตอนนี้งานรอบนี้ขยับจนจบชุดขั้นตอนแล้ว ถ้าพร้อมค่อยเริ่มงานใหม่ หรือย้อนกลับไปดู step ล่าสุดได้'}
+            {successSignal ?? 'ตอนนี้งานรอบนี้ขยับจนจบชุดขั้นตอนแล้ว ถ้าพร้อมค่อยเริ่มรอบใหม่ในห้องนี้ หรือย้อนกลับไปดู step ล่าสุดได้'}
           </p>
         </div>
 
@@ -388,7 +392,7 @@ export function Scaffold({
 
         <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <button className="primary" onClick={onStartNew}>
-            เริ่มงานใหม่
+            เริ่มรอบใหม่ในห้องนี้
           </button>
           <button onClick={onBackToSteps}>กลับไปดูขั้นตอน</button>
         </div>
@@ -427,7 +431,7 @@ export function Scaffold({
 
       <StepEvidencePanel step={currentStep} />
 
-      <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem', paddingBottom: 'env(safe-area-inset-bottom)' }}>
         {refineLoading && (
           <AIProcessingIndicator label="กำลังย่อยให้เล็กลง" detail={SCAFFOLD_REFINE_LOADING_COPY} />
         )}
@@ -458,9 +462,11 @@ export function Scaffold({
         >
           เสร็จแล้ว
         </button>
-        <button disabled={refineLoading} onClick={onMakeSmaller}>แบ่งก้าวนี้ให้เล็กลง</button>
-        <button disabled={refineLoading} onClick={onBackToInput}>กลับไปแก้บริบท</button>
-        <button disabled={refineLoading} onClick={onRescue}>ช่วยดูให้หน่อยว่าติดตรงไหน</button>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+          <button style={{ flex: '1 1 calc(50% - 0.25rem)' }} disabled={refineLoading} onClick={onMakeSmaller}>แบ่งก้าวนี้ให้เล็กลง</button>
+          <button style={{ flex: '1 1 calc(50% - 0.25rem)' }} disabled={refineLoading} onClick={onBackToInput}>กลับไปแก้บริบท</button>
+        </div>
+        <button disabled={refineLoading} onClick={onRescue}>ฉันติดขัด / ช่วยวินิจฉัยจุดที่บล็อกอยู่</button>
       </div>
     </div>
   );

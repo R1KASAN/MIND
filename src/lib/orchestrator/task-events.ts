@@ -72,6 +72,15 @@ function buildIntakeRequestTask(task: TaskContext): IntakeRequestTask {
     sourceText: task.sourceText,
   };
 
+  if (task.workflowType) requestTask.workflowType = task.workflowType;
+  if (task.taskShape) requestTask.taskShape = task.taskShape;
+  if (task.taskFrame) requestTask.taskFrame = task.taskFrame;
+  if (task.pendingInputs && task.pendingInputs.length > 0) requestTask.pendingInputs = task.pendingInputs;
+  if (task.blockerSignals && task.blockerSignals.length > 0) requestTask.blockerSignals = task.blockerSignals;
+  if (task.constraints) requestTask.constraints = task.constraints;
+  if (task.assistantMode) requestTask.assistantMode = task.assistantMode;
+  if (task.lastAiOperation) requestTask.lastAiOperation = task.lastAiOperation;
+
   const hasFileContext = task.extractedText.trim().length > 0 || task.sourceFiles.length > 0;
   if (!hasFileContext) return requestTask;
 
@@ -277,6 +286,50 @@ export async function recordTaskSourcesInRoomMemory(
   const refs = roomMemoryRefsFromSources(buildRoomDataSources(task).filter((source) => source.status === 'ready'));
   await safeAppendLiveSourceAddedEvents(task, refs, sourceOperationId);
   return refs;
+}
+
+export async function recordCompletedCycleInRoomMemory(task: TaskContext) {
+  const refs = roomMemoryRefsFromSources(buildRoomDataSources(task).filter((source) => source.status === 'ready'));
+  await safeAppendLiveSourceAddedEvents(task, refs, 'cycle_completed');
+
+  const summary =
+    task.lastSynthesis?.situation_summary?.trim() ||
+    task.lastStableSummary?.trim() ||
+    task.currentPlan?.actionTitle?.trim() ||
+    task.sourceText.replace(/\s+/g, ' ').trim().slice(0, 220);
+
+  if (summary) {
+    await safeAppendLiveRoomMemoryEvent(buildLiveRoomMemoryEvent({
+      task,
+      type: 'summary_updated',
+      summary,
+      refs,
+      payload: {
+        summary,
+        completedAt: Date.now(),
+      },
+      sourceOperationId: 'cycle_completed',
+    }));
+  }
+
+  if (task.currentPlan?.actionTitle) {
+    await safeAppendLiveRoomMemoryEvent(buildLiveRoomMemoryEvent({
+      task,
+      type: 'plan_updated',
+      summary: `Plan: ${task.currentPlan.actionTitle}`,
+      refs,
+      payload: {
+        plan: task.currentPlan,
+        completedAt: Date.now(),
+      },
+      intent: {
+        kind: 'user_adjusted_plan',
+        reason: 'cycle_completed',
+        confidence: 'medium',
+      },
+      sourceOperationId: 'cycle_completed',
+    }));
+  }
 }
 
 function buildLiveRoomMemoryEvent(input: {
@@ -868,7 +921,11 @@ export async function runIntakeActionFlow(task: TaskContext): Promise<
     lastAiOperation: 'intake',
   };
 
-  if (intake.requiresClarification) {
+  const hasClarificationAnswer = task.pendingInputs.some(
+    (input) => input.kind === 'clarification'
+  );
+
+  if (intake.requiresClarification && !hasClarificationAnswer) {
     return {
       kind: 'clarification',
       intake,

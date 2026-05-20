@@ -297,6 +297,48 @@ export const INTAKE_SYSTEM_PROMPT = `
   }
 `.trim();
 
+export const PUTER_INTAKE_SYSTEM_PROMPT = `
+คุณคือ intake copilot ของ MIND
+OUTPUT ONLY JSON.
+ห้าม Markdown, ห้าม code fence, ห้ามคำอธิบาย, ห้ามข้อความก่อนหรือหลัง JSON object.
+
+งาน:
+- classify room เป็น client_response หรือ client_resume
+- สรุป roomDigest และ taskFrame จากบริบทจริง
+- คืน blockers, taskShape, candidateActions 1-3 รายการ
+- ถ้าบริบทเป็นแรงเสียดทานส่วนตัว เช่น เหนื่อย หิว หมดแรง ให้รักษาความจริงนั้นไว้ ห้ามแต่งเป็นงานลูกค้าเอง
+
+คืน JSON shape นี้เท่านั้น:
+{
+  "workflowType": "client_response",
+  "roomDigest": "ลูกค้าถามเรื่อง timeline และ scope ของ proposal ต้องตอบกลับอย่างระวัง",
+  "taskFrame": {
+    "objective": "เตรียมคำตอบลูกค้าเรื่อง timeline และ scope",
+    "stage": "มีบริบทพอเลือกก้าวแรก",
+    "stakeholders": ["ลูกค้า"]
+  },
+  "blockers": [],
+  "requiresClarification": false,
+  "clarificationQuestion": null,
+  "taskShape": {
+    "deliverableType": "reply",
+    "immediateNeed": "send_reply_now",
+    "behaviorIntent": "client_delivery",
+    "missingInputs": [],
+    "workContext": "ต้องตอบลูกค้าโดยไม่รับ commitment เกิน scope",
+    "confidence": 0.82
+  },
+  "candidateActions": [
+    {
+      "title": "ร่างคำตอบลูกค้าเรื่อง timeline แบบยังไม่ commit เกิน scope",
+      "rationale": "ตอบได้เร็วและลดความเสี่ยงจากข้อมูลที่ยังไม่ชัด",
+      "kind": "reply_first"
+    }
+  ],
+  "meta": {"model": "puter", "usedRoomFiles": [], "repairUsed": false}
+}
+`.trim();
+
 export const ACTION_SYSTEM_PROMPT = `
 คุณคือ action copilot ของ MIND
 
@@ -336,6 +378,7 @@ export const ACTION_SYSTEM_PROMPT = `
 - resume_first = ให้เอนเอียงไปทางเริ่มงานก่อน
 - replyDraft ต้องเป็น null ถ้า task นี้ไม่ใช่ send_reply_now จริง
 - whyThisNow และ situationSummary ต้องเป็นประโยคข้อความธรรมดา 1 บรรทัด ห้ามเป็น object, array, bullet list, หรือ JSON fragment
+- starterMicroSteps ต้องมี 3 รายการเท่านั้น แต่ละรายการไม่เกิน 12 คำ ใช้ภาษาหลักเดียวกับ sourceText ผูกกับบริบทจริง ห้ามใช้ "เปิดไฟล์", "เปิดบริบท", "ทำก้าวหลักนี้ทันที", "จัดการงานนี้" ถ้าไม่มีไฟล์แนบห้ามอ้าง "ไฟล์" หรือ "เอกสาร"
 - รูปแบบที่ต้องคืน:
   {
     "chosenAction": {
@@ -349,12 +392,56 @@ export const ACTION_SYSTEM_PROMPT = `
     "whyThisNow": "string",
     "replyDraft": "string หรือ null",
     "situationSummary": "string",
+    "starterMicroSteps": ["string", "string", "string"],
     "meta": {
       "model": "string",
       "usedRoomFiles": [],
       "repairUsed": false
     }
   }
+`.trim();
+
+export const PUTER_ACTION_SYSTEM_PROMPT = `
+คุณคือ action copilot ของ MIND
+OUTPUT ONLY JSON.
+ห้าม Markdown, ห้าม code fence, ห้ามคำอธิบาย, ห้ามข้อความก่อนหรือหลัง JSON object.
+
+งาน:
+- เลือก one next action ที่ทำได้จริงใน 15-30 นาที
+- ใช้ taskShape, room digest, preferredCandidate, constraints, evidence summary เท่านั้น
+- ห้าม productivity generic และห้ามแต่งบริบทที่ source ไม่บอก
+- ถ้าไม่ใช่ send_reply_now ให้ replyDraft เป็น null
+- สร้าง starterMicroSteps 3 ก้าวเริ่มต้นที่ยึดจากบริบทจริงใน sourceText/evidence
+
+กฎ starterMicroSteps:
+- ต้องมี 3 รายการเท่านั้น
+- แต่ละรายการไม่เกิน 12 คำ
+- ใช้ภาษาหลักเดียวกับ sourceText ของผู้ใช้
+- แต่ละก้าวต้องผูกกับบริบทจริง เช่น ชื่อคน ชื่อบริษัท ข้อมูลเฉพาะจาก brain dump
+- ดี: "ตอบ ABC Corp ว่าขออัปเดตใน 20 นาที"
+- ดี: "เช็ก CPU spike ช่วง 9 โมงก่อน"
+- ห้าม: "เปิดไฟล์ที่เกี่ยวข้อง", "ทำก้าวหลักนี้ทันที", "จัดการงานนี้", "เปิดบริบท"
+- ถ้าไม่มีไฟล์แนบ ห้ามอ้าง "ไฟล์" หรือ "เอกสาร"
+
+คืน JSON shape นี้เท่านั้น:
+{
+  "chosenAction": {
+    "title": "ร่างคำตอบลูกค้าเรื่อง timeline แบบยังไม่ commit เกิน scope",
+    "rationale": "เป็นก้าวที่ตอบลูกค้าได้ทันทีและยังกันความเสี่ยงจาก scope ที่ไม่ชัด",
+    "successSignal": "มีข้อความตอบกลับสั้นที่ส่งหรือปรับต่อได้"
+  },
+  "alternatives": [
+    {
+      "title": "แยกคำถามที่ต้องยืนยันก่อนตอบ timeline",
+      "rationale": "ลดความเสี่ยงถ้ายังไม่มีข้อมูลพอ"
+    }
+  ],
+  "whyThisNow": "ตอนนี้ลูกค้ารอคำตอบและมีบริบทพอร่างข้อความที่ไม่หลุด scope",
+  "replyDraft": "ขอบคุณครับ ขอเช็ก scope ที่ยังไม่ชัดอีกจุดก่อนยืนยัน timeline แล้วจะส่งกรอบ pilot ที่ปลอดภัยให้ต่อครับ",
+  "situationSummary": "ลูกค้าถามเรื่อง timeline และ scope จึงควรตอบแบบคุม commitment ก่อน",
+  "starterMicroSteps": ["เปิดแชตลูกค้าล่าสุดเรื่อง timeline", "ร่างข้อความตอบกลับแบบยังไม่ commit scope", "ส่งหรือบันทึก draft ตอบกลับไว้"],
+  "meta": {"model": "puter", "usedRoomFiles": [], "repairUsed": false}
+}
 `.trim();
 
 export const SCAFFOLD_SYSTEM_PROMPT = `
@@ -415,6 +502,19 @@ export const RESCUE_SYSTEM_PROMPT = `
   }
 `.trim();
 
+export const PUTER_RESCUE_SYSTEM_PROMPT = `
+คุณคือ rescue copilot ของ MIND
+ตอบเป็น JSON object เดียวเท่านั้น ห้าม markdown/code fence
+งาน: บอกว่าติดเพราะอะไร และให้ rescue plan สั้นที่เริ่มได้ทันที
+schema:
+{
+  "diagnosis": {"primaryReason": "missing_context | dependency | unclear_scope | too_big | low_energy | unknown", "explanation": "string"},
+  "rescuePlan": {"mode": "clarify | follow_up | shrink | switch_track | pause_cleanly", "steps": ["string", "string"]},
+  "suggestedMessage": "string หรือ null",
+  "meta": {"model": "puter", "usedRoomFiles": [], "repairUsed": false}
+}
+`.trim();
+
 export const REENTRY_SYSTEM_PROMPT = `
 คุณคือ reentry copilot ของ MIND
 
@@ -462,6 +562,34 @@ export function buildIntakeUserPrompt(task: TaskContext) {
   return buildOperationTaskContext(task);
 }
 
+export function buildPuterIntakeUserPrompt(task: TaskContext) {
+  const taskShape = task.taskShape
+    ? [
+        `deliverableType: ${task.taskShape.deliverableType}`,
+        `immediateNeed: ${task.taskShape.immediateNeed}`,
+        `behaviorIntent: ${describeBehaviorIntent(task)}`,
+        `missingInputs: ${(task.taskShape.missingInputs ?? []).join(', ') || 'ไม่มี'}`,
+        `workContext: ${truncateText(task.taskShape.workContext, 180)}`,
+        `confidence: ${task.taskShape.confidence ?? 'ไม่ระบุ'}`,
+      ].join('\n')
+    : 'ไม่มี';
+
+  return [
+    `workflowType: ${task.workflowType ?? 'unknown'}`,
+    `lifecycleState: ${task.lifecycleState}`,
+    `sourceText: ${truncateText(task.sourceText, 650)}`,
+    `extractedText: ${truncateText(task.extractedText, 300)}`,
+    `sourceFiles: ${truncateText(describeFiles(task), 260)}`,
+    `pendingInputs: ${truncateText(describePendingInputs(task), 180)}`,
+    `blockerSignals: ${task.blockerSignals.length > 0 ? task.blockerSignals.join(', ') : 'ไม่มี'}`,
+    '',
+    `taskShape:`,
+    taskShape,
+    '',
+    'Return valid JSON only.',
+  ].join('\n');
+}
+
 export function buildActionUserPrompt(
   task: TaskContext,
   preferredCandidate?: { title: string; rationale: string; kind: string } | null,
@@ -491,6 +619,59 @@ export function buildActionUserPrompt(
     '',
     'Retrieved evidence:',
     evidenceContext?.summaryText?.trim() || 'ไม่มี retrieved evidence เพิ่มเติม',
+  ].join('\n');
+}
+
+export function buildPuterActionUserPrompt(
+  task: TaskContext,
+  preferredCandidate?: { title: string; rationale: string; kind: string } | null,
+  negotiation?: { mode: AiActionNegotiationMode; userNote?: string } | null,
+  evidenceContext?: ActionEvidenceContext | null,
+) {
+  const taskShape = task.taskShape
+    ? [
+        `deliverableType: ${task.taskShape.deliverableType}`,
+        `immediateNeed: ${task.taskShape.immediateNeed}`,
+        `behaviorIntent: ${describeBehaviorIntent(task)}`,
+        `missingInputs: ${(task.taskShape.missingInputs ?? []).join(', ') || 'ไม่มี'}`,
+        `workContext: ${truncateText(task.taskShape.workContext, 160)}`,
+        `confidence: ${task.taskShape.confidence ?? 'ไม่ระบุ'}`,
+      ].join('\n')
+    : 'ไม่มี';
+  const taskFrame = task.taskFrame
+    ? [
+        `objective: ${truncateText(task.taskFrame.objective, 150)}`,
+        `stage: ${truncateText(task.taskFrame.stage, 100)}`,
+        `stakeholders: ${(task.taskFrame.stakeholders ?? []).join(', ') || 'ไม่มี'}`,
+      ].join('\n')
+    : 'ไม่มี';
+
+  return [
+    `workflowType: ${task.workflowType ?? 'unknown'}`,
+    `lifecycleState: ${task.lifecycleState}`,
+    `sourceText: ${truncateText(task.sourceText, 520)}`,
+    `extractedText: ${truncateText(task.extractedText, 220)}`,
+    `blockerSignals: ${task.blockerSignals.length > 0 ? task.blockerSignals.join(', ') : 'ไม่มี'}`,
+    `constraints: timeBudgetMin=${task.constraints?.timeBudgetMin ?? 'ไม่ระบุ'}, energyLevel=${task.constraints?.energyLevel ?? 'ไม่ระบุ'}, preferReplyFirst=${task.constraints?.preferReplyFirst ?? 'ไม่ระบุ'}`,
+    '',
+    'taskShape:',
+    taskShape,
+    '',
+    'taskFrame:',
+    taskFrame,
+    '',
+    'preferredCandidate:',
+    preferredCandidate
+      ? `title=${truncateText(preferredCandidate.title, 140)}; rationale=${truncateText(preferredCandidate.rationale, 180)}; kind=${preferredCandidate.kind}`
+      : 'ไม่มี',
+    '',
+    'negotiation:',
+    negotiation ? `mode=${negotiation.mode}; userNote=${truncateText(negotiation.userNote, 120)}` : 'mode=default',
+    '',
+    'evidenceSummary:',
+    truncateText(evidenceContext?.summaryText, 320),
+    '',
+    'Return valid JSON only.',
   ].join('\n');
 }
 
@@ -563,6 +744,24 @@ export function buildRescueUserPrompt(task: TaskContext, action: Action | null |
     describeRescueAction(action, currentStepIndex),
     '',
     'operationGoal: diagnose why the user is stuck and return the best rescue mode as valid JSON only',
+  ].join('\n');
+}
+
+export function buildPuterRescueUserPrompt(task: TaskContext, action: Action | null | undefined, currentStepIndex: number) {
+  const latestRescue = task.rescueHistory[task.rescueHistory.length - 1];
+  return [
+    `workflowType: ${task.workflowType ?? 'unknown'}`,
+    `lifecycleState: ${task.lifecycleState}`,
+    `currentStepIndex: ${currentStepIndex}`,
+    `blockerSignals: ${task.blockerSignals.length > 0 ? task.blockerSignals.join(', ') : 'ไม่มี'}`,
+    `constraints: timeBudgetMin=${task.constraints?.timeBudgetMin ?? 'ไม่ระบุ'}, energyLevel=${task.constraints?.energyLevel ?? 'ไม่ระบุ'}`,
+    `sourceText: ${truncateText(task.sourceText, 320)}`,
+    latestRescue ? `latestRescue: ${latestRescue.reason} -> ${latestRescue.mode}` : 'latestRescue: ไม่มี',
+    '',
+    'currentAction:',
+    describeRescueAction(action, currentStepIndex),
+    '',
+    'Return valid JSON only.',
   ].join('\n');
 }
 

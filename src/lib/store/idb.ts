@@ -289,6 +289,7 @@ export interface Action {
   title: string;
   rationale: string;
   microSteps: string[];
+  microStepsSource?: 'ai' | 'fallback';
   isPinned: boolean;
   state: ActionState;
   workflowType?: WorkflowType;
@@ -1450,7 +1451,16 @@ export function normalizeSession(session: Partial<AppSession> & { status?: unkno
     : undefined;
 
   const completedTask = task?.lifecycleState === 'done' ? task : undefined;
-  const activeTask = completedTask ? undefined : task;
+  const activeTask = completedTask
+    ? {
+        ...completedTask,
+        lifecycleState: 'dumped' as const,
+        assistantMode: undefined,
+        currentActionId: null,
+        currentStepIndex: 0,
+        lastFailureReason: undefined,
+      }
+    : task;
   const uiRoute = completedTask ? 'DUMP_ENTRY' : routeForTaskSession(storedUiRoute, activeTask);
   const currentActionId = completedTask
     ? null
@@ -1482,7 +1492,7 @@ export function normalizeSession(session: Partial<AppSession> & { status?: unkno
     lastMorningShown: normalizeOptionalString(session.lastMorningShown),
     hasSeenResetNotice: session.hasSeenResetNotice ?? false,
     hasSeenWalkthrough: session.hasSeenWalkthrough ?? false,
-    lastWorkflowType: isWorkflowType(session.lastWorkflowType) ? session.lastWorkflowType : task?.workflowType,
+    lastWorkflowType: isWorkflowType(session.lastWorkflowType) ? session.lastWorkflowType : activeTask?.workflowType ?? task?.workflowType,
     lastFailureReason: completedTask
       ? undefined
       : isFailureReason(session.lastFailureReason) ? session.lastFailureReason : activeTask?.lastFailureReason,

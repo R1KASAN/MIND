@@ -5,6 +5,8 @@ import type { AiActionResponse, AiIntakeResponse, AiScaffoldResponse } from '../
 import type { Action, TaskContext } from '../store/idb';
 import {
   buildActionSuccessArtifacts,
+  buildBootstrapMicroSteps,
+  buildPayloadFromAiActionResponse,
   buildScaffoldSuccessArtifacts,
   buildReentryTaskArtifacts,
   deriveBounceBackRoute,
@@ -12,6 +14,7 @@ import {
   hasResumableTask,
   routeFromResumeTarget,
 } from './task-machine';
+import { validateStarterMicroSteps } from '../ai/operation-contract';
 
 function makeTask(overrides: Partial<TaskContext> = {}): TaskContext {
   return {
@@ -234,6 +237,27 @@ test('buildActionSuccessArtifacts keeps proposal-start tasks resume-first and re
   assert.equal(result.payload.task_shape?.immediateNeed, 'define_scope');
 });
 
+test('buildBootstrapMicroSteps uses personal-friction steps instead of generic file-opening template', () => {
+  const steps = buildBootstrapMicroSteps(
+    {
+      title: 'เลือกสิ่งเดียวที่ต้องเติมก่อนกลับไปทำงานก้าวเล็ก',
+      successSignal: 'รู้สิ่งเล็ก ๆ ที่ต้องเติมตอนนี้ และมีก้าวงานหนึ่งก้าวที่เริ่มต่อได้',
+    },
+    {
+      deliverableType: 'unknown',
+      immediateNeed: 'resume_execution',
+      missingInputs: [],
+      workContext: 'ตอนนี้หิวและหมดแรงแต่ยังต้องทำงานต่อ',
+      behaviorIntent: 'personal_friction',
+      confidence: 0.84,
+    },
+  );
+
+  assert.equal(steps.length, 3);
+  assert.match(steps.join(' '), /กิน|พัก|เติม|พลัง|ก้าวแรก/);
+  assert.doesNotMatch(steps.join(' '), /เปิดบริบทหรือไฟล์|ทำก้าวหลักนี้ทันที/);
+});
+
 test('buildScaffoldSuccessArtifacts updates payload and step checkpoint', () => {
   const task = makeTask({
     lifecycleState: 'in_scaffold',
@@ -373,7 +397,8 @@ test('Phase 2.5: buildReentryTaskArtifacts includes failedFileNames from failed 
       resumeTarget: 'ONE_ACTION' as const,
     }],
     ignoredNoise: [],
-  };
+      meta: { model: "mock", passType: "primary_pass", durationMs: 100, repairUsed: false, usedRoomFiles: [] }
+    };
 
   const result = buildReentryTaskArtifacts(task, reentry);
   const brief = result.nextTask.reentryBrief;
@@ -420,7 +445,8 @@ test('Phase 2.5: buildReentryTaskArtifacts includes usedSourceIds from plan evid
       resumeTarget: 'ONE_ACTION' as const,
     }],
     ignoredNoise: [],
-  };
+      meta: { model: "mock", passType: "primary_pass", durationMs: 100, repairUsed: false, usedRoomFiles: [] }
+    };
 
   const result = buildReentryTaskArtifacts(task, reentry);
   const brief = result.nextTask.reentryBrief;
@@ -444,7 +470,8 @@ test('Phase 2.5: buildReentryTaskArtifacts omits metadata fields when no failed 
       resumeTarget: 'ONE_ACTION' as const,
     }],
     ignoredNoise: [],
-  };
+      meta: { model: "mock", passType: "primary_pass", durationMs: 100, repairUsed: false, usedRoomFiles: [] }
+    };
 
   const result = buildReentryTaskArtifacts(task, reentry);
   const brief = result.nextTask.reentryBrief;
@@ -483,4 +510,102 @@ test('deriveRoomBlockers adds missing_file_or_context when attached files are no
 
   assert.equal(blockers.includes('timeline_unclear'), true);
   assert.equal(blockers.includes('missing_file_or_context'), true);
+});
+
+// ─── P1: starterMicroSteps Tests ──────────────────────────────────────────────
+
+test('validateStarterMicroSteps accepts 3 valid context-specific steps', () => {
+  const result = validateStarterMicroSteps(
+    ['เปิดแชตลูกค้าล่าสุดเรื่อง timeline', 'ร่างข้อความตอบกลับแบบยังไม่ commit scope', 'ส่งหรือบันทึก draft ตอบกลับไว้'],
+    false,
+  );
+  assert.ok(result);
+  assert.equal(result.length, 3);
+  assert.equal(result[0], 'เปิดแชตลูกค้าล่าสุดเรื่อง timeline');
+});
+
+test('validateStarterMicroSteps rejects when length is not 3', () => {
+  assert.equal(validateStarterMicroSteps(['a', 'b'], false), undefined);
+  assert.equal(validateStarterMicroSteps(['a', 'b', 'c', 'd'], false), undefined);
+  assert.equal(validateStarterMicroSteps([], false), undefined);
+});
+
+test('validateStarterMicroSteps rejects when any item is empty', () => {
+  assert.equal(validateStarterMicroSteps(['a', '', 'c'], false), undefined);
+  assert.equal(validateStarterMicroSteps(['a', '   ', 'c'], false), undefined);
+});
+
+test('validateStarterMicroSteps rejects generic patterns', () => {
+  assert.equal(validateStarterMicroSteps(['เปิดไฟล์ที่เกี่ยวข้อง', 'ทำงาน', 'เช็กผล'], false), undefined);
+  assert.equal(validateStarterMicroSteps(['ดูข้อมูล', 'ทำก้าวหลักนี้ทันที: งาน', 'เช็ก'], false), undefined);
+  assert.equal(validateStarterMicroSteps(['เปิดบริบทเรื่องนี้', 'ทำ', 'ดู'], false), undefined);
+  assert.equal(validateStarterMicroSteps(['จัดการงานนี้ก่อน', 'ทำ', 'ดู'], false), undefined);
+});
+
+test('validateStarterMicroSteps rejects file references when no file evidence', () => {
+  assert.equal(validateStarterMicroSteps(['เปิดไฟล์ brief', 'ดูข้อมูล', 'สรุป'], false), undefined);
+  assert.equal(validateStarterMicroSteps(['อ่านเอกสาร RCA', 'ดูข้อมูล', 'สรุป'], false), undefined);
+});
+
+test('validateStarterMicroSteps allows file references when file evidence exists', () => {
+  const result = validateStarterMicroSteps(['เปิดไฟล์ brief', 'สรุปเนื้อหา', 'ร่างตอบกลับ'], true);
+  assert.ok(result);
+  assert.equal(result.length, 3);
+});
+
+test('validateStarterMicroSteps returns undefined for non-array input', () => {
+  assert.equal(validateStarterMicroSteps(null, false), undefined);
+  assert.equal(validateStarterMicroSteps(undefined, false), undefined);
+  assert.equal(validateStarterMicroSteps('string', false), undefined);
+  assert.equal(validateStarterMicroSteps(42, false), undefined);
+});
+
+test('buildPayloadFromAiActionResponse uses AI starterMicroSteps when valid', () => {
+  const response: AiActionResponse = {
+    chosenAction: {
+      title: 'ตอบลูกค้า ABC Corp',
+      rationale: 'ลูกค้ารอคำตอบ',
+      successSignal: 'ลูกค้ารู้',
+    },
+    alternatives: [],
+    whyThisNow: 'ตอนนี้',
+    situationSummary: 'ลูกค้ารอ',
+    starterMicroSteps: ['เปิดแชต ABC Corp', 'ร่างข้อความตอบกลับ', 'ส่ง draft'],
+    meta: { model: 'mock', usedRoomFiles: [], repairUsed: false },
+  };
+
+  const payload = buildPayloadFromAiActionResponse('client_response', response, []);
+  assert.deepEqual(payload.recommended_action.micro_steps, ['เปิดแชต ABC Corp', 'ร่างข้อความตอบกลับ', 'ส่ง draft']);
+  assert.equal(payload.recommended_action.micro_steps_source, 'ai');
+});
+
+test('buildPayloadFromAiActionResponse falls back to bootstrap when starterMicroSteps absent', () => {
+  const response: AiActionResponse = {
+    chosenAction: {
+      title: 'ตอบลูกค้า',
+      rationale: 'ลูกค้ารอ',
+      successSignal: 'ลูกค้ารู้',
+    },
+    alternatives: [],
+    whyThisNow: 'ตอนนี้',
+    situationSummary: 'ลูกค้ารอ',
+    meta: { model: 'mock', usedRoomFiles: [], repairUsed: false },
+  };
+
+  const payload = buildPayloadFromAiActionResponse('client_response', response, []);
+  assert.equal(payload.recommended_action.micro_steps_source, 'fallback');
+  assert.equal(payload.recommended_action.micro_steps.length, 3);
+  // First step should now use the updated neutral copy
+  assert.match(payload.recommended_action.micro_steps[0], /ดูข้อมูลที่คุณมีตอนนี้เกี่ยวกับ/);
+});
+
+test('buildBootstrapMicroSteps uses neutral copy (P0 change)', () => {
+  const steps = buildBootstrapMicroSteps({
+    title: 'ตอบลูกค้า ABC Corp',
+    successSignal: 'ลูกค้ารู้แผน',
+  });
+
+  assert.equal(steps.length, 3);
+  assert.match(steps[0], /ดูข้อมูลที่คุณมีตอนนี้เกี่ยวกับ/);
+  assert.doesNotMatch(steps[0], /เปิดบริบทหรือไฟล์/);
 });

@@ -18,7 +18,11 @@ export const AiSynthesisResponseSchema = z.object({
   recommended_action: z.object({
     title: z.string(),
     rationale: z.string(),
-    micro_steps: z.array(z.string()).length(3)
+    micro_steps: z.array(z.string()).length(3),
+    micro_steps_source: z.preprocess((value) => {
+      if (value === null || value === undefined) return 'fallback';
+      return value;
+    }, z.enum(['ai', 'fallback']).default('fallback')),
   }),
   alternative_actions: z.preprocess((value) => {
     if (value === null || value === undefined) return [];

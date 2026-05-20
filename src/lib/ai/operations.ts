@@ -96,6 +96,10 @@ export const AiActionResponseSchema = z.object({
   whyThisNow: z.string(),
   replyDraft: NullableOptionalString,
   situationSummary: z.string(),
+  starterMicroSteps: z.preprocess((value) => {
+    if (value === null || value === undefined) return undefined;
+    return value;
+  }, z.tuple([z.string(), z.string(), z.string()]).optional()),
   meta: AiOperationMetaSchema,
 });
 

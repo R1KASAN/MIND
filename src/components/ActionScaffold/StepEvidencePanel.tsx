@@ -30,7 +30,23 @@ export function StepEvidencePanel({ step }: Props) {
 
   if (!step) return null;
 
-  const display = buildStepEvidenceDisplay(step, selectedSourceId);
+  // Ensure we always have at least one honest fallback evidence source if none exists
+  const hasStrongEvidence = step.evidence && step.evidence.length > 0 && step.evidence.some(item => (item.excerpt ?? '').trim() !== '');
+  const stepWithEvidence = {
+    ...step,
+    evidence: hasStrongEvidence
+      ? step.evidence
+      : [
+          {
+            sourceId: 'manual:brain-dump',
+            label: 'จากคำอธิบายที่คุณพิมพ์ไว้',
+            excerpt: 'อ้างอิงจากสิ่งที่คุณพิมพ์บอกไว้ในข้อความล่าสุด',
+            sourceKindLabel: 'manual_summary' as const,
+          }
+        ]
+  };
+
+  const display = buildStepEvidenceDisplay(stepWithEvidence, selectedSourceId);
   const {
     evidence,
     selectedEvidence,
@@ -143,13 +159,17 @@ export function StepEvidencePanel({ step }: Props) {
           <summary
             style={{
               cursor: 'pointer',
-              color: 'var(--text-secondary)',
+              color: 'var(--accent)',
               fontSize: '0.84rem',
               fontWeight: 600,
               listStyle: 'none',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.35rem',
             }}
           >
-            ดูที่มาของก้าวนี้
+            <span style={{ textDecoration: 'underline', textUnderlineOffset: '3px' }}>ดูที่มาของก้าวนี้</span>
+            <span aria-hidden="true" style={{ fontSize: '0.8em', transition: 'transform 0.2s', transform: detailsOpen ? 'rotate(180deg)' : 'none' }}>↓</span>
           </summary>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem', marginTop: '0.7rem' }}>
             {selectedEvidence && (

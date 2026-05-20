@@ -7,7 +7,7 @@ import {
   buildScaffoldUserPrompt,
   SCAFFOLD_SYSTEM_PROMPT,
 } from '@/lib/ai/operation-prompts';
-import { runAiOperation } from '@/lib/ai/operation-route-helpers';
+import { runAiOperation, handleAiRouteError } from '@/lib/ai/operation-route-helpers';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -40,25 +40,30 @@ export async function POST(req: Request) {
   }
 
   const taskContext = buildOperationTaskContext(task);
-  return runAiOperation({
-    operationName: 'scaffold',
-    systemPrompt: SCAFFOLD_SYSTEM_PROMPT,
-    repairPrompt: AI_OPERATION_REPAIR_PROMPT,
-    userPrompt: buildScaffoldUserPrompt(task, action, currentStepIndex, strategy),
-    buildRepairUserPrompt: (invalidOutput, failureDetail) =>
-      buildOperationRepairUserPrompt('scaffold', taskContext, invalidOutput, failureDetail),
-    parse: (raw) => parseAiScaffoldResponse(raw, {
-      fallbackPlanTitle: action.title,
-      fallbackCurrentStep: action.microSteps[currentStepIndex] ?? action.microSteps[0] ?? action.title,
-      fallbackSteps: action.microSteps,
-      fallbackCurrentStepIndex: currentStepIndex,
-    }),
-    numPredict: SCAFFOLD_NUM_PREDICT,
-    repairNumPredict: SCAFFOLD_REPAIR_NUM_PREDICT,
-    primaryTimeoutMs: SCAFFOLD_TIMEOUT_MS,
-    repairTimeoutMs: SCAFFOLD_REPAIR_TIMEOUT_MS,
-    fallbackTimeoutMs: SCAFFOLD_FALLBACK_TIMEOUT_MS,
-    overallBudgetMs: SCAFFOLD_OVERALL_BUDGET_MS,
-    limitToPrimaryModel: true,
-  });
+  try {
+    const aiResponse = await runAiOperation({
+      operationName: 'scaffold',
+      systemPrompt: SCAFFOLD_SYSTEM_PROMPT,
+      repairPrompt: AI_OPERATION_REPAIR_PROMPT,
+      userPrompt: buildScaffoldUserPrompt(task, action, currentStepIndex, strategy),
+      buildRepairUserPrompt: (invalidOutput, failureDetail) =>
+        buildOperationRepairUserPrompt('scaffold', taskContext, invalidOutput, failureDetail),
+      parse: (raw) => parseAiScaffoldResponse(raw, {
+        fallbackPlanTitle: action.title,
+        fallbackCurrentStep: action.microSteps[currentStepIndex] ?? action.microSteps[0] ?? action.title,
+        fallbackSteps: action.microSteps,
+        fallbackCurrentStepIndex: currentStepIndex,
+      }),
+      numPredict: SCAFFOLD_NUM_PREDICT,
+      repairNumPredict: SCAFFOLD_REPAIR_NUM_PREDICT,
+      primaryTimeoutMs: SCAFFOLD_TIMEOUT_MS,
+      repairTimeoutMs: SCAFFOLD_REPAIR_TIMEOUT_MS,
+      fallbackTimeoutMs: SCAFFOLD_FALLBACK_TIMEOUT_MS,
+      overallBudgetMs: SCAFFOLD_OVERALL_BUDGET_MS,
+      limitToPrimaryModel: true,
+    });
+    return Response.json(aiResponse);
+  } catch (error) {
+    return handleAiRouteError(error);
+  }
 }

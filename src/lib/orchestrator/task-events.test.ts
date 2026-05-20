@@ -5,7 +5,15 @@ import assert from 'node:assert/strict';
 import type { Action, TaskContext } from '../store/idb';
 import { composeRoomSourceText, type RoomSourceFile } from '../room';
 import { clearRoomMemoryData, getRoomMemoryDb, getRoomMemorySnapshot } from '../store/room-memory-db';
-import { recordTaskSourcesInRoomMemory, requestAction, requestIntake, requestRescue, SynthesisFailure } from './task-events';
+import {
+  recordCompletedCycleInRoomMemory,
+  recordTaskSourcesInRoomMemory,
+  requestAction,
+  requestIntake,
+  requestRescue,
+  SynthesisFailure,
+  runIntakeActionFlow,
+} from './task-events';
 
 function makeTask(): TaskContext {
   return {
@@ -206,6 +214,7 @@ test('requestIntake omits file context when sourceText is the canonical merged r
     assert.deepEqual(capturedBody, {
       task: {
         sourceText: task.sourceText,
+        workflowType: 'client_resume',
       },
     });
   } finally {
@@ -290,6 +299,49 @@ test('recordTaskSourcesInRoomMemory appends ready file source after extraction',
   }
 });
 
+test('recordCompletedCycleInRoomMemory appends summary and plan events for Room history', async () => {
+  const task: TaskContext = {
+    ...makeTask(),
+    roomId: 'room-complete',
+    lastSynthesis: {
+      workflow_type: 'client_resume',
+      requires_clarification: false,
+      situation_summary: 'งานรอบนี้ขยับจากบริบทเดิมและมีจุดเริ่มรอบถัดไป',
+      recommended_action: {
+        title: 'เติมสิ่งที่ขาด แล้วเริ่มงานจากก้าวเล็กที่สุด',
+        rationale: 'ลดภาระก่อนกลับไปทำงานต่อ',
+        micro_steps: ['เช็กพลัง', 'เลือกก้าวเล็ก', 'จด checkpoint'],
+      },
+      alternative_actions: [],
+      detected_blockers: [],
+    },
+    currentPlan: {
+      actionTitle: 'เติมสิ่งที่ขาด แล้วเริ่มงานจากก้าวเล็กที่สุด',
+      successSignal: 'รู้ก้าวแรกของรอบถัดไป',
+      steps: [
+        { id: 'step-1', text: 'เช็กพลัง' },
+        { id: 'step-2', text: 'เลือกก้าวเล็ก' },
+        { id: 'step-3', text: 'จด checkpoint' },
+      ],
+    },
+  };
+
+  await clearRoomMemoryData();
+  try {
+    await recordCompletedCycleInRoomMemory(task);
+    const snapshot = await getRoomMemorySnapshot('room-complete');
+    const events = await getRoomMemoryDb().roomEvents.where('roomId').equals('room-complete').toArray();
+
+    assert.equal(snapshot?.currentSummary, 'งานรอบนี้ขยับจากบริบทเดิมและมีจุดเริ่มรอบถัดไป');
+    assert.equal(snapshot?.currentPlan?.actionTitle, 'เติมสิ่งที่ขาด แล้วเริ่มงานจากก้าวเล็กที่สุด');
+    assert.equal(snapshot?.currentPlan?.steps.length, 3);
+    assert.ok(events.some((event) => event.type === 'summary_updated' && event.sourceOperationId === 'cycle_completed'));
+    assert.ok(events.some((event) => event.type === 'plan_updated' && event.sourceOperationId === 'cycle_completed'));
+  } finally {
+    await clearRoomMemoryData();
+  }
+});
+
 test('requestAction sends retrieved evidenceContext to the action route', async () => {
   const originalFetch = global.fetch;
   const task: TaskContext = {
@@ -356,7 +408,7 @@ test('requestAction sends retrieved evidenceContext to the action route', async 
         kind: 'reply_first',
       },
     });
-    const evidenceContext = capturedBody?.evidenceContext as {
+    const evidenceContext = (capturedBody as { evidenceContext?: unknown })?.evidenceContext as {
       selectionMethod?: string;
       evidenceChips?: Array<{ sourceId?: string }>;
       summaryText?: string;
@@ -415,6 +467,7 @@ test('requestIntake preserves extracted file context when sourceText is not a ca
         sourceText: task.sourceText,
         extractedText,
         sourceFiles: [file],
+        workflowType: 'client_resume',
       },
     });
     assert.notEqual(task.sourceText, composeRoomSourceText('', extractedText, [file]));
@@ -463,6 +516,7 @@ test('requestIntake does not drop file context when sourceText only mentions fil
       task: {
         sourceText: task.sourceText,
         sourceFiles: [file],
+        workflowType: 'client_resume',
       },
     });
   } finally {
@@ -576,6 +630,75 @@ test('requestRescue does not retry invalid rescue input failures', async () => {
       (error: unknown) => error instanceof SynthesisFailure,
     );
     assert.equal(fetchCount, 1);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('runIntakeActionFlow bypasses clarification if a clarification answer already exists in pendingInputs', async () => {
+  const originalFetch = global.fetch;
+  const task: TaskContext = {
+    ...makeTask(),
+    pendingInputs: [
+      {
+        id: 'input-1',
+        kind: 'clarification',
+        question: 'Are you sure?',
+        answer: 'Yes',
+        createdAt: 1,
+      },
+    ],
+  };
+
+  let intakeMockCalled = false;
+  let actionMockCalled = false;
+
+  global.fetch = async (url) => {
+    const urlString = String(url);
+    if (urlString.includes('/api/ai/intake')) {
+      intakeMockCalled = true;
+      return new Response(
+        JSON.stringify({
+          ...makeIntakeResponse(),
+          requiresClarification: true, // Mock returns that it still requires clarification
+          clarificationQuestion: 'Need even more info',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (urlString.includes('/api/ai/action')) {
+      actionMockCalled = true;
+      return new Response(
+        JSON.stringify({
+          chosenAction: {
+            title: 'Mocked Action',
+            rationale: 'Bypassed clarification successfully',
+            successSignal: 'Done',
+          },
+          alternatives: [],
+          whyThisNow: 'Test bypass',
+          replyDraft: '',
+          situationSummary: 'Bypassed clarification',
+          meta: {
+            model: 'qwen2.5:3b',
+            usedRoomFiles: [],
+            repairUsed: false,
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    return new Response(JSON.stringify({}), { status: 404 });
+  };
+
+  try {
+    const result = await runIntakeActionFlow(task);
+    assert.equal(intakeMockCalled, true);
+    assert.equal(actionMockCalled, true);
+    assert.equal(result.kind, 'action');
+    if (result.kind === 'action') {
+      assert.equal(result.actionResponse.chosenAction.title, 'Mocked Action');
+    }
   } finally {
     global.fetch = originalFetch;
   }

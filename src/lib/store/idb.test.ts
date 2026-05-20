@@ -251,7 +251,7 @@ test('normalizeSession preserves draft plan evidence, safety, and feedback metad
   assert.equal(session.task?.lastConfirmedActionAt, 40);
 });
 
-test('normalizeSession clears completed task state instead of reviving scaffold data', () => {
+test('normalizeSession turns completed scaffold into a soft Room cycle without reviving the active action', () => {
   const session = normalizeSession({
     lastActive: 200,
     uiRoute: 'SCAFFOLD',
@@ -308,10 +308,13 @@ test('normalizeSession clears completed task state instead of reviving scaffold 
   });
 
   assert.equal(session.uiRoute, 'DUMP_ENTRY');
-  assert.equal(session.task, undefined);
+  assert.equal(session.task?.lifecycleState, 'dumped');
+  assert.equal(session.task?.sourceText, 'บริบทเก่าของงานนี้');
+  assert.equal(session.task?.currentActionId, null);
+  assert.equal(session.task?.currentStepIndex, 0);
   assert.equal(session.currentPayload, undefined);
   assert.equal(session.currentActionId, null);
-  assert.equal(session.activeDumpContext, undefined);
+  assert.equal(session.activeDumpContext?.text, 'บริบทเก่าของงานนี้');
 });
 
 test('normalizeSession preserves scaffold completion assistant mode during hydration', () => {

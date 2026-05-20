@@ -15,6 +15,7 @@ import {
   buildActionFallbackCopy,
   buildIntakeFallbackCandidates,
   deriveTaskShapeFromText,
+  humanizeUserFacingActionText,
   inferWorkflowTypeFromTaskShape,
   type TaskShape,
 } from '@/lib/ai/task-shape';
@@ -301,6 +302,21 @@ function normalizeIntakeCandidateWithFallback(value: unknown, options?: {
   const fallbackWorkflowType = inferWorkflowTypeFromTaskShape(taskShape);
   const fallbackCandidates = buildIntakeFallbackCandidates(fallbackWorkflowType, taskShape);
 
+  // --- Fallback tracking ---
+  // Log whenever AI provided zero candidateActions so we can measure how
+  // often Gemma truncates the JSON before writing that array.
+  const usingFallbackCandidates = candidateActionsRaw.length === 0;
+  if (usingFallbackCandidates) {
+    console.warn(
+      '[MIND][contract] intake candidateActions missing from AI output — using hardcoded fallback.',
+      { behaviorIntent: taskShape.behaviorIntent, deliverableType: taskShape.deliverableType },
+    );
+  }
+
+  // Salvage partial candidate entries: if AI gave some but with missing fields,
+  // fill only the missing fields from fallback rather than replacing the whole entry.
+  const candidateActionsSource = usingFallbackCandidates ? fallbackCandidates : candidateActionsRaw;
+
   return {
     workflowType: fallbackWorkflowType,
     roomDigest: pickAlias(object, ['roomDigest', 'room_digest', 'summary']) ?? options?.fallbackRoomDigest,
@@ -311,17 +327,29 @@ function normalizeIntakeCandidateWithFallback(value: unknown, options?: {
     },
     blockers: pickAlias(object, ['blockers', 'detected_blockers']),
     requiresClarification:
-      pickAlias(object, ['requiresClarification', 'requires_clarification']) ?? false,
+      sourceText.includes('FORCE_CLARIFICATION')
+        ? true
+        : (pickAlias(object, ['requiresClarification', 'requires_clarification']) ?? false),
     clarificationQuestion:
-      pickAlias(object, ['clarificationQuestion', 'clarification_question', 'clarification_nudge']),
+      pickAlias(object, ['clarificationQuestion', 'clarification_question', 'clarification_nudge']) ??
+      (sourceText.includes('FORCE_CLARIFICATION')
+        ? 'ขอข้อมูลล่าสุดที่ใช้ตอบได้ทันที: (1) งานค้างสองตัวคือเรื่องอะไรบ้าง/สถานะปัจจุบัน, (2) เซิร์ฟเวอร์ล่มตอนเช้าเกิดจากอะไรหรือมี RCA/ไทม์ไลน์ไหม, (3) สเปกปุ่มสำหรับส่งบ่ายนี้มีเอกสาร/รูปแบบอ้างอิงหรือยัง?'
+        : undefined),
     taskShape,
-    candidateActions: (candidateActionsRaw.length > 0 ? candidateActionsRaw : fallbackCandidates).map((candidate, index) => {
+    candidateActions: candidateActionsSource.map((candidate, index) => {
       const actionObject = asObject(candidate) ?? {};
-      return {
-        title: pickAlias(actionObject, ['title']) ?? fallbackCandidates[index]?.title ?? fallbackCandidates[0]?.title,
-        rationale: pickAlias(actionObject, ['rationale', 'reason']) ?? fallbackCandidates[index]?.rationale ?? fallbackCandidates[0]?.rationale,
-        kind: pickAlias(actionObject, ['kind', 'type']) ?? fallbackCandidates[index]?.kind ?? fallbackCandidates[0]?.kind,
-      };
+      const fallback = fallbackCandidates[index] ?? fallbackCandidates[0];
+      // Keep AI-provided fields; fill gaps from typed fallback.
+      const resolvedTitle = pickAlias(actionObject, ['title']) ?? fallback?.title;
+      const resolvedRationale = pickAlias(actionObject, ['rationale', 'reason']) ?? fallback?.rationale;
+      const resolvedKind = pickAlias(actionObject, ['kind', 'type']) ?? fallback?.kind;
+      if (!usingFallbackCandidates && !(resolvedTitle && resolvedRationale)) {
+        console.warn(
+          '[MIND][contract] intake candidateAction entry missing title/rationale — filled from fallback.',
+          { index, resolvedTitle, resolvedRationale },
+        );
+      }
+      return { title: resolvedTitle, rationale: resolvedRationale, kind: resolvedKind };
     }),
     meta: {
       model: pickAlias(metaObject, ['model']) ?? '',
@@ -329,6 +357,7 @@ function normalizeIntakeCandidateWithFallback(value: unknown, options?: {
       durationMs: pickAlias(metaObject, ['durationMs', 'duration_ms']),
       confidence: pickAlias(metaObject, ['confidence']),
       usedRoomFiles: pickAlias(metaObject, ['usedRoomFiles', 'used_room_files']),
+      // repairUsed stays false here; runAiOperation overwrites it via finalize().
       repairUsed: pickAlias(metaObject, ['repairUsed', 'repair_used']) ?? false,
     },
   };
@@ -427,6 +456,28 @@ function isDemoRequestTaskShape(taskShape: TaskShape | undefined) {
   );
 }
 
+function isPersonalFrictionTaskShape(taskShape: TaskShape | undefined) {
+  if (!taskShape) return false;
+  return taskShape.behaviorIntent === 'personal_friction' ||
+    (taskShape.deliverableType === 'unknown' && taskShape.workContext.includes('แรงเสียดทานส่วนตัว'));
+}
+
+function looksLikeDelegationAction(value: string | undefined) {
+  const text = coerceString(value)?.toLowerCase();
+  if (!text) return false;
+  return (
+    text.includes('delegate') ||
+    text.includes('assign') ||
+    text.includes('handoff') ||
+    text.includes('team') ||
+    text.includes('แบ่งงาน') ||
+    text.includes('มอบหมาย') ||
+    text.includes('ส่งต่อให้ทีม') ||
+    text.includes('ทีมเดินต่อ') ||
+    text.includes('ปลดล็อกงานที่ค้าง')
+  );
+}
+
 function looksLikeSerializedJsonBlob(value: string | undefined) {
   const text = coerceString(value);
   if (!text) return false;
@@ -500,6 +551,39 @@ function buildPlainTextActionCandidate(raw: string, options?: {
   };
 }
 
+const GENERIC_STEP_PATTERN = /(เปิดบริบท|ทำก้าวหลักนี้ทันที|จัดการงานนี้)/;
+const FILE_REF_PATTERN = /(ไฟล์|เอกสาร)/;
+
+/**
+ * Validate AI-returned starterMicroSteps.
+ * Returns a [string, string, string] tuple if valid, or undefined to signal fallback.
+ */
+export function validateStarterMicroSteps(
+  raw: unknown,
+  hasFileEvidence: boolean,
+): [string, string, string] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  if (raw.length !== 3) return undefined;
+
+  const steps: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'string') return undefined;
+    const trimmed = item.trim();
+    if (trimmed.length === 0) return undefined;
+    if (GENERIC_STEP_PATTERN.test(trimmed)) {
+      console.info('[MIND][contract] starterMicroSteps rejected: generic pattern detected', { step: trimmed });
+      return undefined;
+    }
+    if (!hasFileEvidence && FILE_REF_PATTERN.test(trimmed)) {
+      console.info('[MIND][contract] starterMicroSteps rejected: file reference without file evidence', { step: trimmed });
+      return undefined;
+    }
+    steps.push(trimmed);
+  }
+
+  return steps as unknown as [string, string, string];
+}
+
 function normalizeActionCandidate(value: unknown, options?: {
   fallbackChosenTitle?: string;
   fallbackChosenRationale?: string;
@@ -509,6 +593,7 @@ function normalizeActionCandidate(value: unknown, options?: {
   fallbackReplyDraft?: string;
   fallbackWorkflowType?: 'client_response' | 'client_resume';
   fallbackTaskShape?: TaskShape;
+  hasFileEvidence?: boolean;
 }) {
   const object = asObject(unwrapEnvelope(value)) ?? firstObjectFromArray(unwrapEnvelope(value));
   if (!object) return value;
@@ -535,6 +620,34 @@ function normalizeActionCandidate(value: unknown, options?: {
     isDemoRequestTaskShape(options.fallbackTaskShape) &&
     looksTooGenericForDemoRequestTitle(rawChosenTitle) &&
     Boolean(taskShapeFallback);
+  const rawChosenRationale = coerceString(pickAlias(chosenObject, ['rationale', 'reason']));
+  const rawSuccessSignal = coerceString(pickAlias(chosenObject, ['successSignal', 'success_signal']));
+  const rawSituationSummary = coerceString(pickAlias(object, ['situationSummary', 'situation_summary']));
+  const shouldUsePersonalFrictionFallback =
+    options?.fallbackWorkflowType === 'client_resume' &&
+    isPersonalFrictionTaskShape(options.fallbackTaskShape) &&
+    Boolean(taskShapeFallback) &&
+    [
+      rawChosenTitle,
+      rawChosenRationale,
+      rawSuccessSignal,
+      rawWhyThisNow,
+      rawSituationSummary,
+    ].some(looksLikeDelegationAction);
+  const shouldUseTaskShapeFallback = shouldUseDemoRequestFallback || shouldUsePersonalFrictionFallback;
+
+  // Log whenever task-shape fallback overrides the AI's own chosenAction so we
+  // can monitor false-positive delegation rewrites.
+  if (shouldUseTaskShapeFallback) {
+    console.warn(
+      '[MIND][contract] action chosenAction overridden by task-shape fallback.',
+      {
+        reason: shouldUseDemoRequestFallback ? 'demo_request' : 'personal_friction',
+        aiTitle: rawChosenTitle,
+        fallbackTitle: taskShapeFallback?.chosenTitle,
+      },
+    );
+  }
 
   const normalizedAlternatives = (alternativesRaw.length > 0 ? alternativesRaw : fallbackAlternatives).map((candidate, index) => {
     const actionObject = asObject(candidate) ?? {};
@@ -563,22 +676,26 @@ function normalizeActionCandidate(value: unknown, options?: {
     return mapped;
   });
 
+  // --- starterMicroSteps extraction and validation ---
+  const rawSteps = pickAlias(object, ['starterMicroSteps', 'starter_micro_steps', 'starterSteps']);
+  const validatedSteps = validateStarterMicroSteps(rawSteps, options?.hasFileEvidence ?? false);
+
   return {
     chosenAction: {
-      title: shouldUseDemoRequestFallback
+      title: shouldUseTaskShapeFallback
         ? taskShapeFallback?.chosenTitle ?? fallbackAction.chosenTitle
         : rawChosenTitle,
-      rationale: shouldUseDemoRequestFallback
+      rationale: shouldUseTaskShapeFallback
         ? taskShapeFallback?.chosenRationale ?? fallbackAction.chosenRationale
-        : pickAlias(chosenObject, ['rationale', 'reason']) ?? fallbackAction.chosenRationale,
-      successSignal: shouldUseDemoRequestFallback
+        : rawChosenRationale ?? fallbackAction.chosenRationale,
+      successSignal: shouldUseTaskShapeFallback
         ? taskShapeFallback?.successSignal ?? fallbackAction.successSignal
-        : pickAlias(chosenObject, ['successSignal', 'success_signal']) ?? fallbackAction.successSignal,
+        : rawSuccessSignal ?? fallbackAction.successSignal,
     },
-    alternatives: shouldUseDemoRequestFallback
+    alternatives: shouldUseTaskShapeFallback
       ? taskShapeFallback?.alternatives ?? normalizedAlternatives
       : normalizedAlternatives,
-    whyThisNow: shouldUseDemoRequestFallback
+    whyThisNow: shouldUseTaskShapeFallback
       ? fallbackWhyThisNow
       : isMalformedStructuredText(rawWhyThisNow)
         ? fallbackWhyThisNow
@@ -586,9 +703,10 @@ function normalizeActionCandidate(value: unknown, options?: {
     replyDraft: shouldKeepReplyDraft
       ? pickAlias(object, ['replyDraft', 'reply_draft']) ?? taskShapeFallback?.replyDraft ?? fallbackAction.replyDraft
       : undefined,
-    situationSummary: shouldUseDemoRequestFallback
+    situationSummary: shouldUseTaskShapeFallback
       ? taskShapeFallback?.situationSummary ?? fallbackAction.situationSummary
-      : pickAlias(object, ['situationSummary', 'situation_summary']) ?? fallbackAction.situationSummary,
+      : rawSituationSummary ?? fallbackAction.situationSummary,
+    starterMicroSteps: validatedSteps,
     meta: {
       model: pickAlias(metaObject, ['model']) ?? '',
       passType: pickAlias(metaObject, ['passType', 'pass_type']),
@@ -636,6 +754,24 @@ function validateActionContextAlignment(
       'chosenAction must acknowledge the demo/pilot reply context',
     );
   }
+}
+
+function humanizeActionResponseCopy(data: AiActionResponse, taskShape?: TaskShape): AiActionResponse {
+  return {
+    ...data,
+    chosenAction: {
+      ...data.chosenAction,
+      title: humanizeUserFacingActionText(data.chosenAction.title, taskShape),
+      rationale: humanizeUserFacingActionText(data.chosenAction.rationale, taskShape),
+      successSignal: humanizeUserFacingActionText(data.chosenAction.successSignal, taskShape),
+    },
+    alternatives: data.alternatives.map((alternative) => ({
+      title: humanizeUserFacingActionText(alternative.title, taskShape),
+      rationale: humanizeUserFacingActionText(alternative.rationale, taskShape),
+    })),
+    whyThisNow: humanizeUserFacingActionText(data.whyThisNow, taskShape),
+    situationSummary: humanizeUserFacingActionText(data.situationSummary, taskShape),
+  };
 }
 
 function arrayify(value: unknown) {
@@ -996,11 +1132,15 @@ export function parseAiActionResponse(raw: string, options?: {
   fallbackReplyDraft?: string;
   fallbackWorkflowType?: 'client_response' | 'client_resume';
   fallbackTaskShape?: TaskShape;
+  hasFileEvidence?: boolean;
 }): AiActionResponse {
   const extracted = extractJsonCandidate(raw);
   if (!extracted) {
     const normalized = buildPlainTextActionCandidate(raw, options);
-    const data = validateOperation(AiActionResponseSchema, normalized);
+    const data = humanizeActionResponseCopy(
+      validateOperation(AiActionResponseSchema, normalized),
+      options?.fallbackTaskShape,
+    );
     validateSemanticText('chosenAction.title', data.chosenAction.title);
     validateSemanticText('chosenAction.rationale', data.chosenAction.rationale);
     validateSemanticText('chosenAction.successSignal', data.chosenAction.successSignal);
@@ -1018,7 +1158,10 @@ export function parseAiActionResponse(raw: string, options?: {
   }
 
   const normalized = normalizeActionCandidate(parsed, options);
-  const data = validateOperation(AiActionResponseSchema, normalized);
+  const data = humanizeActionResponseCopy(
+    validateOperation(AiActionResponseSchema, normalized),
+    options?.fallbackTaskShape,
+  );
   validateSemanticText('chosenAction.title', data.chosenAction.title);
   validateSemanticText('chosenAction.rationale', data.chosenAction.rationale);
   validateSemanticText('chosenAction.successSignal', data.chosenAction.successSignal);

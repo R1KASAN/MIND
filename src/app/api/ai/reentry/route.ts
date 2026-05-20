@@ -8,7 +8,7 @@ import {
   buildReentryUserPrompt,
   REENTRY_SYSTEM_PROMPT,
 } from '@/lib/ai/operation-prompts';
-import { runAiOperation } from '@/lib/ai/operation-route-helpers';
+import { runAiOperation, handleAiRouteError } from '@/lib/ai/operation-route-helpers';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -80,24 +80,29 @@ export async function POST(req: Request) {
         ? 'ONE_ACTION'
         : 'DUMP_ENTRY';
   const roomMemoryContext = buildRoomMemoryContext(body?.memoryContext);
-  return runAiOperation({
-    operationName: 'reentry',
-    systemPrompt: REENTRY_SYSTEM_PROMPT,
-    repairPrompt: AI_OPERATION_REPAIR_PROMPT,
-    userPrompt: buildReentryUserPrompt(task, action ?? null, scopeParsed.data, roomMemoryContext),
-    buildRepairUserPrompt: (invalidOutput, failureDetail) =>
-      buildOperationRepairUserPrompt('reentry', [
-        taskContext,
-        '',
-        'roomMemoryContext:',
-        roomMemoryContext || 'ไม่มี',
-      ].join('\n'), invalidOutput, failureDetail),
-    parse: (raw) => parseAiReentryResponse(raw, {
-      fallbackRoomId: task.id,
-      fallbackActionTitle: action?.title ?? task.currentPlan?.actionTitle ?? task.taskFrame?.objective,
-      fallbackCurrentStep,
-      fallbackResumeTarget,
-    }),
-    numPredict: 420,
-  });
+  try {
+    const aiResponse = await runAiOperation({
+      operationName: 'reentry',
+      systemPrompt: REENTRY_SYSTEM_PROMPT,
+      repairPrompt: AI_OPERATION_REPAIR_PROMPT,
+      userPrompt: buildReentryUserPrompt(task, action ?? null, scopeParsed.data, roomMemoryContext),
+      buildRepairUserPrompt: (invalidOutput, failureDetail) =>
+        buildOperationRepairUserPrompt('reentry', [
+          taskContext,
+          '',
+          'roomMemoryContext:',
+          roomMemoryContext || 'ไม่มี',
+        ].join('\n'), invalidOutput, failureDetail),
+      parse: (raw) => parseAiReentryResponse(raw, {
+        fallbackRoomId: task.id,
+        fallbackActionTitle: action?.title ?? task.currentPlan?.actionTitle ?? task.taskFrame?.objective,
+        fallbackCurrentStep,
+        fallbackResumeTarget,
+      }),
+      numPredict: 420,
+    });
+    return Response.json(aiResponse);
+  } catch (error) {
+    return handleAiRouteError(error);
+  }
 }

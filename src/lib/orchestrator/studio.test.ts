@@ -91,7 +91,7 @@ test('buildStudioSnapshot falls back to source text provenance when structured c
       id: 'task-2',
       workflowType: 'client_resume',
       sourceText: 'ลูกค้าขออัปเดตสั้น ๆ ก่อนประชุม',
-      sourceFiles: [],
+      sourceFiles: [] as any[],
       extractedText: '',
       createdAt: 10,
       pendingInputs: [],
@@ -225,7 +225,7 @@ test('getStudioIntents blocks advanced actions without current action context', 
       id: 'task-1',
       workflowType: 'client_resume',
       sourceText: 'งานค้าง',
-      sourceFiles: [],
+      sourceFiles: [] as any[],
       extractedText: '',
       createdAt: 10,
       pendingInputs: [],
@@ -267,7 +267,7 @@ test('getStudioIntents blocks scaffold-only actions while completion summary is 
       id: 'task-1',
       workflowType: 'client_resume',
       sourceText: 'proposal AI',
-      sourceFiles: [],
+      sourceFiles: [] as any[],
       extractedText: '',
       createdAt: 10,
       pendingInputs: [],
@@ -301,7 +301,7 @@ test('hasFreshReentryBrief compares brief timestamp against session activity', (
       id: 'task-1',
       workflowType: 'client_resume',
       sourceText: 'งานค้าง',
-      sourceFiles: [],
+      sourceFiles: [] as any[],
       extractedText: '',
       createdAt: 10,
       pendingInputs: [],
@@ -341,7 +341,7 @@ function makeMinimalTask(overrides: object = {}) {
     id: 'task-fallback',
     workflowType: 'client_resume' as const,
     sourceText: '',
-    sourceFiles: [] as object[],
+    sourceFiles: [] as any[] as object[],
     extractedText: '',
     createdAt: 1000,
     pendingInputs: [],
@@ -358,19 +358,7 @@ test('Room fallback Case A: failed PDF only — title shows file-incomplete, no 
   // Case A: only a failed PDF, no other context. Room should show file-incomplete state.
   const task = makeMinimalTask({
     sourceText: '',
-    sourceFiles: [
-      {
-        id: 'file-pdf',
-        name: 'scan.pdf',
-        kind: 'pdf',
-        mimeType: 'application/pdf',
-        size: 8000,
-        status: 'unreadable',
-        extractedText: '',
-        failureReason: 'pdf_text_garbled_after_ocr',
-        createdAt: 1000,
-      },
-    ],
+    sourceFiles: [{ id: 'file-pdf', name: 'scan.pdf', kind: 'pdf', mimeType: 'application/pdf', size: 8000, status: 'unreadable', extractedText: '', failureReason: 'pdf_text_garbled_after_ocr', createdAt: 1000 }] as any[],
   });
   const snapshot = buildStudioSnapshot(task);
 
@@ -388,29 +376,7 @@ test('Room fallback Case B: failed PDF + ready txt/md — txt/md is usable, titl
   // Case B: PDF fails but txt/md is ready. Room must use txt/md context normally.
   const task = makeMinimalTask({
     sourceText: 'บริบทงานเดิมที่พิมพ์ไว้',
-    sourceFiles: [
-      {
-        id: 'file-pdf',
-        name: 'scan.pdf',
-        kind: 'pdf',
-        mimeType: 'application/pdf',
-        size: 8000,
-        status: 'unreadable',
-        extractedText: '',
-        failureReason: 'pdf_text_garbled_after_ocr',
-        createdAt: 1000,
-      },
-      {
-        id: 'file-txt',
-        name: 'notes.txt',
-        kind: 'txt',
-        mimeType: 'text/plain',
-        size: 400,
-        status: 'ready',
-        extractedText: 'ข้อความจาก txt ที่อ่านได้แล้ว',
-        createdAt: 1001,
-      },
-    ],
+    sourceFiles: [{ id: 'file-pdf', name: 'scan.pdf', kind: 'pdf', mimeType: 'application/pdf', size: 8000, status: 'unreadable', extractedText: '', failureReason: 'pdf_text_garbled_after_ocr', createdAt: 1000 }, { id: 'file-txt', name: 'notes.txt', kind: 'txt', mimeType: 'text/plain', size: 400, status: 'ready', extractedText: 'ข้อความจาก txt ที่อ่านได้แล้ว', createdAt: 1001 }] as any[],
   });
   const snapshot = buildStudioSnapshot(task);
 
@@ -427,19 +393,7 @@ test('Room fallback Case C: failed PDF + original text — original text is used
   // Case C: user typed context, only the PDF failed. Original text must drive summary normally.
   const task = makeMinimalTask({
     sourceText: 'ลูกค้าส่ง feedback มาแต่ยังไม่ได้ตอบ ต้องการ next action',
-    sourceFiles: [
-      {
-        id: 'file-pdf',
-        name: 'brief.pdf',
-        kind: 'pdf',
-        mimeType: 'application/pdf',
-        size: 5000,
-        status: 'unreadable',
-        extractedText: '',
-        failureReason: 'pdf_ocr_failed',
-        createdAt: 1000,
-      },
-    ],
+    sourceFiles: [{ id: 'file-pdf', name: 'brief.pdf', kind: 'pdf', mimeType: 'application/pdf', size: 5000, status: 'unreadable', extractedText: '', failureReason: 'pdf_ocr_failed', createdAt: 1000 }] as any[],
     lastSynthesis: {
       workflow_type: 'client_resume',
       requires_clarification: false,
@@ -464,40 +418,7 @@ test('Room fallback Case D: mixed files — ready files are not poisoned by fail
   // Case D: multiple files with mixed status. Ready ones must remain usable as evidence/context.
   const task = makeMinimalTask({
     sourceText: 'บริบทเดิม',
-    sourceFiles: [
-      {
-        id: 'file-image',
-        name: 'screenshot.png',
-        kind: 'image',
-        mimeType: 'image/png',
-        size: 2000,
-        status: 'unreadable',
-        extractedText: '',
-        failureReason: 'pdf_ocr_failed',
-        createdAt: 1000,
-      },
-      {
-        id: 'file-md',
-        name: 'handoff.md',
-        kind: 'md',
-        mimeType: 'text/markdown',
-        size: 600,
-        status: 'ready',
-        extractedText: 'ข้อความ handoff จาก md file',
-        createdAt: 1001,
-      },
-      {
-        id: 'file-pdf2',
-        name: 'invoice.pdf',
-        kind: 'pdf',
-        mimeType: 'application/pdf',
-        size: 4000,
-        status: 'unreadable',
-        extractedText: '',
-        failureReason: 'pdf_text_garbled_after_ocr',
-        createdAt: 1002,
-      },
-    ],
+    sourceFiles: [{ id: 'file-image', name: 'screenshot.png', kind: 'image', mimeType: 'image/png', size: 2000, status: 'unreadable', extractedText: '', failureReason: 'pdf_ocr_failed', createdAt: 1000 }, { id: 'file-md', name: 'handoff.md', kind: 'md', mimeType: 'text/markdown', size: 600, status: 'ready', extractedText: 'ข้อความ handoff จาก md file', createdAt: 1001 }, { id: 'file-pdf2', name: 'invoice.pdf', kind: 'pdf', mimeType: 'application/pdf', size: 4000, status: 'unreadable', extractedText: '', failureReason: 'pdf_text_garbled_after_ocr', createdAt: 1002 }] as any[],
   });
   const snapshot = buildStudioSnapshot(task);
 
@@ -518,7 +439,7 @@ import { getRoomContextStatus } from '@/lib/room';
 test('getRoomContextStatus returns empty when no text and no files', () => {
   const status = getRoomContextStatus({
     sourceText: '',
-    sourceFiles: [],
+    sourceFiles: [] as any[],
   });
   assert.equal(status, 'empty');
 });
@@ -558,7 +479,7 @@ test('buildStudioSnapshot includes contextStatus field', () => {
   const snapshot = buildStudioSnapshot(
     makeMinimalTask({
       sourceText: 'บริบทงาน',
-      sourceFiles: [],
+      sourceFiles: [] as any[],
     }),
   );
   assert.ok(snapshot, 'snapshot must exist');
@@ -571,20 +492,7 @@ test('buildStudioSnapshot includes contextStatus field', () => {
 test('Phase 1.5: fileIssues entries include retryable flag — true when storageKey present', () => {
   const task = makeMinimalTask({
     sourceText: '',
-    sourceFiles: [
-      {
-        id: 'file-pdf',
-        name: 'scan.pdf',
-        kind: 'pdf',
-        mimeType: 'application/pdf',
-        size: 8000,
-        status: 'unreadable',
-        extractedText: '',
-        failureReason: 'pdf_text_garbled_after_ocr',
-        storageKey: 'room-file:demo:scan',
-        createdAt: 1000,
-      },
-    ],
+    sourceFiles: [{ id: 'file-pdf', name: 'scan.pdf', kind: 'pdf', mimeType: 'application/pdf', size: 8000, status: 'unreadable', extractedText: '', failureReason: 'pdf_text_garbled_after_ocr', storageKey: 'room-file:demo:scan', createdAt: 1000 }] as any[],
   });
   const snapshot = buildStudioSnapshot(task);
   assert.ok(snapshot);
@@ -619,19 +527,7 @@ test('Phase 1.5: failed PDF does not appear as usedInContext even if listed in r
   // failed files are in fileIssues, not in readyFiles — so they can never have usedInContext
   const task = makeMinimalTask({
     sourceText: 'บริบทงาน',
-    sourceFiles: [
-      {
-        id: 'file-pdf',
-        name: 'scan.pdf',
-        kind: 'pdf',
-        mimeType: 'application/pdf',
-        size: 8000,
-        status: 'unreadable',
-        extractedText: '',
-        failureReason: 'pdf_text_garbled_after_ocr',
-        createdAt: 1000,
-      },
-    ],
+    sourceFiles: [{ id: 'file-pdf', name: 'scan.pdf', kind: 'pdf', mimeType: 'application/pdf', size: 8000, status: 'unreadable', extractedText: '', failureReason: 'pdf_text_garbled_after_ocr', createdAt: 1000 }] as any[],
   });
   // Even if the caller accidentally passes the failed file's sourceId
   const snapshot = buildStudioSnapshot(task, null, null, ['file:file-pdf']);
@@ -644,18 +540,7 @@ test('Phase 1.5: failed PDF does not appear as usedInContext even if listed in r
 test('Phase 1.5: ready txt selected by retrieval shows usedInContext = true', () => {
   const task = makeMinimalTask({
     sourceText: 'บริบทงาน',
-    sourceFiles: [
-      {
-        id: 'file-txt',
-        name: 'notes.txt',
-        kind: 'text',
-        mimeType: 'text/plain',
-        size: 400,
-        status: 'ready',
-        extractedText: 'ข้อความจาก txt',
-        createdAt: 1001,
-      },
-    ],
+    sourceFiles: [{ id: 'file-txt', name: 'notes.txt', kind: 'text', mimeType: 'text/plain', size: 400, status: 'ready', extractedText: 'ข้อความจาก txt', createdAt: 1001 }] as any[],
   });
   const snapshot = buildStudioSnapshot(task, null, null, ['file:file-txt']);
   assert.ok(snapshot);
@@ -666,28 +551,7 @@ test('Phase 1.5: ready txt selected by retrieval shows usedInContext = true', ()
 test('Phase 1.5: ready but not selected file shows usedInContext = false', () => {
   const task = makeMinimalTask({
     sourceText: 'บริบทงาน',
-    sourceFiles: [
-      {
-        id: 'file-txt',
-        name: 'notes.txt',
-        kind: 'text',
-        mimeType: 'text/plain',
-        size: 400,
-        status: 'ready',
-        extractedText: 'ข้อความจาก txt',
-        createdAt: 1001,
-      },
-      {
-        id: 'file-md',
-        name: 'handoff.md',
-        kind: 'other',
-        mimeType: 'text/markdown',
-        size: 600,
-        status: 'ready',
-        extractedText: 'ข้อความ handoff',
-        createdAt: 1002,
-      },
-    ],
+    sourceFiles: [{ id: 'file-txt', name: 'notes.txt', kind: 'text', mimeType: 'text/plain', size: 400, status: 'ready', extractedText: 'ข้อความจาก txt', createdAt: 1001 }, { id: 'file-md', name: 'handoff.md', kind: 'other', mimeType: 'text/markdown', size: 600, status: 'ready', extractedText: 'ข้อความ handoff', createdAt: 1002 }] as any[],
   });
   // Only txt is retrieved; md is ready but not selected
   const snapshot = buildStudioSnapshot(task, null, null, ['file:file-txt']);
@@ -700,7 +564,7 @@ test('Phase 1.5: ready but not selected file shows usedInContext = false', () =>
 });
 
 test('Phase 1.5: retrievedSourceIds defaults to empty array when not passed', () => {
-  const task = makeMinimalTask({ sourceText: 'บริบทงาน', sourceFiles: [] });
+  const task = makeMinimalTask({ sourceText: 'บริบทงาน', sourceFiles: [] as any[] });
   const snapshot = buildStudioSnapshot(task);
   assert.ok(snapshot);
   assert.deepEqual(snapshot.retrievedSourceIds, [], 'default retrievedSourceIds is empty');
@@ -709,7 +573,7 @@ test('Phase 1.5: retrievedSourceIds defaults to empty array when not passed', ()
 // ─── Phase 2: canProceed + Recovery Flow Tests ────────────────────────────────
 
 test('Phase 2: canProceed is true when contextStatus is ready', () => {
-  const task = makeMinimalTask({ sourceText: 'บริบทงาน', sourceFiles: [] });
+  const task = makeMinimalTask({ sourceText: 'บริบทงาน', sourceFiles: [] as any[] });
   const snapshot = buildStudioSnapshot(task);
   assert.ok(snapshot);
   assert.equal(snapshot.contextStatus, 'ready');
@@ -719,19 +583,7 @@ test('Phase 2: canProceed is true when contextStatus is ready', () => {
 test('Phase 2: canProceed is true when contextStatus is partial', () => {
   const task = makeMinimalTask({
     sourceText: 'บริบทงาน',
-    sourceFiles: [
-      {
-        id: 'file-pdf',
-        name: 'scan.pdf',
-        kind: 'pdf',
-        mimeType: 'application/pdf',
-        size: 8000,
-        status: 'unreadable',
-        extractedText: '',
-        failureReason: 'pdf_text_garbled_after_ocr',
-        createdAt: 1000,
-      },
-    ],
+    sourceFiles: [{ id: 'file-pdf', name: 'scan.pdf', kind: 'pdf', mimeType: 'application/pdf', size: 8000, status: 'unreadable', extractedText: '', failureReason: 'pdf_text_garbled_after_ocr', createdAt: 1000 }] as any[],
   });
   const snapshot = buildStudioSnapshot(task);
   assert.ok(snapshot);
@@ -740,7 +592,7 @@ test('Phase 2: canProceed is true when contextStatus is partial', () => {
 });
 
 test('Phase 2: canProceed is true when contextStatus is empty', () => {
-  const task = makeMinimalTask({ sourceText: '', sourceFiles: [] });
+  const task = makeMinimalTask({ sourceText: '', sourceFiles: [] as any[] });
   const snapshot = buildStudioSnapshot(task);
   assert.ok(snapshot);
   assert.equal(snapshot.contextStatus, 'empty');
@@ -750,19 +602,7 @@ test('Phase 2: canProceed is true when contextStatus is empty', () => {
 test('Phase 2: canProceed is false when contextStatus is blocked', () => {
   const task = makeMinimalTask({
     sourceText: '',
-    sourceFiles: [
-      {
-        id: 'file-pdf',
-        name: 'scan.pdf',
-        kind: 'pdf',
-        mimeType: 'application/pdf',
-        size: 8000,
-        status: 'failed_extraction',
-        extractedText: '',
-        failureReason: 'pdf_ocr_failed',
-        createdAt: 1000,
-      },
-    ],
+    sourceFiles: [{ id: 'file-pdf', name: 'scan.pdf', kind: 'pdf', mimeType: 'application/pdf', size: 8000, status: 'failed_extraction', extractedText: '', failureReason: 'pdf_ocr_failed', createdAt: 1000 }] as any[],
   });
   const snapshot = buildStudioSnapshot(task);
   assert.ok(snapshot);
@@ -773,20 +613,7 @@ test('Phase 2: canProceed is false when contextStatus is blocked', () => {
 test('Phase 2: failed file with storageKey remains in fileIssues and retryable', () => {
   const task = makeMinimalTask({
     sourceText: 'บริบทงาน',
-    sourceFiles: [
-      {
-        id: 'file-pdf',
-        name: 'brief.pdf',
-        kind: 'pdf',
-        mimeType: 'application/pdf',
-        size: 8000,
-        status: 'unreadable',
-        extractedText: '',
-        failureReason: 'pdf_text_garbled_after_ocr',
-        storageKey: 'room-file:demo:brief',
-        createdAt: 1000,
-      },
-    ],
+    sourceFiles: [{ id: 'file-pdf', name: 'brief.pdf', kind: 'pdf', mimeType: 'application/pdf', size: 8000, status: 'unreadable', extractedText: '', failureReason: 'pdf_text_garbled_after_ocr', storageKey: 'room-file:demo:brief', createdAt: 1000 }] as any[],
   });
   const snapshot = buildStudioSnapshot(task);
   assert.ok(snapshot);

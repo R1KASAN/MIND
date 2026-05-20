@@ -213,6 +213,14 @@ function hasPersonalFrictionSignal(normalized: string) {
     'ไม่พร้อม',
     'ไม่มีสมาธิ',
     'ใจลอย',
+    'กลัว',
+    'รู้สึกผิด',
+    'ไม่กล้า',
+    'กังวล',
+    'แพนิค',
+    'ลน',
+    'ท้อ',
+    'ทะเลาะ',
   ]);
 }
 
@@ -249,12 +257,37 @@ export function isProposalLike(deliverableType: TaskShapeDeliverableType) {
   return deliverableType === 'proposal' || deliverableType === 'timeline' || deliverableType === 'estimate';
 }
 
+export function humanizeUserFacingActionText(value: string, taskShape?: TaskShape) {
+  let next = value
+    .replace(/productivity template/gi, 'คำแนะนำที่ฝืนเกินไป')
+    .replace(/behaviorIntent/g, 'เจตนาของงาน')
+    .replace(/\bblocker\b/gi, 'จุดติด')
+    .replace(/\bfallback\b/gi, 'คำตอบสำรอง')
+    .replace(/\breflection\b/gi, 'การสะท้อนสั้น ๆ')
+    .replace(/ผู้ใช้กำลัง/g, 'ตอนนี้คุณกำลัง')
+    .replace(/ผู้ใช้ติดที่/g, 'ตอนนี้คุณติดที่')
+    .replace(/ผู้ใช้ให้/g, 'คุณให้')
+    .replace(/ผู้ใช้/g, 'คุณ');
+
+  if (taskShape && isPersonalFrictionTaskShape(taskShape)) {
+    next = next
+      .replace(/แรงเสียดทานส่วนตัว/g, 'ร่างกายกับสมาธิยังไม่เต็ม')
+      .replace(/ตอนนี้คุณกำลังมีร่างกายกับสมาธิยังไม่เต็ม/g, 'ตอนนี้ร่างกายกับสมาธิยังไม่เต็ม')
+      .replace(/ตอนนี้คุณติดที่ร่างกายกับสมาธิยังไม่เต็ม/g, 'ตอนนี้ร่างกายกับสมาธิยังไม่เต็ม')
+      .replace(/คำตอบสำรอง/g, 'คำตอบ')
+      .replace(/การสะท้อนสั้น ๆ/g, 'การฟังบริบทสั้น ๆ');
+  }
+
+  return next.replace(/\s+/g, ' ').trim();
+}
+
 // ---------------------------------------------------------------------------
 // Signal Router v2 — priority-based classification
 // ---------------------------------------------------------------------------
 
 function detectDeliverableTypeFromText(text: string): TaskShapeDeliverableType | undefined {
   const normalized = normalizeTextForMatch(text);
+  const hasPersonalFriction = hasPersonalFrictionSignal(normalized);
 
   // Priority 1: explicit reply / demo request
   if (hasExplicitReplyIntent(text) || hasDemoRequestIntent(text)) return 'reply';
@@ -275,6 +308,8 @@ function detectDeliverableTypeFromText(text: string): TaskShapeDeliverableType |
   if (estimate) return 'estimate';
   // scope alone without execution signals => proposal (scoping work)
   if (scope && !hasExecutionSignal(normalized)) return 'proposal';
+
+  if (hasPersonalFriction) return 'unknown';
 
   // Priority 3: execution / delegation chaos
   if (hasExecutionSignal(normalized)) return 'execution';
@@ -344,7 +379,12 @@ function detectBehaviorIntentFromText(
 ): TaskBehaviorIntent {
   const normalized = normalizeTextForMatch(text);
   if (hasPersonalFrictionSignal(normalized)) return 'personal_friction';
-  if (deliverableType !== 'unknown' || hasExplicitReplyIntent(text) || hasDemoRequestIntent(text)) return 'client_delivery';
+  if (
+    deliverableType !== 'unknown' ||
+    hasExplicitReplyIntent(text) ||
+    hasDemoRequestIntent(text) ||
+    includesAny(normalized, ['ลูกค้า', 'client', 'ผู้ว่าจ้าง'])
+  ) return 'client_delivery';
   if (hasAdminTaskSignal(normalized)) return 'admin_task';
   return 'admin_task';
 }
@@ -411,7 +451,7 @@ function buildWorkContextFromText(
   }
 
   if (hasPersonalFrictionSignal(normalized)) {
-    return 'ผู้ใช้ติดที่แรงเสียดทานส่วนตัว เช่น หิว เหนื่อย หรือยังไม่พร้อม แต่ยังต้องกลับไปทำงานต่อ';
+    return 'ตอนนี้ร่างกายหรือสมาธิยังไม่เต็ม เช่น หิว เหนื่อย หรือยังไม่พร้อม แต่ยังอยากให้งานขยับต่อ';
   }
 
   if (hasAdminTaskSignal(normalized)) {
@@ -452,12 +492,17 @@ export function deriveTaskShapeFromText(text: string, partial?: PartialTaskShape
     ...deriveMissingInputsFromText(normalizedText, deliverableType),
     ...coerceMissingInputs(partial?.missingInputs),
   ]);
+  const detectedBehaviorIntent = detectBehaviorIntentFromText(normalizedText, deliverableType);
+  const detectedWorkContext = buildWorkContextFromText(normalizedText, deliverableType, immediateNeed, missingInputs);
+  const strongPersonalFrictionSignal = detectedBehaviorIntent === 'personal_friction';
   const workContext =
-    normalizeOptionalString(partial?.workContext) ??
-    buildWorkContextFromText(normalizedText, deliverableType, immediateNeed, missingInputs);
+    strongPersonalFrictionSignal
+      ? detectedWorkContext
+      : normalizeOptionalString(partial?.workContext) ?? detectedWorkContext;
   const behaviorIntent =
-    coerceBehaviorIntent(partial?.behaviorIntent) ??
-    detectBehaviorIntentFromText(normalizedText, deliverableType);
+    strongPersonalFrictionSignal
+      ? detectedBehaviorIntent
+      : coerceBehaviorIntent(partial?.behaviorIntent) ?? detectedBehaviorIntent;
   const confidence = coerceConfidence(partial?.confidence) ?? inferConfidence(normalizedText, deliverableType, immediateNeed);
 
   return {
@@ -624,6 +669,21 @@ export function buildIntakeFallbackCandidates(
     ];
   }
 
+  if (isPersonalFrictionTaskShape(taskShape)) {
+    return [
+      {
+        title: 'เช็กว่าต้องเติมอะไรก่อน แล้วเลือกก้าวงานที่เล็กที่สุด',
+        rationale: 'โจทย์ตอนนี้ไม่ใช่ขาดแผนงาน แต่ร่างกายหรือสมาธิยังไม่พร้อมพอจะเริ่มเต็มแรง',
+        kind: 'resume_first' as const,
+      },
+      {
+        title: 'ถามตัวเองหนึ่งข้อว่าต้องเติมอะไรก่อนกลับไปทำงาน',
+        rationale: 'ช่วยให้คำแนะนำไม่ฝืนสภาพตอนนี้ และยังรักษาบริบทจริงของคุณไว้',
+        kind: 'dependency_first' as const,
+      },
+    ];
+  }
+
   if (taskShape.deliverableType === 'execution') {
     return [
       {
@@ -634,21 +694,6 @@ export function buildIntakeFallbackCandidates(
       {
         title: 'ระบุงานที่บล็อกอยู่และส่งต่อให้คนรับผิดชอบโดยตรง',
         rationale: 'เหมาะเมื่อมี dependency หลายจุดและต้องการปลดล็อกพร้อมกันหลายทาง',
-        kind: 'dependency_first' as const,
-      },
-    ];
-  }
-
-  if (isPersonalFrictionTaskShape(taskShape)) {
-    return [
-      {
-        title: 'สะท้อนว่าตอนนี้ติดที่พลังงาน แล้วเลือกก้าวงานเล็กที่สุด',
-        rationale: 'โจทย์ตอนนี้ไม่ใช่ขาดแผนงาน แต่ร่างกายหรือสมาธิยังไม่พร้อมพอจะเริ่มเต็มแรง',
-        kind: 'resume_first' as const,
-      },
-      {
-        title: 'ถามตัวเองหนึ่งข้อว่าต้องเติมอะไรก่อนกลับไปทำงาน',
-        rationale: 'ช่วยให้คำตอบไม่กลายเป็น productivity template และยังรักษาบริบทของผู้ใช้ไว้',
         kind: 'dependency_first' as const,
       },
     ];
@@ -795,6 +840,27 @@ export function buildActionFallbackCopy(
     };
   }
 
+  if (isPersonalFrictionTaskShape(taskShape)) {
+    return {
+      chosenTitle: 'เติมสิ่งที่ขาด แล้วเริ่มงานจากก้าวเล็กที่สุด',
+      chosenRationale: 'จากบริบท ตอนนี้แรงกายหรือสมาธิยังไม่เต็ม ไม่ใช่ขาดแผนงานใหม่ จึงควรลดก้าวให้เบาที่สุดก่อน',
+      successSignal: 'รู้สิ่งเล็ก ๆ ที่ต้องเติมตอนนี้ และมีก้าวงานหนึ่งก้าวที่เริ่มต่อได้',
+      whyThisNow: 'ถ้าข้ามเรื่องหิว เหนื่อย หรือหมดแรงไปเลย คำแนะนำจะฝืนเกินไป ก้าวนี้เลยเริ่มจากสิ่งที่คุณพอทำได้ในสภาพตอนนี้',
+      situationSummary: 'ตอนนี้ร่างกายกับสมาธิยังไม่เต็ม แต่คุณยังอยากให้งานขยับต่อ จึงควรลดภาระก่อนกลับไปก้าวเล็ก',
+      replyDraft: undefined,
+      alternatives: [
+        {
+          title: 'ถามกลับสั้น ๆ ว่าตอนนี้ต้องกิน พัก หรือเริ่มงานเบา ๆ ก่อน',
+          rationale: 'เหมาะเมื่อไม่ควรเดาแทนคุณว่าสิ่งที่ต้องเติมก่อนคืออะไร',
+        },
+        {
+          title: 'เลือกงานจุดเล็กที่สุดที่ทำได้หลังเติมพลัง',
+          rationale: 'ช่วยให้ยังขยับงานต่อได้โดยไม่ฝืนเริ่มจากก้อนใหญ่',
+        },
+      ],
+    };
+  }
+
   if (taskShape.deliverableType === 'execution') {
     return {
       chosenTitle: 'แบ่งงานและส่งต่อให้ทีมเพื่อปลดล็อกงานที่ค้างอยู่',
@@ -811,27 +877,6 @@ export function buildActionFallbackCopy(
         {
           title: 'ลิสต์งานทุกชิ้นและจัดลำดับว่าอะไรด่วนที่สุด',
           rationale: 'ช่วยให้เห็นภาพรวมก่อนเริ่ม delegate เพื่อไม่ให้งานสำคัญหลุด',
-        },
-      ],
-    };
-  }
-
-  if (isPersonalFrictionTaskShape(taskShape)) {
-    return {
-      chosenTitle: 'เลือกสิ่งเดียวที่ต้องเติมก่อนกลับไปทำงานก้าวเล็ก',
-      chosenRationale: 'จากบริบท ผู้ใช้ติดที่แรงกายหรือสมาธิ ไม่ใช่ขาดแผนงานใหม่ จึงควรสะท้อนสภาพตอนนี้แล้วลดก้าวให้เบาที่สุด',
-      successSignal: 'รู้สิ่งเล็ก ๆ ที่ต้องเติมตอนนี้ และมีก้าวงานหนึ่งก้าวที่เริ่มต่อได้',
-      whyThisNow: 'ถ้าข้ามสภาพหิว เหนื่อย หรือหมดแรง คำแนะนำจะกลายเป็น productivity template ที่ไม่ฟังผู้ใช้',
-      situationSummary: 'ผู้ใช้กำลังมีแรงเสียดทานส่วนตัวแต่ยังต้องทำงาน จึงควรช่วยลดภาระก่อนพากลับไปก้าวเล็ก',
-      replyDraft: undefined,
-      alternatives: [
-        {
-          title: 'ถามกลับสั้น ๆ ว่าตอนนี้ต้องกิน พัก หรือเริ่มงานเบา ๆ ก่อน',
-          rationale: 'เหมาะเมื่อไม่ควรเดาแทนผู้ใช้ว่าแรงเสียดทานหลักคืออะไร',
-        },
-        {
-          title: 'เลือกงานจุดเล็กที่สุดที่ทำได้หลังเติมพลัง',
-          rationale: 'ช่วยให้ยังขยับงานต่อได้โดยไม่ฝืนเริ่มจากก้อนใหญ่',
         },
       ],
     };

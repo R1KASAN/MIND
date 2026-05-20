@@ -115,6 +115,7 @@ export function synthesizeLocally(dump: string): AiSynthesisResponse {
       title,
       rationale: rationaleFromSegment(primary),
       micro_steps: microStepsFromSegment(primary, title),
+      micro_steps_source: 'fallback',
     },
     reply_draft: fallback.replyDraft,
     alternative_actions: alternatives,

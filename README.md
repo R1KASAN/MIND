@@ -57,6 +57,17 @@ For generic Next.js development without the local AI path, use the raw escape ha
 npm run dev:raw
 ```
 
+### External Puter AI Backend
+
+For manual checks of the external-safe backend, set MIND's Puter auth token env var before starting the app:
+
+```bash
+MIND_AI_BACKEND=external_safe
+PUTER_API_KEY=<your Puter auth token>
+```
+
+`PUTER_API_KEY` is MIND's env name for the Puter auth token. Puter docs may refer to the same value as `PUTER_AUTH_TOKEN`.
+
 If Next.js reports SWC/Turbopack helper errors, follow the reset steps in [docs/agents/dev-workflow.md](docs/agents/dev-workflow.md) before assuming the app is broken.
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.

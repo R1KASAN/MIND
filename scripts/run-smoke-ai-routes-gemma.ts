@@ -55,7 +55,7 @@ function startServer(port: number) {
   const serverLogPath = process.env.MIND_SMOKE_AI_ROUTES_SERVER_LOG_PATH;
   const serverLogFd = serverLogPath ? openSync(serverLogPath, 'a') : null;
 
-  return spawn('npm', ['run', 'start', '--', '--hostname', '127.0.0.1', '--port', String(port)], {
+  return spawn('npm', ['run', 'start:local-ai', '--', '--hostname', '127.0.0.1', '--port', String(port)], {
     cwd: process.cwd(),
     env: {
       ...process.env,

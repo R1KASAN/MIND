@@ -3,9 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTrackMountEvent, trackEvent } from '@/lib/instrumentation';
 import { AiSynthesisResponse } from '@/lib/ai/schema';
-import type { Action, CurrentPlan, CurrentPlanStep, PlanGeneratedBy, PlanSourceKindLabel, TaskConstraints } from '@/lib/store/idb';
+import type { Action, CurrentPlan, TaskConstraints } from '@/lib/store/idb';
 import type { ActionNegotiationInput } from '@/lib/orchestrator/task-controller';
-import { formatConfidenceLabel } from '@/lib/orchestrator/plan-provenance';
 import { AIProcessingIndicator } from '@/components/AI/AIProcessingIndicator';
 import { StepEvidencePanel } from './StepEvidencePanel';
 import { hasRetrievedEvidence } from '@/lib/orchestrator/step-evidence-display';
@@ -149,41 +148,53 @@ export function OneAction({
 
       {fileLifecycleItems.length > 0 && (
         <div
-          className="supporting-panel"
-          style={{ width: '100%', maxWidth: '42rem', padding: '0.75rem 0.85rem' }}
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '0.45rem',
+            opacity: 0.8,
+            width: '100%',
+            maxWidth: '42rem'
+          }}
           aria-label="สถานะไฟล์แนบในห้องนี้"
         >
-          <p className="supporting-label" style={{ marginBottom: '0.45rem' }}>
-            สถานะไฟล์แนบ
-          </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
-            {fileLifecycleItems.map((file) => (
-              <div
-                key={file.id}
-                style={{ display: 'flex', justifyContent: 'space-between', gap: '0.65rem', alignItems: 'center' }}
+          {fileLifecycleItems.map((file) => (
+            <div
+              key={file.id}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                padding: '0.35rem 0.65rem',
+                background: 'rgba(255, 255, 255, 0.03)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                borderRadius: '999px',
+              }}
+            >
+              <span
+                style={{
+                  color: 'var(--text-secondary)',
+                  fontSize: '0.78rem',
+                  maxWidth: '12rem',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
               >
-                <span
-                  style={{
-                    minWidth: 0,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    color: 'var(--text-secondary)',
-                    fontSize: '0.84rem',
-                  }}
-                >
-                  {file.name}
-                </span>
-                <span className={file.status === 'ready' ? 'studio-chip studio-chip-success' : 'studio-chip'}>
-                  {file.copy.title}
-                </span>
-              </div>
-            ))}
-          </div>
+                {file.name}
+              </span>
+              <span
+                className={file.status === 'ready' ? 'studio-chip studio-chip-success' : 'studio-chip'}
+                style={{ fontSize: '0.72rem', padding: '0.15rem 0.4rem', background: 'transparent' }}
+              >
+                {file.copy.title}
+              </span>
+            </div>
+          ))}
           {sourceFiles.length > fileLifecycleItems.length && (
-            <p className="studio-inline-note" style={{ margin: '0.5rem 0 0' }}>
-              อีก {sourceFiles.length - fileLifecycleItems.length} ไฟล์อยู่ในบริบทห้องนี้
-            </p>
+            <span style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', alignSelf: 'center' }}>
+              อีก {sourceFiles.length - fileLifecycleItems.length} ไฟล์ในบริบท
+            </span>
           )}
         </div>
       )}
@@ -195,7 +206,7 @@ export function OneAction({
             onClick={onNotLikeThis}
             style={{ background: 'transparent', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}
           >
-            ช่วยแก้ก้าวนี้
+            ฉันติดขัด / ช่วยวินิจฉัยจุดที่บล็อกอยู่
           </button>
         )}
       </div>
@@ -233,7 +244,7 @@ export function OneAction({
           }}
           onClick={markAdjustmentIntent}
         >
-          ปรับก้าวนี้เพิ่มเติม
+          ย่อยก้าวนี้ให้เล็กลง / ปรับเปลี่ยนก้าวนี้
         </summary>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', marginTop: '0.85rem' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
@@ -317,7 +328,7 @@ export function OneAction({
                 textAlign: 'left',
               }}
             >
-              ปรับเพิ่ม
+              ตัวเลือกการย่อยขั้นตอนเพิ่มเติม
             </summary>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem', marginTop: '0.75rem' }}>
               <button onClick={() => {

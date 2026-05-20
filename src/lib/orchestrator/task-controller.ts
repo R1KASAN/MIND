@@ -70,6 +70,7 @@ import {
   requestReentry,
   requestRescue,
   requestScaffold,
+  recordCompletedCycleInRoomMemory,
   SynthesisFailure,
 } from '@/lib/orchestrator/task-events';
 
@@ -104,6 +105,8 @@ export interface TaskControllerBindings {
   setIsScaffoldRefining: Setter<boolean>;
   setScaffoldRefineFeedback: Setter<ScaffoldRefineFeedback | null>;
   setDumpStartTime: Setter<number | null>;
+  isDumpPending?: boolean;
+  setIsDumpPending?: Setter<boolean>;
   recordAiOpsEntry: (entry: AiOpsDebugEntry) => void;
   persistSession?: (session: AppSession) => Promise<void>;
   persistActionSave?: (action: Action) => Promise<void>;
@@ -308,6 +311,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
       existingAction,
       persistedNegotiationMode,
     } = options;
+    console.info('[MIND][AI_PUTER] Raw Action Response:', JSON.stringify(actionResponse, null, 2));
     const artifacts = buildActionSuccessArtifacts({
       task,
       intake,
@@ -316,6 +320,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
       existingAction,
       persistedNegotiationMode,
     });
+    console.info('[MIND][AI_PUTER] Normalized Action Response:', JSON.stringify(artifacts.payload, null, 2));
     const stableSummary = buildStableSummary(task, [
       actionResponse.situationSummary,
       intake.roomDigest,
@@ -532,7 +537,11 @@ export function createTaskController(bindings: TaskControllerBindings) {
         lastAiOperation: 'intake',
       };
 
-      if (intake.requiresClarification) {
+      const hasClarificationAnswer = task.pendingInputs.some(
+        (input) => input.kind === 'clarification'
+      );
+
+      if (intake.requiresClarification && !hasClarificationAnswer) {
         bindings.setClarificationPrompt(intake.clarificationQuestion || 'ช่วยบอกอีกนิดว่าตอนนี้ต้องตอบหรือขยับส่วนไหนก่อน');
         bindings.setCurrentWhyThisNow('');
         const clarificationTask: TaskContext = {
@@ -893,7 +902,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
     } else {
       clearScaffoldRefineState();
     }
-    bindings.setCurrentRescueState(rescueFallbackState);
+    bindings.setCurrentRescueState(null);
     bindings.setIsRescueLoading(true);
     await updateStatus('RESCUE', {}, nextTask);
     trackEvent('rescue_triggered', buildAnalyticsBase(nextTask, {
@@ -1107,13 +1116,13 @@ export function createTaskController(bindings: TaskControllerBindings) {
       lastAttemptAt: Date.now(),
     };
 
+    bindings.setIsDumpPending?.(true);
     await updateStatus('SYNTHESIZING', {
       currentActionId: currentTask.currentActionId,
       currentPayload: currentTask.lastSynthesis,
       lastFailureReason: currentTask.lastFailureReason,
       lastWorkflowType: currentTask.workflowType ?? base.lastWorkflowType,
     }, retriedTask);
-
     try {
       await runAiLifecycle(retriedTask, true);
     } catch (err) {
@@ -1124,6 +1133,8 @@ export function createTaskController(bindings: TaskControllerBindings) {
       if (!recovered) {
         throw failure;
       }
+    } finally {
+      bindings.setIsDumpPending?.(false);
     }
   };
 
@@ -1188,7 +1199,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
         createdAt: Date.now(),
         title: suggested.title,
         rationale: suggested.rationale,
-        microSteps: buildBootstrapMicroSteps({ title: suggested.title }),
+        microSteps: buildBootstrapMicroSteps({ title: suggested.title }, currentTask.taskShape),
         isPinned: false,
         state: 'PENDING',
         workflowType: currentTask.workflowType,
@@ -1283,6 +1294,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
       lifecycleState: 'synthesizing',
       lastAttemptAt: Date.now(),
     };
+    bindings.setIsDumpPending?.(true);
     await updateStatus('SYNTHESIZING', {
       currentActionId: null,
       currentPayload: undefined,
@@ -1295,6 +1307,8 @@ export function createTaskController(bindings: TaskControllerBindings) {
         ? err
         : new SynthesisFailure('unknown', 'ไม่สามารถเชื่อมต่อกับ AI endpoint ได้');
       await applyDeterministicFallback(nextTask, failure);
+    } finally {
+      bindings.setIsDumpPending?.(false);
     }
   };
 
@@ -1422,7 +1436,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
       rationale: alt.rationale,
       microSteps: buildBootstrapMicroSteps({
         title: alt.title,
-      }),
+      }, currentTask.taskShape),
       isPinned: false,
       state: 'PENDING',
       workflowType,
@@ -1621,6 +1635,10 @@ export function createTaskController(bindings: TaskControllerBindings) {
           lastFailureReason: undefined,
         }
       : null;
+
+    if (completedTask) {
+      await recordCompletedCycleInRoomMemory(completedTask);
+    }
 
     await updateStatus('DUMP_ENTRY', {
       currentActionId: null,

@@ -372,6 +372,83 @@ test('parseAiActionResponse falls back for malformed whyThisNow without rejectin
   assert.equal(parsed.situationSummary.includes('pricing table'), true);
 });
 
+test('parseAiActionResponse humanizes personal-friction user-facing fields', () => {
+  const parsed = parseAiActionResponse(JSON.stringify({
+    chosenAction: {
+      title: 'สะท้อนว่าตอนนี้ติดที่พลังงาน แล้วเลือกก้าวงานเล็กที่สุด',
+      rationale: 'ผู้ใช้กำลังมีแรงเสียดทานส่วนตัว ไม่ใช่ขาดแผนงาน',
+      successSignal: 'รู้สิ่งเล็ก ๆ ที่ต้องเติมตอนนี้',
+    },
+    alternatives: [],
+    whyThisNow: 'ถ้าข้ามสภาพหิว เหนื่อย หรือหมดแรง คำแนะนำจะกลายเป็น productivity template ที่ไม่ฟังผู้ใช้',
+    situationSummary: 'ผู้ใช้กำลังมีแรงเสียดทานส่วนตัวแต่ยังต้องทำงาน จึงควรช่วยลดภาระก่อนพากลับไปก้าวเล็ก',
+    meta: {
+      model: 'gemma2:2b',
+      usedRoomFiles: [],
+      repairUsed: false,
+    },
+  }), {
+    fallbackWorkflowType: 'client_resume',
+    fallbackTaskShape: {
+      deliverableType: 'unknown',
+      immediateNeed: 'resume_execution',
+      missingInputs: [],
+      workContext: 'ผู้ใช้ติดที่แรงเสียดทานส่วนตัว เช่น หิว เหนื่อย หรือยังไม่พร้อม แต่ยังต้องกลับไปทำงานต่อ',
+      behaviorIntent: 'personal_friction',
+      confidence: 0.78,
+    },
+  });
+
+  const visibleText = [
+    parsed.chosenAction.title,
+    parsed.chosenAction.rationale,
+    parsed.whyThisNow,
+    parsed.situationSummary,
+  ].join(' ');
+
+  assert.match(visibleText, /ตอนนี้คุณ|ร่างกาย|สมาธิ|หิว|หมดแรง/);
+  assert.doesNotMatch(visibleText, /ผู้ใช้|แรงเสียดทานส่วนตัว|productivity template|fallback|reflection|behaviorIntent|blocker/);
+});
+
+test('parseAiActionResponse replaces delegation copy for personal-friction tasks', () => {
+  const parsed = parseAiActionResponse(JSON.stringify({
+    chosenAction: {
+      title: 'แบ่งงานและมอบหมายให้ทีมก่อนเพื่อปลดล็อกงานที่ค้าง',
+      rationale: 'เมื่อมีหลายชิ้นงานกระจัดกระจาย การ delegate ชัด ๆ ช่วยให้ทีมเดินต่อได้ทันที',
+      successSignal: 'ทีมแต่ละคนรู้ว่างานของตัวเองคืออะไรและเริ่มได้เลย',
+    },
+    alternatives: [],
+    whyThisNow: 'ตอนนี้มีหลายงานค้างพร้อมกัน การ delegate จะช่วยให้ขยับได้เร็วที่สุด',
+    situationSummary: 'มีงานกระจัดกระจายหลายชิ้นที่ต้องแบ่งและมอบหมายให้ทีมก่อนจะขยับต่อได้',
+    meta: {
+      model: 'gemma2:2b',
+      usedRoomFiles: [],
+      repairUsed: false,
+    },
+  }), {
+    fallbackWorkflowType: 'client_resume',
+    fallbackTaskShape: {
+      deliverableType: 'unknown',
+      immediateNeed: 'resume_execution',
+      missingInputs: [],
+      workContext: 'ตอนนี้ร่างกายหรือสมาธิยังไม่เต็ม เช่น หิว เหนื่อย หรือยังไม่พร้อม แต่ยังอยากให้งานขยับต่อ',
+      behaviorIntent: 'personal_friction',
+      confidence: 0.78,
+    },
+  });
+
+  const visibleText = [
+    parsed.chosenAction.title,
+    parsed.chosenAction.rationale,
+    parsed.chosenAction.successSignal,
+    parsed.whyThisNow,
+    parsed.situationSummary,
+  ].join(' ');
+
+  assert.match(visibleText, /หิว|เหนื่อย|สมาธิ|ร่างกาย|เติม|ก้าวเล็ก/);
+  assert.doesNotMatch(visibleText, /delegate|มอบหมาย|ส่งต่อให้ทีม|ทีมเดินต่อ|ปลดล็อกงานที่ค้าง/);
+});
+
 test('parseAiActionResponse rejects malformed structured summary fragments', () => {
   assert.throws(() => parseAiActionResponse(JSON.stringify({
     chosenAction: {
@@ -588,4 +665,125 @@ test('parseAiRescueResponse derives mode from normalized reason when mode is inv
 
   assert.equal(parsed.diagnosis.primaryReason, 'dependency');
   assert.equal(parsed.rescuePlan.mode, 'follow_up');
+});
+
+// ---------------------------------------------------------------------------
+// Fallback tracking + partial-salvage tests (added with numPredict bump)
+// ---------------------------------------------------------------------------
+
+test('parseAiIntakeResponse uses AI candidateActions verbatim when fully provided', () => {
+  // Simulate what Gemma SHOULD return when numPredict is high enough.
+  const raw = JSON.stringify({
+    workflowType: 'client_resume',
+    roomDigest: 'หิวข้าวมากแต่ต้องทำงานต่อ',
+    taskFrame: {
+      objective: 'จัดการแรงเสียดทานส่วนตัวก่อนกลับไปทำงานต่อ',
+      stage: 'ติดที่พลังงานหรือสมาธิ',
+      stakeholders: [],
+    },
+    blockers: [],
+    requiresClarification: false,
+    taskShape: {
+      deliverableType: 'unknown',
+      immediateNeed: 'resume_execution',
+      behaviorIntent: 'personal_friction',
+      missingInputs: [],
+      workContext: 'ผู้ใช้หิวข้าวแต่ยังต้องทำงานต่อ',
+      confidence: 0.85,
+    },
+    candidateActions: [
+      {
+        title: 'หยุดพักสั้น ๆ แล้วเติมพลังก่อนกลับมาทำงาน',
+        rationale: 'ร่างกายที่ได้รับพลังงานจะทำงานได้มีประสิทธิภาพกว่า',
+        kind: 'resume_first',
+      },
+    ],
+    meta: { model: 'gemma2:2b', usedRoomFiles: [], repairUsed: false },
+  });
+
+  const parsed = parseAiIntakeResponse(raw, {
+    fallbackSourceText: 'หิวข้าวมากแต่ต้องทำงานต่อ',
+  });
+
+  // AI-provided title must survive unchanged — not replaced by fallback.
+  assert.equal(parsed.candidateActions[0]?.title, 'หยุดพักสั้น ๆ แล้วเติมพลังก่อนกลับมาทำงาน');
+  assert.equal(parsed.candidateActions[0]?.kind, 'resume_first');
+  // meta.repairUsed comes from AI payload; finalize() will overwrite later.
+  assert.equal(parsed.meta.repairUsed, false);
+});
+
+test('parseAiIntakeResponse uses fallback candidateActions when AI provides none', () => {
+  // Simulates truncated Gemma output that has taskShape but no candidateActions.
+  const raw = JSON.stringify({
+    workflowType: 'client_resume',
+    roomDigest: 'หิวข้าวมากแต่ต้องทำงานต่อ',
+    taskFrame: {
+      objective: 'จัดการแรงเสียดทาน',
+      stage: 'ติดที่พลังงาน',
+      stakeholders: [],
+    },
+    blockers: [],
+    requiresClarification: false,
+    taskShape: {
+      deliverableType: 'unknown',
+      immediateNeed: 'resume_execution',
+      behaviorIntent: 'personal_friction',
+      missingInputs: [],
+      workContext: 'ผู้ใช้หิวข้าวแต่ยังต้องทำงานต่อ',
+      confidence: 0.85,
+    },
+    // candidateActions intentionally missing — simulates truncated output
+    meta: { model: 'gemma2:2b', usedRoomFiles: [], repairUsed: false },
+  });
+
+  const parsed = parseAiIntakeResponse(raw, {
+    fallbackSourceText: 'หิวข้าวมากแต่ต้องทำงานต่อ',
+  });
+
+  // Must still return a valid candidate list via fallback.
+  assert.ok(parsed.candidateActions.length >= 1, 'should have at least 1 candidate from fallback');
+  // Fallback for personal_friction must NOT contain client/project language.
+  const allTitles = parsed.candidateActions.map((c) => c.title).join(' ');
+  assert.doesNotMatch(allTitles, /ลูกค้า|proposal|requirement|ไฟล์/);
+});
+
+test('parseAiIntakeResponse salvages partial candidateAction entries that have title but no kind', () => {
+  // Simulates AI writing candidateActions array but forgetting the `kind` enum.
+  const raw = JSON.stringify({
+    workflowType: 'client_resume',
+    roomDigest: 'หิวข้าวมากแต่ต้องทำงานต่อ',
+    taskFrame: {
+      objective: 'จัดการแรงเสียดทาน',
+      stage: 'ติดที่พลังงาน',
+      stakeholders: [],
+    },
+    blockers: [],
+    requiresClarification: false,
+    taskShape: {
+      deliverableType: 'unknown',
+      immediateNeed: 'resume_execution',
+      behaviorIntent: 'personal_friction',
+      missingInputs: [],
+      workContext: 'ผู้ใช้หิวข้าวแต่ยังต้องทำงานต่อ',
+      confidence: 0.85,
+    },
+    candidateActions: [
+      {
+        title: 'หยุดพักสั้น ๆ แล้วเติมพลังก่อนกลับมาทำงาน',
+        rationale: 'ร่างกายที่ได้รับพลังงานจะทำงานได้มีประสิทธิภาพกว่า',
+        // `kind` intentionally omitted — should be filled from fallback
+      },
+    ],
+    meta: { model: 'gemma2:2b', usedRoomFiles: [], repairUsed: false },
+  });
+
+  const parsed = parseAiIntakeResponse(raw, {
+    fallbackSourceText: 'หิวข้าวมากแต่ต้องทำงานต่อ',
+  });
+
+  // AI title + rationale kept; kind filled from fallback.
+  assert.equal(parsed.candidateActions[0]?.title, 'หยุดพักสั้น ๆ แล้วเติมพลังก่อนกลับมาทำงาน');
+  // kind must be one of the valid enum values (filled by fallback).
+  const validKinds = ['reply_first', 'resume_first', 'dependency_first'];
+  assert.ok(validKinds.includes(parsed.candidateActions[0]?.kind ?? ''), 'kind should be valid enum filled from fallback');
 });

@@ -91,6 +91,20 @@ const CLASSIFICATION_CASES: Array<{
     expectedIntent: 'admin_task',
     allowUnknown: true,
   },
+  {
+    name: 'TH mixed-intent emotional friction with client keyword => personal_friction',
+    input: 'ทะเลาะกับลูกค้า + กลัว/รู้สึกผิด + ไม่กล้าส่งงาน',
+    expectedType: 'unknown',
+    expectedIntent: 'personal_friction',
+    allowUnknown: true,
+  },
+  {
+    name: 'TH pure client relational word => client_delivery',
+    input: 'ลูกค้าด่า',
+    expectedType: 'unknown',
+    expectedIntent: 'client_delivery',
+    allowUnknown: true,
+  },
 ];
 
 for (const { name, input, expectedType, expectedIntent, notType, allowUnknown } of CLASSIFICATION_CASES) {
@@ -108,6 +122,28 @@ for (const { name, input, expectedType, expectedIntent, notType, allowUnknown } 
     }
   });
 }
+
+test('strong personal-friction text wins over conflicting model-provided behaviorIntent', () => {
+  const shape = deriveTaskShapeFromText('หิวข้าวมากแต่ต้องทำงานต่อ ยังไม่มีแรงเปิดงานทั้งก้อน', {
+    deliverableType: 'execution',
+    immediateNeed: 'resume_execution',
+    behaviorIntent: 'client_delivery',
+    workContext: 'งาน client delivery ที่ต้องแบ่งงานให้ทีม',
+  });
+
+  assert.equal(shape.behaviorIntent, 'personal_friction');
+  assert.match(shape.workContext, /หิว|ร่างกาย|สมาธิ|ไม่พร้อม|งานขยับ/);
+  assert.doesNotMatch(shape.workContext, /client delivery|แบ่งงานให้ทีม/);
+});
+
+test('strong personal-friction text keeps weak draft/client signals out of execution fallback', () => {
+  const shape = deriveTaskShapeFromText(
+    'หิวข้าวมากแต่ต้องทำงานต่อ ยังไม่มีแรงเปิดงานทั้งก้อน แต่อยากกลับไปเคลียร์ draft ให้ลูกค้าภายในวันนี้',
+  );
+
+  assert.equal(shape.deliverableType, 'unknown');
+  assert.equal(shape.behaviorIntent, 'personal_friction');
+});
 
 // ---------------------------------------------------------------------------
 // isProposalLike helper
@@ -176,8 +212,10 @@ for (const { name, input, mustNotInclude, titleMustMatch } of FALLBACK_CASES) {
   });
 }
 
-test('personal friction fallback keeps the user context instead of inventing client/project context', () => {
-  const shape = deriveTaskShapeFromText('หิวข้าวแต่ต้องทำงาน');
+test('personal friction fallback keeps the user context in human copy instead of inventing client/project context', () => {
+  const shape = deriveTaskShapeFromText(
+    'หิวข้าวมากแต่ต้องทำงานต่อ ยังไม่มีแรงเปิดงานทั้งก้อน แต่อยากกลับไปเคลียร์ draft ให้ลูกค้าภายในวันนี้',
+  );
   const workflowType = inferWorkflowTypeFromTaskShape(shape);
   const frame = buildTaskFrameFallback(workflowType, shape);
   const candidates = buildIntakeFallbackCandidates(workflowType, shape);
@@ -195,8 +233,11 @@ test('personal friction fallback keeps the user context instead of inventing cli
   assert.equal(shape.deliverableType, 'unknown');
   assert.equal(shape.immediateNeed, 'resume_execution');
   assert.equal(shape.behaviorIntent, 'personal_friction');
-  assert.match(combinedText, /หิว|แรงเสียดทาน|พลังงาน|เติม|ก้าว/);
-  assert.doesNotMatch(combinedText, /ลูกค้า|โปรเจกต์|proposal|requirement|ไฟล์/);
+  assert.match(combinedText, /หิว|ร่างกาย|สมาธิ|พลัง|เติม|ก้าว/);
+  assert.doesNotMatch(combinedText, /โปรเจกต์|proposal|requirement|ไฟล์|delegate|มอบหมาย|ส่งต่อให้ทีม|ทีมเดินต่อ/);
+  assert.doesNotMatch(combinedText, /productivity template|fallback|reflection|behaviorIntent|blocker/);
+  assert.doesNotMatch(action.whyThisNow, /ผู้ใช้|แรงเสียดทานส่วนตัว|productivity template|fallback|reflection/);
+  assert.doesNotMatch(action.situationSummary, /ผู้ใช้|แรงเสียดทานส่วนตัว|productivity template|fallback|reflection/);
 });
 
 test('admin task fallback keeps admin tone instead of client delivery tone', () => {

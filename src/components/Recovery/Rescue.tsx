@@ -73,11 +73,13 @@ export function Rescue({
   focusMode = true,
 }: Props) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', paddingTop: '2rem' }}>
-      <h2>ลองเลือกดูว่า “ติด” เพราะอะไร</h2>
-      <p style={{ color: 'var(--text-secondary)' }}>
-        ถ้าก้าวนี้ยังใช้ได้ ให้ใช้ต่อได้เลย ถ้าใหญ่ไปให้แบ่งย่อย หรือถ้าบริบทไม่ตรงให้กลับไปแก้ข้อมูลเดิม
-      </p>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', paddingTop: '2rem', paddingBottom: 'env(safe-area-inset-bottom)' }}>
+      <div>
+        <h2 style={{ fontSize: '1.35rem', fontWeight: 650 }}>ลองเลือกดูว่า “ติด” เพราะอะไร</h2>
+        <p style={{ color: 'var(--text-secondary)', marginTop: '0.35rem' }}>
+          ถ้าก้าวนี้ยังใช้ได้ ให้ใช้ต่อได้เลย ถ้าใหญ่ไปให้แบ่งย่อย หรือถ้าบริบทไม่ตรงให้กลับไปแก้ข้อมูลเดิม
+        </p>
+      </div>
 
       {loading && (
         <AIProcessingIndicator
@@ -88,29 +90,29 @@ export function Rescue({
       )}
 
       {rescueState && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           <div style={{
-            padding: '1rem',
+            padding: '1.1rem',
             borderRadius: 'var(--radius)',
             background: 'rgba(255,255,255,0.04)',
             border: '1px solid rgba(255,255,255,0.08)',
           }}>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', marginBottom: '0.35rem' }}>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.45rem' }}>
               MIND มองว่าติดตรงนี้
             </p>
-            <p style={{ margin: 0 }}>{rescueState.diagnosis.explanation}</p>
+            <p style={{ margin: 0, lineHeight: 1.6 }}>{rescueState.diagnosis.explanation}</p>
           </div>
 
           <div style={{
-            padding: '1rem',
+            padding: '1.1rem',
             borderRadius: 'var(--radius)',
             background: 'rgba(94, 106, 210, 0.12)',
             border: '1px solid rgba(94, 106, 210, 0.3)',
           }}>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', marginBottom: '0.45rem' }}>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.45rem' }}>
               ทางออกที่แนะนำตอนนี้
             </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', lineHeight: 1.6 }}>
               {rescueState.rescuePlan.steps.map((step) => (
                 <div key={step}>{step}</div>
               ))}
@@ -123,19 +125,19 @@ export function Rescue({
                 <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '0.78rem', fontWeight: 600, listStyle: 'none' }}>
                   ข้อความที่ใช้ต่อได้
                 </summary>
-                <p style={{ margin: '0.6rem 0 0' }}>{rescueState.suggestedMessage}</p>
+                <p style={{ margin: '0.6rem 0 0', lineHeight: 1.6 }}>{rescueState.suggestedMessage}</p>
               </details>
             ) : (
               <div style={{
-                padding: '1rem',
+                padding: '1.1rem',
                 borderRadius: 'var(--radius)',
                 background: 'rgba(255,255,255,0.03)',
                 border: '1px solid rgba(255,255,255,0.08)',
               }}>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', marginBottom: '0.35rem' }}>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.45rem' }}>
                   ข้อความที่ใช้ต่อได้
                 </p>
-                <p style={{ margin: 0 }}>{rescueState.suggestedMessage}</p>
+                <p style={{ margin: 0, lineHeight: 1.6 }}>{rescueState.suggestedMessage}</p>
               </div>
             )
           )}

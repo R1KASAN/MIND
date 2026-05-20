@@ -718,6 +718,14 @@ select:focus {
 }
 
 @media (min-width: 901px) {
+  .mind-room-shell.is-dump-first-view {
+    grid-template-columns: minmax(244px, 280px) minmax(0, 1fr);
+  }
+
+  .mind-room-shell.rooms-collapsed.is-dump-first-view {
+    grid-template-columns: 78px minmax(0, 1fr);
+  }
+
   .mind-room-shell.is-dump-first-view .mind-room-sidebar-wrap {
     opacity: 0.72;
     filter: saturate(0.78);

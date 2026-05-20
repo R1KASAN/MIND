@@ -35,6 +35,7 @@ export function buildPayloadFromAction(action: Action): AiSynthesisResponse {
       title: action.title,
       rationale: action.rationale,
       micro_steps: action.microSteps,
+      micro_steps_source: action.microStepsSource ?? 'fallback',
     },
     alternative_actions: [],
     detected_blockers: action.detectedBlockers ?? [],
@@ -44,10 +45,18 @@ export function buildPayloadFromAction(action: Action): AiSynthesisResponse {
 export function buildBootstrapMicroSteps(action: {
   title: string;
   successSignal?: string;
-}) {
+}, taskShape?: TaskShape) {
+  if (taskShape?.behaviorIntent === 'personal_friction') {
+    return [
+      'เช็กก่อนว่าตอนนี้ต้องเติมอะไรที่สุด: กิน พัก หรือเริ่มงานเบา ๆ',
+      'เลือกงานก้าวแรกที่เล็กพอทำได้ โดยไม่ต้องเปิดทุกอย่างพร้อมกัน',
+      'ทำแค่ก้าวแรก แล้วดูว่าพลังพอกลับไปต่อไหม',
+    ];
+  }
+
   const signal = action.successSignal?.trim() || 'เห็นความคืบหน้าหนึ่งจุดของงานนี้';
   return [
-    `เปิดบริบทหรือไฟล์ที่เกี่ยวกับ "${action.title}"`,
+    `ดูข้อมูลที่คุณมีตอนนี้เกี่ยวกับ "${action.title}"`,
     `ทำก้าวหลักนี้ทันที: ${action.title}`,
     `เช็กผลว่าตอนนี้ ${signal}`,
   ];
@@ -59,6 +68,11 @@ export function buildPayloadFromAiActionResponse(
   blockers: string[],
   taskShape?: TaskShape,
 ): AiSynthesisResponse {
+  const aiSteps = response.starterMicroSteps;
+  const useAiSteps = aiSteps && aiSteps.length === 3 && aiSteps.every((s) => s.trim().length > 0);
+  const microSteps = useAiSteps ? [...aiSteps] : buildBootstrapMicroSteps(response.chosenAction, taskShape);
+  const microStepsSource: 'ai' | 'fallback' = useAiSteps ? 'ai' : 'fallback';
+
   return {
     workflow_type: workflowType,
     requires_clarification: false,
@@ -68,7 +82,8 @@ export function buildPayloadFromAiActionResponse(
     recommended_action: {
       title: response.chosenAction.title,
       rationale: response.chosenAction.rationale,
-      micro_steps: buildBootstrapMicroSteps(response.chosenAction),
+      micro_steps: microSteps,
+      micro_steps_source: microStepsSource,
     },
     alternative_actions: response.alternatives.slice(0, 2).map((alternative) => ({
       title: alternative.title,
@@ -232,6 +247,7 @@ function buildActionStateFromPayload(
       title: payload.recommended_action.title,
       rationale: payload.recommended_action.rationale,
       microSteps: payload.recommended_action.micro_steps,
+      microStepsSource: payload.recommended_action.micro_steps_source ?? 'fallback',
       workflowType,
       situationSummary: payload.situation_summary,
       replyDraft: payload.reply_draft ?? undefined,
@@ -246,6 +262,7 @@ function buildActionStateFromPayload(
     title: payload.recommended_action.title,
     rationale: payload.recommended_action.rationale,
     microSteps: payload.recommended_action.micro_steps,
+    microStepsSource: payload.recommended_action.micro_steps_source ?? 'fallback',
     isPinned: false,
     state: 'PENDING',
     workflowType,

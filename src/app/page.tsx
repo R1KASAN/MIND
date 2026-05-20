@@ -628,6 +628,8 @@ export default function StateMachinePage() {
     setIsScaffoldRefining,
     setScaffoldRefineFeedback,
     setDumpStartTime,
+    isDumpPending,
+    setIsDumpPending,
     recordAiOpsEntry: (entry) => {
       setAiOpsEntries((current) => [entry, ...current].slice(0, 12));
     },
@@ -654,6 +656,16 @@ export default function StateMachinePage() {
     // so dev-time HMR does not trip over callback reinitialization for reentry loading.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aiHealth, currentActionState, isReentryLoading, session, session?.lastActive, session?.task?.id, session?.task?.reentryBrief?.createdAt, session?.uiRoute]);
+
+  useEffect(() => {
+    if (!session) return;
+    if (isRescueLoading) return;
+    if (session.uiRoute !== 'RESCUE') return;
+    if (currentRescueState) return;
+
+    void controller.handleEnterRescue({ preserveRefineFeedback: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.uiRoute, currentRescueState, isRescueLoading]);
 
   useEffect(() => {
     if (!session?.task?.reentryBrief) return;
@@ -829,7 +841,7 @@ export default function StateMachinePage() {
 
   useEffect(() => {
     if (!session || !activeRoom) return;
-    if (isNegotiatingAction || isReentryLoading || isRescueLoading || isScaffoldRefining) return;
+    if (isNegotiatingAction || isReentryLoading || isRescueLoading || isScaffoldRefining || isDumpPending) return;
     // Skip hydration while the user is editing context — prevents jitter from resetting the editor
     if (forceInputEditor) return;
 
@@ -848,6 +860,7 @@ export default function StateMachinePage() {
     isReentryLoading,
     isRescueLoading,
     isScaffoldRefining,
+    isDumpPending,
     persistSessionWithRooms,
     session,
   ]);

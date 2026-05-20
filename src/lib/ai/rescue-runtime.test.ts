@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resolveRescueRouteBudget } from './rescue-runtime';
+import { inferRescueFallbackReason, resolveRescueRouteBudget } from './rescue-runtime';
 
 test('resolveRescueRouteBudget widens only timeout-recovery retries', () => {
   const resolved = resolveRescueRouteBudget(
@@ -43,4 +43,31 @@ test('resolveRescueRouteBudget keeps the baseline budget on first attempt', () =
   });
 
   assert.deepEqual(resolved, baseline);
+});
+
+test('inferRescueFallbackReason maps personal friction to low_energy without requiring blockerSignals', () => {
+  const reason = inferRescueFallbackReason({
+    id: 'task-low-energy',
+    workflowType: 'client_resume',
+    sourceText: 'หิวข้าวมากแต่ต้องทำงานต่อ',
+    sourceFiles: [],
+    extractedText: '',
+    createdAt: 1,
+    pendingInputs: [],
+    blockerSignals: [],
+    lifecycleState: 'stalled',
+    currentStepIndex: 0,
+    currentActionId: null,
+    rescueHistory: [],
+    taskShape: {
+      deliverableType: 'unknown',
+      immediateNeed: 'resume_execution',
+      missingInputs: [],
+      workContext: 'ตอนนี้หิวและหมดแรงแต่ยังต้องทำงานต่อ',
+      behaviorIntent: 'personal_friction',
+      confidence: 0.84,
+    },
+  });
+
+  assert.equal(reason, 'low_energy');
 });
