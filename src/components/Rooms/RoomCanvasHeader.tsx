@@ -147,6 +147,18 @@ export function RoomCanvasHeader({
               <span className="room-canvas-ai-note-label">MIND ใช้อะไร</span>
               <span>{freshness.detail}</span>
             </p>
+            {room.lastReentryBrief?.usedSourceIds && room.lastReentryBrief.usedSourceIds.length > 0 && (
+              <p className="room-canvas-ai-note">
+                <span className="room-canvas-ai-note-label">ใช้เป็นบริบท</span>
+                <span>{room.lastReentryBrief.usedSourceIds.map((id) => id.replace(/^file:/, '')).join(', ')}</span>
+              </p>
+            )}
+            {room.lastReentryBrief?.failedFileNames && room.lastReentryBrief.failedFileNames.length > 0 && (
+              <p className="room-canvas-ai-note" style={{ color: 'var(--color-warning, #c9872e)' }}>
+                <span className="room-canvas-ai-note-label">อ่านไม่สำเร็จ</span>
+                <span>{room.lastReentryBrief.failedFileNames.join(', ')} — retry ได้</span>
+              </p>
+            )}
           </div>
         </details>
       )}

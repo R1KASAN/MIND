@@ -5,7 +5,6 @@ import { trackEvent, useTrackMountEvent } from '@/lib/instrumentation';
 import { getRoomFileUxCopy } from '@/lib/room';
 import type { TaskContext } from '@/lib/store/idb';
 import {
-  answerRoomReviewQuestion,
   buildPreDeleteWarning,
   buildRoomDataSources,
   searchRoomDataSources,
@@ -14,6 +13,12 @@ import {
   type RoomDataSourceStatus,
   type RoomDataSourceType,
 } from '@/lib/retrieval/room-data';
+import {
+  answerRoomTrustReviewQuestion,
+  buildRoomTrustReviewModel,
+  type RoomTrustReviewModel,
+} from '@/lib/retrieval/room-memory-sources';
+import type { RoomMemoryEventType, RoomMemorySnapshot } from '@/lib/store/room-memory-db';
 
 type PanelMode = 'manage' | 'review';
 type TypeFilter = RoomDataSourceType | 'all';
@@ -33,14 +38,32 @@ const TYPE_FILTERS: Array<{ value: TypeFilter; label: string }> = [
   { value: 'file', label: 'ไฟล์' },
   { value: 'clarification', label: 'คำตอบเพิ่ม' },
   { value: 'manual_rescue', label: 'โน้ตตอน rescue' },
+  { value: 'memory_ref', label: 'Room memory' },
 ];
 
 const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
   { value: 'all', label: 'ทุกสถานะ' },
   { value: 'ready', label: 'พร้อมใช้' },
+  { value: 'pending', label: 'กำลังอ่าน' },
   { value: 'failed', label: 'อ่านไม่สำเร็จ' },
   { value: 'unsupported', label: 'ยังไม่รองรับ' },
+  { value: 'tombstone', label: 'ถูกลบแล้ว' },
+  { value: 'missing', label: 'ต้นทางหาย' },
 ];
+
+function buildFallbackTrustModel(task: TaskContext): RoomTrustReviewModel {
+  return {
+    snapshot: null,
+    recentEvents: [],
+    sources: buildRoomDataSources(task),
+    evidenceHealth: {
+      available: 0,
+      tombstone: 0,
+      missing: 0,
+      total: 0,
+    },
+  };
+}
 
 function formatSourceTypeLabel(type: RoomDataSourceType) {
   switch (type) {
@@ -52,6 +75,8 @@ function formatSourceTypeLabel(type: RoomDataSourceType) {
       return 'คำตอบเพิ่ม';
     case 'manual_rescue':
       return 'โน้ตตอน rescue';
+    case 'memory_ref':
+      return 'Room memory';
   }
 }
 
@@ -59,10 +84,20 @@ function formatSourceStatusLabel(status: RoomDataSourceStatus) {
   switch (status) {
     case 'ready':
       return 'พร้อมใช้';
+    case 'pending':
+      return 'กำลังอ่าน';
+    case 'unreadable':
+      return 'อ่านไม่ได้';
+    case 'failed_extraction':
+      return 'แยกข้อความไม่สำเร็จ';
     case 'failed':
       return 'อ่านไม่สำเร็จ';
     case 'unsupported':
       return 'ยังไม่รองรับ';
+    case 'tombstone':
+      return 'source ถูกลบแล้ว';
+    case 'missing':
+      return 'ต้นทางหาย';
   }
 }
 
@@ -74,6 +109,142 @@ function formatUsageLabel(source: RoomDataSource) {
     return 'ไม่ได้ใช้มา 90+ วัน';
   }
   return 'ยังไม่ถูกใช้ใน step ที่ยืนยันแล้ว';
+}
+
+function formatTimestamp(timestamp?: number) {
+  if (!timestamp) return 'ยังไม่มี event';
+  return new Intl.DateTimeFormat('th-TH', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(timestamp));
+}
+
+function formatEventTypeLabel(type: RoomMemoryEventType) {
+  switch (type) {
+    case 'source_added':
+      return 'มี context ใหม่';
+    case 'summary_updated':
+      return 'summary เปลี่ยน';
+    case 'blocker_updated':
+      return 'blocker เปลี่ยน';
+    case 'action_selected':
+      return 'เลือก next move';
+    case 'plan_updated':
+      return 'plan เปลี่ยน';
+    case 'rescue_created':
+      return 'สร้าง rescue';
+    case 'reentry_created':
+      return 'สร้าง reentry';
+  }
+}
+
+function TrustSummary({ snapshot }: { snapshot: RoomMemorySnapshot | null }) {
+  const planSteps = snapshot?.currentPlan?.steps.slice(0, 3) ?? [];
+  return (
+    <section className="data-trust-section">
+      <div className="data-review-result-head">
+        <p className="studio-eyebrow">Trust Summary</p>
+        <span className="studio-chip">snapshot {snapshot ? `v${snapshot.version}` : 'ยังไม่มี'}</span>
+      </div>
+      {snapshot ? (
+        <div className="data-trust-stack">
+          <div>
+            <p className="data-trust-label">Room summary</p>
+            <p className="studio-inline-note" style={{ margin: 0 }}>
+              {snapshot.currentSummary || 'ยังไม่มี summary ที่ project เข้า snapshot'}
+            </p>
+          </div>
+          <div className="data-trust-grid">
+            <div>
+              <p className="data-trust-label">Current action</p>
+              <p>{snapshot.currentAction?.title || 'ยังไม่มี next move ใน snapshot'}</p>
+            </div>
+            <div>
+              <p className="data-trust-label">Current plan</p>
+              <p>{snapshot.currentPlan?.actionTitle || 'ยังไม่มี plan ใน snapshot'}</p>
+            </div>
+          </div>
+          {planSteps.length > 0 && (
+            <ol className="data-trust-list">
+              {planSteps.map((step) => <li key={step.id}>{step.text}</li>)}
+            </ol>
+          )}
+          <div className="data-source-status-line">
+            {snapshot.currentBlockers.length > 0 ? snapshot.currentBlockers.map((blocker) => (
+              <span key={blocker} className="studio-chip studio-chip-danger">{blocker}</span>
+            )) : <span className="studio-chip">ไม่มี blocker ใน snapshot</span>}
+            {snapshot.latestRescue && <span className="studio-chip">latest rescue: {snapshot.latestRescue.reason}</span>}
+            {snapshot.latestReentry && <span className="studio-chip">latest reentry: {formatTimestamp(snapshot.latestReentry.createdAt)}</span>}
+          </div>
+        </div>
+      ) : (
+        <p className="studio-inline-note" style={{ margin: 0 }}>
+          ยังไม่มี Room Memory snapshot สำหรับห้องนี้ ระบบจะใช้ source metadata ปัจจุบันก่อน
+        </p>
+      )}
+    </section>
+  );
+}
+
+function EvidenceHealth({ model }: { model: RoomTrustReviewModel }) {
+  const health = model.evidenceHealth;
+  return (
+    <section className="data-trust-section">
+      <div className="data-review-result-head">
+        <p className="studio-eyebrow">Evidence Health</p>
+        <span className="studio-chip">{health.total} refs</span>
+      </div>
+      <div className="data-evidence-health">
+        <div className="data-health-item">
+          <strong>{health.available}</strong>
+          <span>available</span>
+        </div>
+        <div className="data-health-item is-warning">
+          <strong>{health.tombstone}</strong>
+          <span>tombstone</span>
+        </div>
+        <div className="data-health-item is-warning">
+          <strong>{health.missing}</strong>
+          <span>missing</span>
+        </div>
+      </div>
+      <p className="studio-inline-note" style={{ margin: 0 }}>
+        Tombstone/missing คือหลักฐานที่เคยถูกอ้างถึง แต่ไม่ดึง raw content ที่ถูกลบกลับมา
+      </p>
+    </section>
+  );
+}
+
+function CompactEvents({ model }: { model: RoomTrustReviewModel }) {
+  return (
+    <section className="data-trust-section">
+      <div className="data-review-result-head">
+        <p className="studio-eyebrow">Continuity Events</p>
+        <span className="studio-chip">last {model.recentEvents.length}/10</span>
+      </div>
+      {model.recentEvents.length === 0 ? (
+        <p className="studio-inline-note" style={{ margin: 0 }}>ยังไม่มี continuity event ให้ตรวจ</p>
+      ) : (
+        <div className="data-event-list">
+          {model.recentEvents.map((event) => (
+            <article key={event.id} className="data-event-row">
+              <div>
+                <p>{formatEventTypeLabel(event.type)}</p>
+                <span>{event.summary}</span>
+              </div>
+              <div className="data-source-status-line">
+                <span className="studio-chip">{event.origin}</span>
+                <span className="studio-chip">{formatTimestamp(event.createdAt)}</span>
+                {event.refs.length > 0 && <span className="studio-chip">{event.refs.length} refs</span>}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
 }
 
 function SourceCard({
@@ -102,7 +273,7 @@ function SourceCard({
           <p className="studio-eyebrow">{source.label}</p>
           <h3 className="data-source-title">{source.title}</h3>
         </div>
-        {onToggle && (
+        {onToggle && source.deletable !== false && (
           <label className="data-source-check">
             <input type="checkbox" checked={checked} onChange={onToggle} />
             <span>เลือก</span>
@@ -119,6 +290,13 @@ function SourceCard({
         <span className="studio-chip">{formatUsageLabel(source)}</span>
         {isPrimary && <span className="studio-chip studio-chip-success">ไฟล์หลัก</span>}
         {source.storageKey && <span className="studio-chip">ไฟล์เก็บในเครื่อง</span>}
+        {source.refStatus === 'available' && <span className="studio-chip">memory ref พร้อมใช้</span>}
+        {source.refStatus === 'tombstone' && <span className="studio-chip studio-chip-danger">เคยมี evidence แต่ถูกลบแล้ว</span>}
+        {source.refStatus === 'missing' && <span className="studio-chip studio-chip-danger">memory ref หาต้นทางไม่เจอ</span>}
+        {(source.memoryRefIds?.length ?? 0) > 0 && <span className="studio-chip">{source.memoryRefIds?.length} memory refs</span>}
+        {source.recentEventTypes?.map((type) => (
+          <span key={type} className="studio-chip">{type}</span>
+        ))}
       </div>
       {source.type === 'file' && (
         <p className="studio-inline-note" style={{ margin: 0 }}>
@@ -179,12 +357,36 @@ export function DataReviewPanel({
   const [sensitiveOnly, setSensitiveOnly] = useState(false);
   const [selectedTokens, setSelectedTokens] = useState<Set<string>>(() => new Set());
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const sources = useMemo(() => buildRoomDataSources(task), [task]);
+  const [trustModel, setTrustModel] = useState<RoomTrustReviewModel>(() => buildFallbackTrustModel(task));
+  const sources = trustModel.sources;
   const retrievalReady = shouldUseRicherRoomRetrieval(task, sources);
+  const hasRoomMemoryRefs = sources.some((source) => source.type === 'memory_ref');
 
   useEffect(() => {
     setMode(initialMode);
   }, [initialMode]);
+
+  useEffect(() => {
+    let active = true;
+    const fallbackModel = buildFallbackTrustModel(task);
+    setTrustModel(fallbackModel);
+    setSelectedTokens(new Set());
+    setConfirmDelete(false);
+
+    void buildRoomTrustReviewModel(task)
+      .then((nextModel) => {
+        if (!active) return;
+        setTrustModel(nextModel);
+      })
+      .catch(() => {
+        if (!active) return;
+        setTrustModel(fallbackModel);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [task]);
 
   const manageResults = useMemo(() => searchRoomDataSources({
     sources,
@@ -198,15 +400,15 @@ export function DataReviewPanel({
   const reviewAnswer = useMemo(() => {
     const question = reviewQuestion.trim();
     if (!question) return null;
-    return answerRoomReviewQuestion(question, sources, task.roomId ?? '');
-  }, [reviewQuestion, sources, task.roomId]);
+    return answerRoomTrustReviewQuestion(question, trustModel, task.roomId ?? '');
+  }, [reviewQuestion, task.roomId, trustModel]);
 
   const selectedSources = useMemo(() => (
-    sources.filter((source) => selectedTokens.has(source.deleteToken))
+    sources.filter((source) => source.deletable !== false && selectedTokens.has(source.deleteToken))
   ), [selectedTokens, sources]);
 
   const deleteWarning = buildPreDeleteWarning(selectedSources);
-  const canDelete = selectedTokens.size > 0;
+  const canDelete = selectedSources.length > 0;
 
   const toggleToken = (token: string) => {
     setSelectedTokens((current) => {
@@ -224,7 +426,7 @@ export function DataReviewPanel({
       setConfirmDelete(true);
       return;
     }
-    const tokens = [...selectedTokens];
+    const tokens = selectedSources.map((source) => source.deleteToken);
     await onDeleteSources(tokens);
     trackEvent('data_deleted', {
       room_id: task.roomId,
@@ -244,8 +446,10 @@ export function DataReviewPanel({
             <h2 className="data-review-title">{mode === 'manage' ? 'จัดการข้อมูล' : 'ทบทวนห้อง'}</h2>
             <p className="studio-inline-note" style={{ margin: 0 }}>
               {retrievalReady
-                ? 'ห้องนี้เข้าเกณฑ์ใช้ retrieval ที่ละเอียดขึ้น แต่ core flow ยังใช้ TaskContext เป็นหลัก'
-                : 'ใช้ metadata + summaries ของห้องนี้ก่อน ถ้า source เยอะขึ้นค่อยเปิด retrieval ที่ละเอียดขึ้น'}
+                ? 'อ่านจาก snapshot, recent events, และ refs ของ Room Memory แบบ bounded replay'
+                : hasRoomMemoryRefs
+                  ? 'แสดงหลักฐานจาก TaskContext พร้อม Room Memory refs และสถานะ tombstone / missing'
+                  : 'ใช้ metadata + summaries ของห้องนี้ก่อน ถ้า source เยอะขึ้นค่อยเปิด retrieval ที่ละเอียดขึ้น'}
             </p>
           </div>
           <button type="button" className="shell-secondary-button" onClick={onClose}>ปิด</button>
@@ -254,17 +458,17 @@ export function DataReviewPanel({
         <div className="data-review-tabs" role="tablist" aria-label="Data review modes">
           <button
             type="button"
-            className={mode === 'manage' ? 'is-active' : ''}
-            onClick={() => setMode('manage')}
-          >
-            จัดการข้อมูล
-          </button>
-          <button
-            type="button"
             className={mode === 'review' ? 'is-active' : ''}
             onClick={() => setMode('review')}
           >
             ทบทวนห้อง
+          </button>
+          <button
+            type="button"
+            className={mode === 'manage' ? 'is-active' : ''}
+            onClick={() => setMode('manage')}
+          >
+            จัดการข้อมูล
           </button>
         </div>
 
@@ -311,7 +515,7 @@ export function DataReviewPanel({
                   </p>
                 )}
                 <button type="button" disabled={!canDelete} onClick={() => void handleDelete()}>
-                  {deleteWarning && !confirmDelete ? 'ตรวจ warning ก่อนลบ' : `ลบ ${selectedTokens.size} source`}
+                  {deleteWarning && !confirmDelete ? 'ตรวจ warning ก่อนลบ' : `ลบ ${selectedSources.length} source`}
                 </button>
               </div>
             </aside>
@@ -330,7 +534,7 @@ export function DataReviewPanel({
                     source={source}
                     checked={selectedTokens.has(source.deleteToken)}
                     primarySourceId={task.sourcePreference?.primarySourceId}
-                    onToggle={() => toggleToken(source.deleteToken)}
+                    onToggle={source.deletable === false ? undefined : () => toggleToken(source.deleteToken)}
                     onSelectPrimarySource={onSelectPrimarySource}
                   />
                 ))
@@ -340,6 +544,8 @@ export function DataReviewPanel({
         ) : (
           <div className="data-review-grid">
             <aside className="data-review-controls">
+              <TrustSummary snapshot={trustModel.snapshot} />
+              <EvidenceHealth model={trustModel} />
               <label className="data-review-field">
                 <span>ถามจากหลักฐานในห้องนี้</span>
                 <textarea
@@ -358,9 +564,10 @@ export function DataReviewPanel({
             </aside>
 
             <section className="data-review-results">
+              <CompactEvents model={trustModel} />
               <div className="data-review-result-head">
                 <p className="studio-eyebrow">คำตอบในภาษางาน</p>
-                <span className="studio-chip">{reviewAnswer?.retrievalEnabled ? 'ดึงหลักฐานได้' : 'ค้นจาก metadata'}</span>
+                <span className="studio-chip">{reviewAnswer?.retrievalEnabled ? 'ดึงหลักฐานได้' : 'deterministic search'}</span>
               </div>
               {!reviewAnswer ? (
                 <p className="studio-inline-note">

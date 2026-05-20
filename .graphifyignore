@@ -1,0 +1,41 @@
+node_modules/
+.next/
+.next-mockup/
+dist/
+build/
+coverage/
+.git/
+.cache/
+.turbo/
+.playwright-mcp/
+playwright-report/
+test-results/
+graphify-out/
+
+# Dev artifacts
+*.log
+dev.log
+dev.pid
+
+# Secrets / credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.p8
+*.pfx
+*.jks
+*.keystore
+
+# Databases / binaries
+*.sqlite
+*.db
+*.sqlite3
+
+# Generated / minified
+*.min.js
+*.generated.*
+*.d.ts.map

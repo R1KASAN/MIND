@@ -7,6 +7,7 @@ import type {
   AiReentryResponse,
   AiScaffoldResponse,
 } from '@/lib/ai/operations';
+import type { ActionEvidenceContext } from '@/lib/orchestrator/evidence-context';
 import { summarizeRoomFile, truncateRoomText } from '@/lib/room';
 import type {
   Action,
@@ -34,20 +35,135 @@ export function buildPayloadFromAction(action: Action): AiSynthesisResponse {
       title: action.title,
       rationale: action.rationale,
       micro_steps: action.microSteps,
+      micro_steps_source: action.microStepsSource ?? 'fallback',
     },
     alternative_actions: [],
     detected_blockers: action.detectedBlockers ?? [],
   };
 }
 
+/**
+ * Extract room-relevant anchor words from sourceText for grounding checks.
+ * Returns short noun phrases that identify the real work context:
+ * company/client names, system nouns, incident keywords, etc.
+ */
+export function extractRoomAnchors(sourceText: string): string[] {
+  if (!sourceText) return [];
+  const anchors: string[] = [];
+  // Company / client name patterns (English proper nouns, Thai ลูกค้า-prefixed names)
+  const companyMatches = sourceText.match(/[A-Z][A-Za-z]+(?: [A-Z][A-Za-z]+){0,2}(?:\s+(?:Corp|Inc|Ltd|Co\.))?/g);
+  if (companyMatches) {
+    for (const m of companyMatches) {
+      const trimmed = m.trim();
+      if (trimmed.length >= 3 && trimmed.length <= 40) anchors.push(trimmed);
+    }
+  }
+  // Thai/English work-context nouns
+  const contextPatterns = [
+    /เซิร์ฟเวอร์/g, /server/gi, /CPU/g, /RCA/g,
+    /prod(?:uction)?/gi, /Dashboard/gi, /payment/gi, /API/gi,
+    /แชต/g, /ไลน์/g, /อีเมล/g, /สไลด์/g,
+    /ลูกค้า/g, /ทวง/g, /ล่ม/g, /spike/gi,
+    /proposal/gi, /timeline/gi, /estimate/gi,
+    /requirement/gi, /scope/gi,
+  ];
+  for (const pattern of contextPatterns) {
+    if (pattern.test(sourceText)) {
+      const word = pattern.source.replace(/\\s\+/g, ' ').replace(/[/\\gi]/g, '');
+      if (!anchors.includes(word)) anchors.push(word);
+    }
+    pattern.lastIndex = 0; // reset global regex
+  }
+  return [...new Set(anchors)].slice(0, 8);
+}
+
+/** Self-care / reset keywords that indicate a generic energy step. */
+const SELF_CARE_PATTERN = /กิน|พัก|พลัง|เติม|หายใจ|น้ำ|สายตา|ง่วง|หิว|เบา\s*ๆ|สมอง|ฟื้น|reset|ผ่อน/;
+
+/**
+ * Soft semantic guard: reject AI micro-steps that are fully anchorless/template-like
+ * when room anchors are available. Returns the steps unchanged if they pass,
+ * or undefined to signal that fallback should be used.
+ *
+ * Rules:
+ * - If no room anchors exist, always pass (nothing to ground against).
+ * - At least 2 of 3 steps must mention at least one room anchor.
+ * - One self-care/reset step is allowed but not three.
+ * - All 3 steps being generic/self-care is rejected.
+ */
+export function guardMicroStepsGrounding(
+  steps: string[],
+  sourceText: string,
+): string[] | undefined {
+  if (steps.length !== 3) return undefined;
+  const anchors = extractRoomAnchors(sourceText);
+  if (anchors.length === 0) return steps; // no anchors => nothing to enforce
+
+  const lower = (s: string) => s.toLowerCase();
+  let groundedCount = 0;
+  let selfCareCount = 0;
+
+  for (const step of steps) {
+    const stepLower = lower(step);
+    const isGrounded = anchors.some((anchor) => stepLower.includes(lower(anchor)));
+    const isSelfCare = SELF_CARE_PATTERN.test(step);
+    if (isGrounded) groundedCount++;
+    if (isSelfCare && !isGrounded) selfCareCount++;
+  }
+
+  // All 3 self-care => reject
+  if (selfCareCount >= 3) {
+    console.info('[MIND][micro_steps_guard_rejected]', {
+      reason: 'all_self_care',
+      anchors,
+      steps,
+    });
+    return undefined;
+  }
+
+  // Fewer than 2 grounded when anchors exist => reject
+  if (groundedCount < 2) {
+    console.info('[MIND][micro_steps_guard_rejected]', {
+      reason: 'insufficient_grounding',
+      groundedCount,
+      anchors,
+      steps,
+    });
+    return undefined;
+  }
+
+  return steps;
+}
+
 export function buildBootstrapMicroSteps(action: {
   title: string;
   successSignal?: string;
-}) {
-  const signal = action.successSignal?.trim() || 'เห็นความคืบหน้าหนึ่งจุดของงานนี้';
+}, taskShape?: TaskShape, sourceText?: string) {
+  if (taskShape?.behaviorIntent === 'personal_friction') {
+    // If source text has real work anchors, ground the fallback in context
+    const anchors = extractRoomAnchors(sourceText ?? '');
+    if (anchors.length >= 2) {
+      const topAnchor = anchors[0];
+      const secondAnchor = anchors[1];
+      return [
+        `พักหายใจ 2 นาทีแล้วกลับมาเรื่อง ${topAnchor}`,
+        `เปิดแค่หน้าจอเดียวที่เกี่ยวกับ ${topAnchor} / ${secondAnchor}`,
+        `ทำก้าวเล็กชิ้นเดียวของ "${action.title}" ให้จบก่อน`,
+      ];
+    }
+
+    // Pure overload, no work anchors — keep gentle generic
+    return [
+      'เช็กก่อนว่าตอนนี้ต้องเติมอะไรที่สุด: กิน พัก หรือเริ่มงานเบา ๆ',
+      'เลือกงานก้าวแรกที่เล็กพอทำได้ โดยไม่ต้องเปิดทุกอย่างพร้อมกัน',
+      'ทำแค่ก้าวแรก แล้วดูว่าพลังพอกลับไปต่อไหม',
+    ];
+  }
+
+  const signal = action.successSignal?.trim() || 'เห็นความคืบหน้าหนึ่งจุดที่ตรวจได้';
   return [
-    `เปิดบริบทหรือไฟล์ที่เกี่ยวกับ "${action.title}"`,
-    `ทำก้าวหลักนี้ทันที: ${action.title}`,
+    `ทวนข้อมูลที่มีอยู่ตอนนี้เกี่ยวกับ "${action.title}"`,
+    `เริ่มจากส่วนที่เล็กที่สุดของ "${action.title}"`,
     `เช็กผลว่าตอนนี้ ${signal}`,
   ];
 }
@@ -57,7 +173,17 @@ export function buildPayloadFromAiActionResponse(
   response: AiActionResponse,
   blockers: string[],
   taskShape?: TaskShape,
+  sourceText?: string,
 ): AiSynthesisResponse {
+  const aiSteps = response.starterMicroSteps;
+  const rawValid = aiSteps && aiSteps.length === 3 && aiSteps.every((s) => s.trim().length > 0);
+  // Apply soft grounding guard when sourceText is available
+  const guardedSteps = rawValid && sourceText
+    ? guardMicroStepsGrounding([...aiSteps], sourceText)
+    : rawValid ? [...aiSteps] : undefined;
+  const microSteps = guardedSteps ?? buildBootstrapMicroSteps(response.chosenAction, taskShape, sourceText);
+  const microStepsSource: 'ai' | 'fallback' = guardedSteps ? 'ai' : 'fallback';
+
   return {
     workflow_type: workflowType,
     requires_clarification: false,
@@ -67,7 +193,8 @@ export function buildPayloadFromAiActionResponse(
     recommended_action: {
       title: response.chosenAction.title,
       rationale: response.chosenAction.rationale,
-      micro_steps: buildBootstrapMicroSteps(response.chosenAction),
+      micro_steps: microSteps,
+      micro_steps_source: microStepsSource,
     },
     alternative_actions: response.alternatives.slice(0, 2).map((alternative) => ({
       title: alternative.title,
@@ -131,6 +258,7 @@ export function buildSynthesisInput(task: TaskContext): string {
         'task_shape:',
         `deliverable_type: ${task.taskShape.deliverableType}`,
         `immediate_need: ${task.taskShape.immediateNeed}`,
+        `behavior_intent: ${task.taskShape.behaviorIntent ?? 'admin_task'}`,
         `missing_inputs: ${task.taskShape.missingInputs.join(', ') || 'ไม่มี'}`,
         `work_context: ${task.taskShape.workContext}`,
         `confidence: ${task.taskShape.confidence ?? 'ไม่ระบุ'}`,
@@ -230,6 +358,7 @@ function buildActionStateFromPayload(
       title: payload.recommended_action.title,
       rationale: payload.recommended_action.rationale,
       microSteps: payload.recommended_action.micro_steps,
+      microStepsSource: payload.recommended_action.micro_steps_source ?? 'fallback',
       workflowType,
       situationSummary: payload.situation_summary,
       replyDraft: payload.reply_draft ?? undefined,
@@ -244,6 +373,7 @@ function buildActionStateFromPayload(
     title: payload.recommended_action.title,
     rationale: payload.recommended_action.rationale,
     microSteps: payload.recommended_action.micro_steps,
+    microStepsSource: payload.recommended_action.micro_steps_source ?? 'fallback',
     isPinned: false,
     state: 'PENDING',
     workflowType,
@@ -257,12 +387,13 @@ export function buildActionSuccessArtifacts(input: {
   task: TaskContext;
   intake: AiIntakeResponse;
   actionResponse: AiActionResponse;
+  evidenceContext?: ActionEvidenceContext;
   existingAction?: Action | null;
   persistedNegotiationMode?: Extract<AiActionNegotiationMode, 'reply_first' | 'resume_first'>;
 }) {
-  const { task, intake, actionResponse, existingAction, persistedNegotiationMode } = input;
+  const { task, intake, actionResponse, evidenceContext, existingAction, persistedNegotiationMode } = input;
   const workflowType = intake.workflowType;
-  const payload = buildPayloadFromAiActionResponse(workflowType, actionResponse, intake.blockers, intake.taskShape);
+  const payload = buildPayloadFromAiActionResponse(workflowType, actionResponse, intake.blockers, intake.taskShape, task.sourceText);
   const actionState = buildActionStateFromPayload(workflowType, payload, task.roomId, existingAction);
 
   let constraints = task.constraints
@@ -275,12 +406,16 @@ export function buildActionSuccessArtifacts(input: {
   }
 
   const generatedAt = Date.now();
+  const actionEvidence = evidenceContext?.selectionMethod === 'retrieval' && evidenceContext.evidenceChips.length > 0
+    ? evidenceContext.evidenceChips
+    : undefined;
   const currentPlan = enrichPlanWithProvenance({
     actionTitle: actionResponse.chosenAction.title,
     successSignal: actionResponse.chosenAction.successSignal,
     steps: payload.recommended_action.micro_steps.map((step, index) => ({
       id: `step-${index + 1}`,
       text: step,
+      evidence: actionEvidence,
     })),
   }, task, 'action', generatedAt);
 
@@ -372,7 +507,7 @@ export function buildScaffoldSuccessArtifacts(input: {
     lastAiOperation: 'scaffold',
     currentStepIndex: Math.min(
       scaffold.revisedCurrentStepIndex,
-      nextPayload.recommended_action.micro_steps.length - 1,
+      currentPlan.steps.length - 1,
     ),
     currentPlan,
     pendingPlan: createDraftPlanFromCurrentPlan(currentPlan, 'scaffold', generatedAt),
@@ -394,6 +529,17 @@ export function buildScaffoldSuccessArtifacts(input: {
 }
 
 export function buildReentryTaskArtifacts(task: TaskContext, reentry: AiReentryResponse) {
+  const failedFileNames = task.sourceFiles
+    .filter((f) => f.status === 'failed_extraction' || f.status === 'unreadable' || f.status === 'failed')
+    .map((f) => f.name);
+
+  // Derive used source IDs from the current plan's evidence chips if available
+  const usedSourceIds = task.currentPlan?.steps
+    ?.flatMap((step) => step.evidence ?? [])
+    .map((chip) => chip.sourceId)
+    .filter((id, i, arr) => arr.indexOf(id) === i)
+    ?? [];
+
   const nextTask: TaskContext = {
     ...task,
     assistantMode: 'reentry_brief',
@@ -403,6 +549,8 @@ export function buildReentryTaskArtifacts(task: TaskContext, reentry: AiReentryR
       topActions: reentry.topActions,
       ignoredNoise: reentry.ignoredNoise,
       createdAt: Date.now(),
+      ...(usedSourceIds.length > 0 ? { usedSourceIds } : {}),
+      ...(failedFileNames.length > 0 ? { failedFileNames } : {}),
     },
   };
 

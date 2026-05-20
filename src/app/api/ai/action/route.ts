@@ -1,26 +1,19 @@
 import type { TaskContext } from '@/lib/store/idb';
 import { AiActionNegotiationModeSchema } from '@/lib/ai/operations';
-import { parseAiActionResponse } from '@/lib/ai/operation-contract';
+import type { ActionEvidenceContext } from '@/lib/orchestrator/evidence-context';
+import { getAiClient } from '@/lib/ai/client';
+import { buildManualActionResponse } from '@/lib/ai/manual-fallbacks';
+import { handleAiRouteError } from '@/lib/ai/operation-route-helpers';
+import { logAiOperationTelemetry } from '@/lib/ai/operation-telemetry';
 import type { AiIntakeResponse } from '@/lib/ai/operations';
-import {
-  buildActionFallbackCopy,
-  deriveTaskShapeFromText,
-  inferWorkflowTypeFromTaskShape,
-  shouldGenerateReplyDraft,
-} from '@/lib/ai/task-shape';
-import {
-  ACTION_SYSTEM_PROMPT,
-  AI_OPERATION_REPAIR_PROMPT,
-  buildActionUserPrompt,
-  buildOperationRepairUserPrompt,
-  buildOperationTaskContext,
-} from '@/lib/ai/operation-prompts';
-import { runAiOperation } from '@/lib/ai/operation-route-helpers';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const ACTION_NUM_PREDICT = Number(process.env.AI_NUM_PREDICT_ACTION || 360) || 360;
+// 380 tokens: enough for chosenAction (title/rationale/successSignal) +
+// alternatives x3 + whyThisNow + situationSummary + meta.
+// Old default of 180 consistently truncated Thai text mid-field.
+const ACTION_NUM_PREDICT = Number(process.env.AI_NUM_PREDICT_ACTION || 380) || 380;
 const ACTION_REPAIR_NUM_PREDICT =
   Number(process.env.AI_NUM_PREDICT_ACTION_REPAIR || Math.max(420, ACTION_NUM_PREDICT)) ||
   Math.max(420, ACTION_NUM_PREDICT);
@@ -33,9 +26,11 @@ const ACTION_FALLBACK_TIMEOUT_MS =
   20000;
 
 export async function POST(req: Request) {
+  const routeStartedAt = Date.now();
   const body = await req.json().catch(() => null);
   const task = body?.task as TaskContext | undefined;
   const preferredCandidate = body?.preferredCandidate as AiIntakeResponse['candidateActions'][number] | undefined;
+  const evidenceContext = body?.evidenceContext as ActionEvidenceContext | undefined;
   const negotiationParsed = AiActionNegotiationModeSchema.safeParse(body?.negotiation?.mode ?? 'default');
   const negotiation = negotiationParsed.success
     ? {
@@ -57,41 +52,48 @@ export async function POST(req: Request) {
     }, { status: 400 });
   }
 
-  const taskContext = buildOperationTaskContext(task);
-  const fallbackTaskShape = task.taskShape ?? deriveTaskShapeFromText(task.sourceText);
-  const fallbackWorkflowType = task.workflowType ?? inferWorkflowTypeFromTaskShape(fallbackTaskShape);
-  const fallbackActionCopy = buildActionFallbackCopy(fallbackWorkflowType, fallbackTaskShape);
-  const preferredTitle = preferredCandidate?.title ?? task.currentPlan?.actionTitle ?? task.taskFrame?.objective ?? fallbackActionCopy.chosenTitle;
-  const preferredRationale = preferredCandidate?.rationale ?? fallbackActionCopy.chosenRationale;
-  const fallbackSuccessSignal = task.currentPlan?.successSignal ?? fallbackActionCopy.successSignal;
-  const fallbackWhyThisNow = negotiation?.mode && negotiation.mode !== 'default'
-    ? `ตอนนี้กำลังปรับ action ให้ ${negotiation.mode} ขึ้น โดยยังยึดงานเดิมและข้อจำกัดปัจจุบัน`
-    : fallbackActionCopy.whyThisNow;
-  const fallbackSituationSummary = fallbackActionCopy.situationSummary;
-  const fallbackReplyDraft = shouldGenerateReplyDraft(fallbackWorkflowType, fallbackTaskShape)
-    ? fallbackActionCopy.replyDraft
-    : undefined;
-  return runAiOperation({
-    operationName: 'action',
-    systemPrompt: ACTION_SYSTEM_PROMPT,
-    repairPrompt: AI_OPERATION_REPAIR_PROMPT,
-    userPrompt: buildActionUserPrompt(task, preferredCandidate ?? null, negotiation ?? null),
-    buildRepairUserPrompt: (invalidOutput, failureDetail) =>
-      buildOperationRepairUserPrompt('action', taskContext, invalidOutput, failureDetail),
-    parse: (raw) => parseAiActionResponse(raw, {
-      fallbackChosenTitle: preferredTitle,
-      fallbackChosenRationale: preferredRationale,
-      fallbackSuccessSignal,
-      fallbackWhyThisNow,
-      fallbackSituationSummary,
-      fallbackReplyDraft,
-      fallbackWorkflowType,
-      fallbackTaskShape,
-    }),
-    numPredict: ACTION_NUM_PREDICT,
-    repairNumPredict: ACTION_REPAIR_NUM_PREDICT,
-    primaryTimeoutMs: ACTION_TIMEOUT_MS,
-    repairTimeoutMs: ACTION_REPAIR_TIMEOUT_MS,
-    fallbackTimeoutMs: ACTION_FALLBACK_TIMEOUT_MS,
-  });
+  try {
+    const aiResponse = await getAiClient().runAction(task, {
+      preferredCandidate,
+      evidenceContext,
+      negotiation,
+    });
+    return Response.json(aiResponse);
+  } catch (error) {
+    if (error && typeof error === 'object' && 'name' in error && error.name === 'AiRouteError') {
+      const durationMs = (error as any).telemetry?.durationMs ?? Date.now() - routeStartedAt;
+      const model = (error as any).model;
+      const detail = (error as any).detail;
+      const repairUsed = (error as any).telemetry?.repairUsed ?? false;
+
+      console.warn('[MIND][AI_FALLBACK] Local Gemma failed, using manual response', {
+        operation: 'action',
+        backend: 'local_gemma',
+        nextBackend: 'manual',
+        reason: (error as any).reason ?? 'unknown',
+      });
+      logAiOperationTelemetry({
+        operationName: 'action',
+        passType: 'fallback_pass',
+        model: model ? `manual_action_after_${model}` : 'manual_action',
+        modelTier: 'fallback',
+        attemptStage: 'fallback',
+        repairUsed,
+        durationMs,
+        detail: detail ? `manual action returned after AI failure: ${detail}` : 'manual action returned after AI failure',
+      });
+
+      return Response.json(
+        buildManualActionResponse({
+          task,
+          preferredCandidate,
+          durationMs,
+          failedModel: model,
+          negotiationMode: negotiation?.mode,
+        }),
+        { status: 200, headers: { 'x-mind-ai-fallback': 'manual_action' } },
+      );
+    }
+    return handleAiRouteError(error);
+  }
 }

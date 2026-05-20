@@ -1,7 +1,7 @@
 export type RoomFileKind = 'text' | 'pdf' | 'image' | 'table' | 'other';
-export type RoomFileStatus = 'ready' | 'failed' | 'unsupported';
-export type RoomFileFailureStage = 'pdf_text_layer' | 'pdf_ocr' | 'image_ocr' | 'text_read' | 'unknown';
-export type RoomFileUxState = 'ocr_failed' | 'ocr_garbled' | 'ready';
+export type RoomFileStatus = 'pending' | 'ready' | 'unreadable' | 'failed_extraction' | 'unsupported' | 'failed';
+export type RoomFileFailureStage = 'pending' | 'pdf_text_layer' | 'pdf_ocr' | 'image_ocr' | 'text_read' | 'route' | 'unknown';
+export type RoomFileUxState = 'pending' | 'ocr_failed' | 'ocr_garbled' | 'ready';
 export type RoomSourcePreferenceSelectedBy = 'auto' | 'user';
 
 export interface RoomFileOcrMetrics {
@@ -64,21 +64,29 @@ export interface RoomSubmission {
 }
 
 export const ROOM_FILE_UX_COPY: Record<RoomFileUxState, RoomFileUxCopy> = {
+  pending: {
+    state: 'pending',
+    title: 'กำลังสกัดข้อความ',
+    body: 'ไฟล์ถูกแนบเข้าห้องแล้ว MIND กำลังอ่านข้อความอยู่เบื้องหลัง',
+    cta: 'กำลังอ่านไฟล์',
+    detail: 'PDF หรือรูปภาพอาจใช้เวลาสักครู่ ระหว่างนี้ห้องยังใช้ข้อความเดิมและไฟล์ที่อ่านได้ต่อไปก่อน',
+    reasonLabel: 'กำลังสกัดข้อความจากไฟล์',
+  },
   ocr_failed: {
     state: 'ocr_failed',
-    title: 'ไฟล์แนบอ่านไม่สำเร็จ',
-    body: 'MIND ลองอ่านไฟล์แล้ว แต่ OCR ยังดึงข้อความออกมาไม่ได้',
+    title: 'อ่านไม่สำเร็จ',
+    body: 'MIND ลองอ่านไฟล์นี้แล้ว แต่ยังดึงข้อความออกมาใช้ไม่ได้',
     cta: 'ลองอ่านไฟล์อีกครั้ง',
-    detail: 'OCR ของไฟล์นี้ล้มก่อนจะได้ข้อความที่ใช้เป็นบริบท',
-    reasonLabel: 'ลอง OCR แล้วแต่ยังอ่าน PDF ไม่สำเร็จ',
+    detail: 'ปัญหานี้เกิดกับไฟล์นี้ไฟล์เดียว ห้องยังใช้ข้อความเดิมและไฟล์อื่นที่อ่านได้ต่อไป',
+    reasonLabel: 'ลอง OCR แล้วแต่ยังอ่านข้อความไม่สำเร็จ',
   },
   ocr_garbled: {
     state: 'ocr_garbled',
-    title: 'อ่านข้อความใน PDF ไม่ชัดพอ',
-    body: 'MIND อ่านได้บางส่วน แต่คำยังแตกหรือไม่ครบ จึงยังใช้เป็นบริบทหลักไม่ได้',
+    title: 'อ่านได้ไม่ชัดพอ',
+    body: 'MIND อ่านได้บางส่วน แต่ข้อความยังแตกหรือไม่ครบ จึงยังไม่ใช้เป็นบริบทหลัก',
     cta: 'ลองอ่านไฟล์อีกครั้ง',
-    detail: 'OCR ได้ผลบางส่วน แต่ fragmented_word_runs ทำให้ข้อความยังไม่น่าเชื่อถือ',
-    reasonLabel: 'ลอง OCR แล้วแต่ข้อความ PDF ยังไม่ชัดพอ',
+    detail: 'ไฟล์นี้อาจเป็นสแกนหรือภาพที่ตัวอักษรไม่ชัด ห้องยังใช้ข้อความเดิมและไฟล์อื่นที่อ่านได้ต่อไป',
+    reasonLabel: 'ลอง OCR แล้วแต่ข้อความยังไม่ชัดพอ',
   },
   ready: {
     state: 'ready',
@@ -94,6 +102,9 @@ export function getRoomFileUxCopy(fileOrReason?: Pick<RoomSourceFile, 'status' |
   const status = typeof fileOrReason === 'object' && fileOrReason ? fileOrReason.status : undefined;
 
   if (status === 'ready') return ROOM_FILE_UX_COPY.ready;
+  if (status === 'pending') return ROOM_FILE_UX_COPY.pending;
+  if (status === 'unreadable') return ROOM_FILE_UX_COPY.ocr_garbled;
+  if (status === 'failed_extraction') return ROOM_FILE_UX_COPY.ocr_failed;
 
   switch (failureReason) {
     case 'pdf_text_garbled_after_ocr':
@@ -127,6 +138,32 @@ export function describeRoomFileFailureReason(failureReason?: string): string | 
   return copy.reasonLabel ?? copy.title;
 }
 
+function normalizeRoomFileStatus(status: unknown, failureReason?: string): RoomFileStatus {
+  if (
+    status === 'pending' ||
+    status === 'ready' ||
+    status === 'unreadable' ||
+    status === 'failed_extraction' ||
+    status === 'unsupported'
+  ) {
+    return status;
+  }
+
+  if (status === 'failed') {
+    return failureReason === 'pdf_text_garbled_after_ocr' || failureReason === 'pdf_text_layer_garbled'
+      ? 'unreadable'
+      : 'failed_extraction';
+  }
+
+  if (failureReason) {
+    return failureReason === 'pdf_text_garbled_after_ocr' || failureReason === 'pdf_text_layer_garbled'
+      ? 'unreadable'
+      : 'failed_extraction';
+  }
+
+  return 'ready';
+}
+
 export function inferRoomFileKind(name: string, mimeType: string): RoomFileKind {
   const lowerName = name.toLowerCase();
   const lowerMime = mimeType.toLowerCase();
@@ -154,6 +191,16 @@ export function inferRoomFileKind(name: string, mimeType: string): RoomFileKind 
   return 'other';
 }
 
+export function normalizeRoomFileText(text: string): string {
+  return text
+    .replace(/\u0000/g, '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t\f\v]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 export function truncateRoomText(text: string, limit = 8000): string {
   const normalized = text.trim();
   if (normalized.length <= limit) return normalized;
@@ -164,9 +211,13 @@ export function summarizeRoomFile(file: RoomSourceFile): string {
   const statusLabel =
     file.status === 'ready'
       ? 'ready'
-      : file.status === 'failed'
-        ? 'failed'
-        : 'unsupported';
+      : file.status === 'pending'
+        ? 'pending'
+        : file.status === 'unreadable'
+          ? 'unreadable'
+          : file.status === 'failed_extraction' || file.status === 'failed'
+            ? 'failed_extraction'
+            : 'unsupported';
   const parts = [
     file.name,
     file.kind,
@@ -250,10 +301,12 @@ export function normalizeRoomSourceFile(value: unknown): RoomSourceFile | undefi
   const failureReason = typeof record.failureReason === 'string' && record.failureReason.trim() ? record.failureReason.trim() : undefined;
   const failureDetail = typeof record.failureDetail === 'string' && record.failureDetail.trim() ? record.failureDetail.trim() : undefined;
   const failureStage =
+    record.failureStage === 'pending' ||
     record.failureStage === 'pdf_text_layer' ||
     record.failureStage === 'pdf_ocr' ||
     record.failureStage === 'image_ocr' ||
     record.failureStage === 'text_read' ||
+    record.failureStage === 'route' ||
     record.failureStage === 'unknown'
       ? record.failureStage
       : undefined;
@@ -276,14 +329,7 @@ export function normalizeRoomSourceFile(value: unknown): RoomSourceFile | undefi
       ? record.kind
       : inferredKind;
 
-  const status =
-    record.status === 'ready' ||
-    record.status === 'failed' ||
-    record.status === 'unsupported'
-      ? record.status
-      : failureReason
-        ? 'failed'
-        : 'ready';
+  const status = normalizeRoomFileStatus(record.status, failureReason);
 
   return {
     id,
@@ -425,4 +471,43 @@ export function stripRoomFileContext(sourceText: string): string {
   }
 
   return sourceText.trim();
+}
+
+// ─── Room Context State Model ────────────────────────────────────────────────
+
+export type RoomContextStatus = 'empty' | 'ready' | 'partial' | 'blocked';
+
+/**
+ * Returns the canonical context state for a Room task.
+ *
+ * - `empty`:   no usable context and no files at all
+ * - `ready`:   usable context present, no failed files
+ * - `partial`: usable context present + at least one failed/unreadable file
+ * - `blocked`: files exist but all context paths are unusable
+ *
+ * Uses `stripRoomFileContext` so auto-generated file labels are not counted
+ * as usable manual text.
+ */
+export function getRoomContextStatus(task: {
+  sourceText: string;
+  sourceFiles: Pick<RoomSourceFile, 'status'>[];
+  lastSynthesis?: { situation_summary?: string | null } | null;
+  taskFrame?: { objective?: string | null } | null;
+}): RoomContextStatus {
+  const strippedText = stripRoomFileContext(task.sourceText).trim();
+  const readyFiles = task.sourceFiles.filter((f) => f.status === 'ready');
+  const failedFiles = task.sourceFiles.filter(
+    (f) => f.status === 'failed_extraction' || f.status === 'unreadable' || f.status === 'failed',
+  );
+
+  const hasUsableContext =
+    strippedText.length > 0 ||
+    readyFiles.length > 0 ||
+    Boolean(task.lastSynthesis?.situation_summary) ||
+    Boolean(task.taskFrame?.objective);
+
+  if (!hasUsableContext && task.sourceFiles.length === 0) return 'empty';
+  if (hasUsableContext && failedFiles.length === 0) return 'ready';
+  if (hasUsableContext && failedFiles.length > 0) return 'partial';
+  return 'blocked';
 }

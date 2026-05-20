@@ -127,7 +127,7 @@ test('legacy dump context migrates to structured shape', () => {
   const migrated = migrateLegacyActiveDumpContext({
     ...session,
     activeDumpContext: 'Legacy dump text',
-  } as AppSession);
+  } as unknown as AppSession);
 
   assert.ok(migrated);
   assert.deepEqual(migrated?.activeDumpContext, {

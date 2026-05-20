@@ -71,13 +71,8 @@ test('runAiOperation falls through from primary endpoint failure to Gemma fallba
       repairNumPredict: 48,
     });
 
-    assert.equal(response.status, 200);
+    const data = response as any;
     assert.deepEqual(modelCalls, ['qwen2.5:3b', 'gemma2:2b']);
-
-    const data = await response.json() as {
-      value: string;
-      meta: { model: string; passType: string; repairUsed: boolean };
-    };
 
     assert.equal(data.value, 'gemma-pass');
     assert.equal(data.meta.model, 'gemma2:2b');
@@ -157,13 +152,8 @@ test('runAiOperation retries repair on primary validation failure before falling
       repairNumPredict: 48,
     });
 
-    assert.equal(response.status, 200);
+    const data = response as any;
     assert.deepEqual(modelCalls, ['qwen2.5:3b', 'qwen2.5:3b', 'gemma2:2b']);
-
-    const data = await response.json() as {
-      value: string;
-      meta: { model: string; passType: string };
-    };
 
     assert.equal(data.value, 'fallback-after-validation');
     assert.equal(data.meta.model, 'gemma2:2b');

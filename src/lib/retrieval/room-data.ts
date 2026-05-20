@@ -1,9 +1,18 @@
 import type { PendingInput, TaskContext } from '@/lib/store/idb';
 import { describeRoomFileFailureReason, stripRoomFileContext, type RoomSourceFile } from '@/lib/room';
-import { MetadataOnlyRetrievalEngine, shouldUseRicherRetrieval, type RetrievalSourceItem } from '@/lib/retrieval/engine';
+import { MiniSearchRetrievalEngine, shouldUseRicherRetrieval, type RetrievalSourceItem } from '@/lib/retrieval/engine';
+import type { RoomMemoryRefStatus } from '@/lib/store/room-memory-db';
 
-export type RoomDataSourceType = 'text' | 'file' | 'clarification' | 'manual_rescue';
-export type RoomDataSourceStatus = 'ready' | 'failed' | 'unsupported';
+export type RoomDataSourceType = 'text' | 'file' | 'clarification' | 'manual_rescue' | 'memory_ref';
+export type RoomDataSourceStatus =
+  | 'ready'
+  | 'pending'
+  | 'unreadable'
+  | 'failed_extraction'
+  | 'failed'
+  | 'unsupported'
+  | 'tombstone'
+  | 'missing';
 
 export interface RoomDataSource extends RetrievalSourceItem {
   type: RoomDataSourceType;
@@ -17,6 +26,11 @@ export interface RoomDataSource extends RetrievalSourceItem {
   sensitiveFlags: string[];
   storageKey?: string;
   deleteToken: string;
+  deletable?: boolean;
+  refStatus?: RoomMemoryRefStatus;
+  memoryRefIds?: string[];
+  refStatuses?: RoomMemoryRefStatus[];
+  recentEventTypes?: string[];
 }
 
 export interface RoomDataSearchInput {
@@ -101,7 +115,7 @@ function buildSourceBase(task: TaskContext, sourceId: string, createdAt: number 
     : null;
 
   return {
-    roomId: task.roomId,
+    roomId: task.roomId ?? task.id,
     createdAt,
     usedInPlanCount: usedCountForSource(task, sourceId),
     lastUsedAt,
@@ -178,7 +192,7 @@ export function buildRoomDataSources(task: TaskContext, now = Date.now()): RoomD
       kind: 'manual_summary',
       title: 'Manual context',
       status: 'ready',
-      label: `Manual summary · ${formatShortDate(task.createdAt)}`,
+      label: `ใช้ข้อความที่คุณวางไว้ · ${formatShortDate(task.createdAt)}`,
       summary: task.lastStableSummary ?? task.lastSynthesis?.situation_summary ?? excerpt,
       rawText: manualText,
       excerpt,
@@ -249,7 +263,7 @@ export function searchRoomDataSources(input: RoomDataSearchInput): RoomDataSourc
 }
 
 export async function createMetadataRetrievalEngine(sources: RoomDataSource[]) {
-  const engine = new MetadataOnlyRetrievalEngine<RoomDataSource>();
+  const engine = new MiniSearchRetrievalEngine<RoomDataSource>();
   await Promise.all(sources.map((source) => engine.indexSourceItem(source)));
   return engine;
 }

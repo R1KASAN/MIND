@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from 'react';
 import { useTrackMountEvent } from '@/lib/instrumentation';
 import type { StudioSnapshot } from '@/lib/orchestrator/studio';
 
@@ -26,6 +27,13 @@ export function ContextSnapshot({
   onSelectPrimaryFile,
   retryingFileId = null,
 }: Props) {
+  const [summaryExpanded, setSummaryExpanded] = useState(false);
+  const summaryText = snapshot.summary || '';
+  const shouldTruncateSummary = summaryText.length > 200;
+  const displaySummary = shouldTruncateSummary && !summaryExpanded
+    ? `${summaryText.slice(0, 180)}…`
+    : summaryText;
+
   useTrackMountEvent('studio_snapshot_viewed', { surface }, trackView);
   const provenance = snapshot.provenance;
   const detailLabel = provenance ? 'ดูว่าทำไม' : 'ดูเพิ่ม';
@@ -37,6 +45,8 @@ export function ContextSnapshot({
         : 'มั่นใจต่ำ';
   const readyCount = snapshot.readyFiles.length;
   const issueCount = snapshot.fileIssues.length;
+  const pendingCount = snapshot.fileIssues.filter((file) => file.status === 'pending').length;
+  const failedCount = issueCount - pendingCount;
 
   return (
     <section
@@ -60,14 +70,59 @@ export function ContextSnapshot({
         )}
       </div>
 
-      <p className="studio-snapshot-summary">
-        {snapshot.summary}
-      </p>
+      <div className="studio-snapshot-summary-container">
+        <p className="studio-snapshot-summary" style={{ margin: 0 }}>
+          {displaySummary}
+        </p>
+        {shouldTruncateSummary && (
+          <button
+            type="button"
+            onClick={() => setSummaryExpanded(!summaryExpanded)}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              padding: '0.2rem 0',
+              fontSize: '0.78rem',
+              color: 'var(--accent, #8B8CF6)',
+              cursor: 'pointer',
+              textDecoration: 'underline',
+              display: 'inline-block',
+              marginTop: '0.25rem',
+            }}
+          >
+            {summaryExpanded ? 'ย่อสรุป' : 'อ่านสรุปทั้งหมด'}
+          </button>
+        )}
+      </div>
 
       <div className="studio-snapshot-meta">
         <span className="studio-chip">{snapshot.contextLabel}</span>
         <span className="studio-chip">{snapshot.lastUpdatedLabel}</span>
       </div>
+
+      {snapshot.contextStatus === 'partial' && (
+        <div className="studio-context-status-badge studio-context-status-partial" role="status">
+          <span>⚠</span>
+          <span>มีบางไฟล์อ่านไม่สำเร็จ แต่ห้องยังทำงานต่อได้จากไฟล์หรือข้อความที่พร้อมอยู่</span>
+        </div>
+      )}
+
+      {snapshot.contextStatus === 'blocked' && (
+        <div className="studio-context-status-badge studio-context-status-blocked" role="status">
+          <span>⛔</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+            <span>ยังไม่มีบริบทที่พร้อมใช้ — ลอง retry ไฟล์ที่ล้มเหลว หรือเพิ่มข้อความสรุปแทนไฟล์นั้น</span>
+            <span style={{ opacity: 0.75, fontSize: '0.8rem' }}>คุณยังสามารถเพิ่มข้อความสรุปเองเพื่อให้ระบบทำงานต่อได้</span>
+          </div>
+        </div>
+      )}
+
+      {snapshot.contextStatus === 'empty' && (
+        <div className="studio-context-status-badge studio-context-status-partial" role="status" style={{ opacity: 0.72 }}>
+          <span>📋</span>
+          <span>เพิ่มข้อความหรือไฟล์เพื่อเริ่มสร้างบริบทของห้อง</span>
+        </div>
+      )}
 
       {(readyCount > 0 || issueCount > 0) && (
         <div className="studio-snapshot-status-row">
@@ -80,9 +135,9 @@ export function ContextSnapshot({
           )}
           {issueCount > 0 && (
             <div className="studio-snapshot-status studio-snapshot-status-failed">
-              <span className="studio-snapshot-status-kicker">ต้องลองใหม่</span>
+              <span className="studio-snapshot-status-kicker">{failedCount > 0 ? 'อ่านไม่สำเร็จ' : 'กำลังสกัดข้อความ'}</span>
               <strong>{issueCount} ไฟล์</strong>
-              <p>อ่านไม่ชัดหรือยังไม่สำเร็จ แต่ยัง retry ได้</p>
+              <p>{pendingCount > 0 ? 'PDF/รูปภาพกำลังอ่านข้อความอยู่ ห้องยังไปต่อได้ด้วยบริบทที่พร้อมแล้ว' : 'ไฟล์ที่อ่านไม่สำเร็จยัง retry ได้ โดยไม่บล็อกไฟล์อื่น'}</p>
             </div>
           )}
         </div>
@@ -162,52 +217,62 @@ export function ContextSnapshot({
             <span className="studio-chip studio-chip-success">{readyCount} ไฟล์</span>
           </div>
           <div className="studio-file-stack">
-            {snapshot.readyFiles.map((file) => (
-              <article key={file.id} className="studio-file-row studio-file-row-ready">
-                <div className="studio-file-row-main">
-                  <div className="studio-file-row-head">
-                    <span className="studio-eyebrow" style={{ marginBottom: 0 }}>
-                      {file.copy.title}
-                    </span>
-                    <span className={`studio-chip ${file.isPrimary ? 'studio-chip-success' : ''}`}>
-                      {file.isPrimary ? (file.isAutoPrimary ? 'ไฟล์หลักอัตโนมัติ' : 'ไฟล์หลัก') : file.copy.cta}
-                    </span>
-                  </div>
-                  <strong className="studio-file-row-title">{file.name}</strong>
-                  <p className="studio-inline-note" style={{ margin: 0 }}>
-                    {file.copy.body}
-                  </p>
-                </div>
-                {!file.isPrimary && onSelectPrimaryFile && (
-                  <button
-                    type="button"
-                    className="studio-context-button"
-                    onClick={() => void onSelectPrimaryFile(file.id)}
-                  >
-                    ใช้เป็นไฟล์หลัก
-                  </button>
-                )}
-                <p className="studio-file-row-detail">{file.copy.detail}</p>
-                {file.extractedText && (
-                  <details className="studio-provenance">
-                    <summary
-                      style={{
-                        cursor: 'pointer',
-                        color: 'var(--text-secondary)',
-                        fontSize: '0.82rem',
-                        fontWeight: 600,
-                        listStyle: 'none',
-                      }}
-                    >
-                      ดูข้อความที่อ่านได้
-                    </summary>
-                    <p className="studio-inline-note" style={{ margin: '0.35rem 0 0', whiteSpace: 'pre-wrap' }}>
-                      {file.extractedText}
+            {snapshot.readyFiles.map((file) => {
+              const hasRetrievalInfo = snapshot.retrievedSourceIds.length > 0;
+              return (
+                <article key={file.id} className="studio-file-row studio-file-row-ready">
+                  <div className="studio-file-row-main">
+                    <div className="studio-file-row-head">
+                      <span className="studio-eyebrow" style={{ marginBottom: 0 }}>
+                        {file.copy.title}
+                      </span>
+                      <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span className={`studio-chip ${file.isPrimary ? 'studio-chip-success' : ''}`}>
+                          {file.isPrimary ? (file.isAutoPrimary ? 'ไฟล์หลักอัตโนมัติ' : 'ไฟล์หลัก') : file.copy.cta}
+                        </span>
+                        {hasRetrievalInfo && (
+                          <span className={`studio-chip ${file.usedInContext ? 'studio-chip-evidence-used' : 'studio-chip-evidence-unused'}`}>
+                            {file.usedInContext ? 'ใช้เป็นบริบทแล้ว' : 'ไม่ได้ใช้ในการสรุปรอบนี้'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <strong className="studio-file-row-title">{file.name}</strong>
+                    <p className="studio-inline-note" style={{ margin: 0 }}>
+                      {file.copy.body}
                     </p>
-                  </details>
-                )}
-              </article>
-            ))}
+                  </div>
+                  {!file.isPrimary && onSelectPrimaryFile && (
+                    <button
+                      type="button"
+                      className="studio-context-button"
+                      onClick={() => void onSelectPrimaryFile(file.id)}
+                    >
+                      ใช้เป็นไฟล์หลัก
+                    </button>
+                  )}
+                  <p className="studio-file-row-detail">{file.copy.detail}</p>
+                  {file.extractedText && (
+                    <details className="studio-provenance">
+                      <summary
+                        style={{
+                          cursor: 'pointer',
+                          color: 'var(--text-secondary)',
+                          fontSize: '0.82rem',
+                          fontWeight: 600,
+                          listStyle: 'none',
+                        }}
+                      >
+                        ดูข้อความที่อ่านได้
+                      </summary>
+                      <p className="studio-inline-note" style={{ margin: '0.35rem 0 0', whiteSpace: 'pre-wrap' }}>
+                        {file.extractedText}
+                      </p>
+                    </details>
+                  )}
+                </article>
+              );
+            })}
           </div>
         </div>
       )}
@@ -216,16 +281,23 @@ export function ContextSnapshot({
         <div className="studio-file-group studio-file-group-failed">
           <div className="studio-file-group-head">
             <div className="studio-file-group-copy">
-              <p className="studio-eyebrow" style={{ marginBottom: 0 }}>ไฟล์ที่ยังอ่านไม่สำเร็จ</p>
+              <p className="studio-eyebrow" style={{ marginBottom: 0 }}>
+                {failedCount > 0 ? 'ไฟล์ที่อ่านไม่สำเร็จ' : 'ไฟล์ที่กำลังสกัดข้อความ'}
+              </p>
               <p className="studio-inline-note" style={{ margin: 0 }}>
-                MIND จะใช้ข้อความเดิมและไฟล์ที่อ่านได้ต่อไปก่อน
+                MIND จะใช้ข้อความเดิมและไฟล์ที่อ่านได้ต่อไปก่อน ไฟล์ที่กำลังอ่านจะเปลี่ยนเป็นอ่านได้แล้วหรืออ่านไม่สำเร็จเมื่อเสร็จ
               </p>
             </div>
-            <span className="studio-chip studio-chip-danger">{issueCount} ไฟล์</span>
+            <span className="studio-chip studio-chip-danger">
+              {pendingCount > 0 && failedCount > 0
+                ? `${pendingCount} กำลังอ่าน · ${failedCount} อ่านไม่สำเร็จ`
+                : `${issueCount} ไฟล์`}
+            </span>
           </div>
           <div className="studio-file-stack">
             {snapshot.fileIssues.map((file) => {
               const retrying = retryingFileId === file.id;
+              const pending = file.status === 'pending';
               return (
                 <article key={file.id} className="studio-file-row studio-file-row-failed">
                   <div className="studio-file-row-main">
@@ -243,14 +315,14 @@ export function ContextSnapshot({
                   <button
                     type="button"
                     className="studio-context-button"
-                    disabled={!onRetryFile || !file.storageKey || retrying}
+                    disabled={pending || !onRetryFile || !file.storageKey || retrying}
                     onClick={() => {
-                      if (!onRetryFile || !file.storageKey) return;
+                      if (!onRetryFile || !file.storageKey || pending) return;
                       void onRetryFile(file.id);
                     }}
-                    title={file.storageKey ? undefined : 'ไม่มีไฟล์ต้นฉบับในเครื่องสำหรับลองอ่านซ้ำ'}
+                    title={pending ? 'ไฟล์นี้กำลังถูกอ่านอยู่เบื้องหลัง' : file.storageKey ? undefined : 'ไม่มีไฟล์ต้นฉบับในเครื่องสำหรับลองอ่านซ้ำ'}
                   >
-                    {retrying ? 'กำลังลองอ่านไฟล์อีกครั้ง...' : file.copy.cta}
+                    {pending ? 'กำลังอ่านไฟล์...' : retrying ? 'กำลังลองอ่านไฟล์อีกครั้ง...' : file.copy.cta}
                   </button>
                   <p className="studio-file-row-detail">{file.copy.detail}</p>
                   {(file.failureDetail || file.failureStage || file.failureReason || file.extractAttemptCount) && (

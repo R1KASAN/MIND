@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 
 import {
   MetadataOnlyRetrievalEngine,
+  MiniSearchRetrievalEngine,
   shouldUseRicherRetrieval,
+  tokenizeRoomMemoryText,
 } from './engine';
 
 test('shouldUseRicherRetrieval enables richer retrieval for complex rooms', () => {
@@ -35,3 +37,44 @@ test('MetadataOnlyRetrievalEngine retrieves room-scoped matching source items', 
   assert.deepEqual(hits.map((hit) => hit.id), ['source-1']);
 });
 
+test('MiniSearchRetrievalEngine retrieves lexical room memory with room isolation', async () => {
+  const engine = new MiniSearchRetrievalEngine();
+  await engine.indexSourceItem({
+    id: 'source-1',
+    roomId: 'room-a',
+    kind: 'file',
+    summary: 'Budget approval and payment milestone for the website scope',
+    rawText: 'Client accepted phase two after deposit confirmation.',
+    createdAt: Date.now(),
+  });
+  await engine.indexSourceItem({
+    id: 'source-2',
+    roomId: 'room-b',
+    kind: 'file',
+    summary: 'Budget approval and payment milestone for another client',
+    createdAt: Date.now(),
+  });
+
+  const hits = await engine.retrieveHits('payment milestone', 'room-a', 5);
+
+  assert.deepEqual(hits.map((hit) => hit.item.id), ['source-1']);
+  assert.equal(hits[0]?.reason.startsWith('lexical_match:'), true);
+});
+
+test('MiniSearchRetrievalEngine tokenizes Thai text beyond whitespace', async () => {
+  const engine = new MiniSearchRetrievalEngine();
+  await engine.indexSourceItem({
+    id: 'source-thai',
+    roomId: 'room-thai',
+    kind: 'note',
+    summary: 'ลูกค้าขอเลื่อนเดดไลน์และยืนยันงบประมาณก่อนเริ่มงาน',
+    createdAt: Date.now(),
+  });
+
+  const hits = await engine.retrieve('งบประมาณ', 'room-thai', 3);
+  const thaiTokens = tokenizeRoomMemoryText('ยืนยันงบประมาณ');
+
+  assert.deepEqual(hits.map((hit) => hit.id), ['source-thai']);
+  assert.equal(thaiTokens.length > 1, true);
+  assert.equal(thaiTokens.some((token) => token.length > 1), true);
+});

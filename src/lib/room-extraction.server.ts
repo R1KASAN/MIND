@@ -2,19 +2,17 @@ import { mkdir, copyFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import {
-  getDocument,
-} from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { createWorker } from 'tesseract.js';
+import { extractText, getDocumentProxy } from 'unpdf';
 import {
   composeRoomSourceText,
   inferRoomFileKind,
+  normalizeRoomFileText,
   type RoomFileFailureStage,
   type RoomFileOcrMetrics,
   type RoomSourceFile,
   type RoomSubmission,
 } from '@/lib/room';
-import type { PDFDocumentProxy, TextContent } from 'pdfjs-dist/types/src/display/api';
 
 const require = createRequire(import.meta.url);
 const nodeModulesRequire = createRequire(path.join(process.cwd(), 'package.json'));
@@ -35,7 +33,6 @@ const TESSERACT_WORKER_PATH = path.join(
 
 let localTessdataPromise: Promise<string> | null = null;
 let localOcrWorkerPromise: Promise<Awaited<ReturnType<typeof createWorker>>> | null = null;
-let pdfWorkerSetupPromise: Promise<void> | null = null;
 
 interface PdfOcrOptions {
   maxPages?: number;
@@ -58,6 +55,7 @@ interface RoomExtractionDeps {
 }
 
 export type OcrQualityMetrics = RoomFileOcrMetrics;
+type UnpdfDocumentProxy = Awaited<ReturnType<typeof getDocumentProxy>>;
 
 export interface PdfOcrEngineResult {
   text: string;
@@ -71,13 +69,7 @@ export interface OcrEngineAdapter {
 }
 
 export function normalizeFileText(text: string): string {
-  return text
-    .replace(/\u0000/g, '')
-    .replace(/\r\n?/g, '\n')
-    .replace(/[ \t\f\v]+/g, ' ')
-    .replace(/ *\n */g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  return normalizeRoomFileText(text);
 }
 
 function buildTextQualityMetrics(
@@ -92,7 +84,9 @@ function buildTextQualityMetrics(
   const spacedThaiRuns = text.match(/(?:[\u0E00-\u0E7F]\s+){4,}[\u0E00-\u0E7F]/g) ?? [];
   const compactWordTokens = normalizedText.match(/[A-Za-z\u0E00-\u0E7F]+/g) ?? [];
   const normalWordCount = compactWordTokens.filter((token) => {
-    if (/[\u0E00-\u0E7F]/.test(token)) return token.length >= 4;
+    // Thai has many meaningful 3-character tokens (งาน, ได้, รับ, ออก).
+    // >= 4 undercounted readable Thai OCR; 2-char tokens stay excluded to avoid counting noise.
+    if (/[\u0E00-\u0E7F]/.test(token)) return token.length >= 3;
     return token.length >= 3;
   }).length;
   const significantCharacterCount = normalizedText.replace(/\s/g, '').length;
@@ -128,7 +122,9 @@ export function assessExtractedTextQuality(text: string): ExtractedTextQuality {
 
   const compactWordTokens = normalizedText.match(/[A-Za-z\u0E00-\u0E7F]+/g) ?? [];
   const normalWordCount = compactWordTokens.filter((token) => {
-    if (/[\u0E00-\u0E7F]/.test(token)) return token.length >= 4;
+    // Thai has many meaningful 3-character tokens (งาน, ได้, รับ, ออก).
+    // >= 4 undercounted readable Thai OCR; 2-char tokens stay excluded to avoid counting noise.
+    if (/[\u0E00-\u0E7F]/.test(token)) return token.length >= 3;
     return token.length >= 3;
   }).length;
   const normalWordRatio = compactWordTokens.length > 0 ? normalWordCount / compactWordTokens.length : 0;
@@ -204,32 +200,6 @@ async function createIsolatedOcrWorker() {
   });
 }
 
-type PdfJsWorkerGlobal = typeof globalThis & {
-  pdfjsWorker?: {
-    WorkerMessageHandler: unknown;
-  };
-};
-
-async function ensurePdfWorkerGlobal() {
-  const globalScope = globalThis as PdfJsWorkerGlobal;
-  if (globalScope.pdfjsWorker?.WorkerMessageHandler) {
-    return;
-  }
-
-  if (!pdfWorkerSetupPromise) {
-    pdfWorkerSetupPromise = import('pdfjs-dist/legacy/build/pdf.worker.mjs')
-      .then((workerModule) => {
-        globalScope.pdfjsWorker = workerModule as PdfJsWorkerGlobal['pdfjsWorker'];
-      })
-      .catch((error) => {
-        pdfWorkerSetupPromise = null;
-        throw error;
-      });
-  }
-
-  return pdfWorkerSetupPromise;
-}
-
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMessage: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   try {
@@ -244,40 +214,23 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMessa
   }
 }
 
-async function loadPdfDocument(file: File): Promise<{ loadingTask: ReturnType<typeof getDocument>; documentProxy: PDFDocumentProxy }> {
+async function loadPdfDocument(file: File): Promise<UnpdfDocumentProxy> {
   const buffer = new Uint8Array(await file.arrayBuffer());
-  await ensurePdfWorkerGlobal();
-  const loadingTask = getDocument({
-    data: buffer,
+  return getDocumentProxy(buffer, {
     isEvalSupported: false,
     isOffscreenCanvasSupported: false,
     disableFontFace: true,
     useWorkerFetch: false,
   });
-  const documentProxy = await loadingTask.promise;
-  return { loadingTask, documentProxy };
 }
 
 async function extractPdfTextLayer(file: File): Promise<string> {
-  const { loadingTask, documentProxy } = await loadPdfDocument(file);
+  const documentProxy = await loadPdfDocument(file);
   try {
-    const pages: string[] = [];
-    for (let pageNumber = 1; pageNumber <= documentProxy.numPages; pageNumber += 1) {
-      const page = await documentProxy.getPage(pageNumber);
-      const textContent = (await page.getTextContent()) as TextContent;
-      const pageText = normalizeFileText(
-        textContent.items
-          .map((item: TextContent['items'][number]) => ('str' in item && typeof item.str === 'string' ? item.str : ''))
-          .join(' '),
-      );
-      if (pageText) {
-        pages.push(pageText);
-      }
-    }
-    return normalizeFileText(pages.join('\n\n'));
+    const { text } = await extractText(documentProxy, { mergePages: true });
+    return normalizeFileText(text);
   } finally {
     await documentProxy.destroy().catch(() => undefined);
-    await loadingTask.destroy().catch(() => undefined);
   }
 }
 
@@ -288,7 +241,7 @@ async function extractImageText(file: File): Promise<string> {
   return normalizeFileText(result.data.text || '');
 }
 
-async function renderPdfPageToPng(documentProxy: PDFDocumentProxy, pageNumber: number, scale: number): Promise<Buffer> {
+async function renderPdfPageToPng(documentProxy: UnpdfDocumentProxy, pageNumber: number, scale: number): Promise<Buffer> {
   const { createCanvas } = nodeModulesRequire('@napi-rs/canvas') as typeof import('@napi-rs/canvas');
   const page = await documentProxy.getPage(pageNumber);
   const viewport = page.getViewport({ scale });
@@ -305,7 +258,7 @@ async function extractPdfTextWithTesseract(file: File, options: PdfOcrOptions = 
     scale = PDF_RENDER_SCALE,
   } = options;
   const startedAt = Date.now();
-  const { loadingTask, documentProxy } = await loadPdfDocument(file);
+  const documentProxy = await loadPdfDocument(file);
   const worker = await createIsolatedOcrWorker();
 
   try {
@@ -331,7 +284,6 @@ async function extractPdfTextWithTesseract(file: File, options: PdfOcrOptions = 
   } finally {
     await worker.terminate().catch(() => undefined);
     await documentProxy.destroy().catch(() => undefined);
-    await loadingTask.destroy().catch(() => undefined);
   }
 }
 
@@ -381,6 +333,7 @@ function buildFailedSourceFile(
   file: File,
   failureReason: string,
   options: {
+    status?: RoomSourceFile['status'];
     failureDetail?: string;
     failureStage?: RoomFileFailureStage;
     createdAt?: number;
@@ -395,7 +348,7 @@ function buildFailedSourceFile(
     kind: inferRoomFileKind(file.name, file.type),
     mimeType: file.type || 'application/octet-stream',
     size: file.size,
-    status: 'failed',
+    status: options.status ?? 'failed_extraction',
     createdAt,
     failureReason,
     failureDetail: options.failureDetail,
@@ -481,6 +434,7 @@ async function extractSingleFile(file: File, deps: RoomExtractionDeps = {}): Pro
           });
         }
         return buildFailedSourceFile(file, 'pdf_text_garbled_after_ocr', {
+          status: 'unreadable',
           failureDetail: ocrAssessment.reason ?? 'ocr_text_quality_failed',
           failureStage: 'pdf_ocr',
           createdAt,
@@ -502,6 +456,20 @@ async function extractSingleFile(file: File, deps: RoomExtractionDeps = {}): Pro
     } else if (kind === 'image') {
       try {
         extractedText = await extractImageTextFn(file);
+        const imageAssessment = assessExtractedTextQuality(extractedText);
+        if (imageAssessment.usable) {
+          return buildReadySourceFile(base, imageAssessment.normalizedText, {
+            ocrEngine: 'tesseract',
+            ocrMetrics: imageAssessment.metrics,
+          });
+        }
+        return buildFailedSourceFile(file, 'image_ocr_failed', {
+          failureDetail: imageAssessment.reason ?? 'ocr_text_quality_failed',
+          failureStage: 'image_ocr',
+          createdAt,
+          ocrEngine: 'tesseract',
+          ocrMetrics: imageAssessment.metrics,
+        });
       } catch (error) {
         return buildFailedSourceFile(file, 'image_ocr_failed', {
           failureDetail: errorDetail(error),
@@ -531,6 +499,7 @@ async function extractSingleFile(file: File, deps: RoomExtractionDeps = {}): Pro
     return buildReadySourceFile(base, extractedText);
   } catch (error) {
     return buildFailedSourceFile(file, 'extract_failed', {
+      status: 'failed_extraction',
       failureDetail: errorDetail(error),
       failureStage: 'unknown',
       createdAt,
@@ -545,7 +514,38 @@ export async function extractRoomSubmission(
 ): Promise<RoomSubmission> {
   const sourceFiles: RoomSourceFile[] = [];
   for (const file of files) {
-    sourceFiles.push(await extractSingleFile(file, deps));
+    const result = await extractSingleFile(file, deps);
+    sourceFiles.push(result);
+
+    // ── Phase 3.2 Observability ──────────────────────────────────────────────
+    // One structured log per file, emitted after final status is known.
+    // Does NOT alter extraction logic or thresholds.
+    const kind = result.kind;
+    let extractionMethod: 'text-layer' | 'ocr' | 'plain-text' | 'markdown' | null = null;
+    if (result.status === 'ready') {
+      if (result.ocrEngine) {
+        extractionMethod = 'ocr';
+      } else if (kind === 'pdf') {
+        extractionMethod = 'text-layer';
+      } else if (kind === 'text') {
+        // Distinguish markdown from plain text by file extension
+        extractionMethod = result.name.toLowerCase().endsWith('.md') ? 'markdown' : 'plain-text';
+      } else if (kind === 'table') {
+        extractionMethod = 'plain-text';
+      }
+    }
+
+    console.log('[MIND][FileExtraction]', JSON.stringify({
+      fileName: result.name,
+      mimeType: result.mimeType,
+      status: result.status,
+      extractionMethod,
+      extractedTextLength: result.extractedText?.length ?? 0,
+      failureReason: result.failureReason ?? null,
+      qualityReason: result.failureDetail ?? null,
+      enteredRoomMemory: result.status === 'ready',
+    }));
+    // ── End Observability ─────────────────────────────────────────────────────
   }
   const extractedParts = sourceFiles
     .map((file) => file.extractedText?.trim())

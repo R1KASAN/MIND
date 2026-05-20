@@ -51,7 +51,7 @@ export function buildPlanEvidence(task: TaskContext, max = 3): PlanEvidenceChip[
 
   return [{
     sourceId: `manual:${task.id}`,
-    label: 'สรุปด้วยมือ',
+    label: 'ใช้ข้อความที่คุณวางไว้',
     excerpt: truncate(task.sourceText),
     sourceKindLabel: 'manual_summary',
   }];

@@ -46,6 +46,7 @@ function makePayload(overrides: Partial<AiSynthesisResponse> = {}): AiSynthesisR
         'ถามลูกค้าว่าต้องการให้เริ่มจากจุดไหน',
         'ร่างข้อความตอบกลับเพื่อขอ clarification',
       ],
+      micro_steps_source: 'ai',
     },
     alternative_actions: [],
     detected_blockers: [],
@@ -102,7 +103,7 @@ test('mergeTaskConstraints persists reply-first and patches time/energy constrai
   assert.equal(result.nextTask.constraints?.energyLevel, 'low');
 });
 
-test('handleMakeSmaller routes to rescue with no_change diagnostics after structural retry still changes nothing', async () => {
+test('handleMakeSmaller stays on SCAFFOLD with no_change feedback after structural retry still changes nothing', async () => {
   const payload = makePayload();
   const task = makeTask({
     lifecycleState: 'in_scaffold',
@@ -120,7 +121,7 @@ test('handleMakeSmaller routes to rescue with no_change diagnostics after struct
   const sessionRef = { current: session };
   const refineLoadingStates: boolean[] = [];
   let latestSession: AppSession | null = session;
-  let feedback: { message: string; reason: string; diagnostic: string } | null = null;
+  let feedback = null as { message: string; reason: string; diagnostic: string } | null;
   let currentPayload: AiSynthesisResponse | null = payload;
   const trackedEvents: Array<{ name: string; properties: Record<string, unknown> | undefined }> = [];
 
@@ -161,29 +162,9 @@ test('handleMakeSmaller routes to rescue with no_change diagnostics after struct
       });
     }
 
+
     if (url.includes('/api/ai/rescue')) {
-      return new Response(JSON.stringify({
-        diagnosis: {
-          primaryReason: 'too_big',
-          explanation: 'ก้าวนี้ยังใหญ่เกินกว่าจะย่อยต่อจากถ้อยคำเดิมได้',
-        },
-        rescuePlan: {
-          mode: 'shrink',
-          steps: [
-            'กลับไปทำแค่ส่วนเล็กที่สุดของ step นี้ก่อน',
-            'ถ้ายังติดอยู่ ให้เลือกข้อมูลชิ้นเดียวที่ต้องดูต่อ',
-          ],
-        },
-        suggestedMessage: null,
-        meta: {
-          model: 'qwen2.5:3b',
-          usedRoomFiles: [],
-          repairUsed: false,
-        },
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      throw new Error('rescue must NOT be called automatically on no_change — user must explicitly click "ฉันติขัด"');
     }
 
     throw new Error(`unexpected fetch call: ${url}`);
@@ -231,7 +212,7 @@ test('handleMakeSmaller routes to rescue with no_change diagnostics after struct
 
     await controller.handleMakeSmaller();
 
-    assert.deepEqual(refineLoadingStates, [true, false, false]);
+    assert.deepEqual(refineLoadingStates, [true, false]);
     assert.equal(scaffoldCalls, 2);
     assert.equal(feedback?.message, SCAFFOLD_REFINE_NO_CHANGE_COPY);
     assert.equal(feedback?.reason, 'no_change');
@@ -242,7 +223,7 @@ test('handleMakeSmaller routes to rescue with no_change diagnostics after struct
     assert.equal(noChangeEvent?.properties?.initial_scaffold_model, 'qwen2.5:3b');
     assert.equal(noChangeEvent?.properties?.structural_retry_used, true);
     assert.equal(noChangeEvent?.properties?.structural_retry_model, 'qwen2.5:3b');
-    assert.equal(latestSession?.uiRoute, 'RESCUE');
+    assert.equal(latestSession?.uiRoute, 'SCAFFOLD');
     assert.equal(
       currentPayload?.recommended_action.micro_steps[0],
       'สรุปสถานะงานที่เราทำแล้ว',
@@ -273,7 +254,7 @@ test('handleMakeSmaller routes to clarification when no_change suggests missing 
   const sessionRef = { current: session };
   let latestSession: AppSession | null = session;
   let clarificationPrompt = '';
-  let feedback: { routeLabel?: string; reasonLabel?: string } | null = null;
+  let feedback = null as { routeLabel?: string; reasonLabel?: string } | null;
 
   const originalFetch = global.fetch;
   global.fetch = async (input) => {
@@ -368,7 +349,7 @@ test('handleMakeSmaller surfaces failed diagnostics when scaffold request fails'
   });
   const session = makeSession(task, payload);
   const sessionRef = { current: session };
-  let feedback: { message: string; reason: string; diagnostic: string } | null = null;
+  let feedback = null as { message: string; reason: string; diagnostic: string } | null;
   const trackedEvents: Array<{ name: string; properties: Record<string, unknown> | undefined }> = [];
 
   const originalFetch = global.fetch;
@@ -450,6 +431,7 @@ test('handleMakeSmaller accepts a richer scaffold when downstream steps become m
         'ร่าง timeline รอบแรก',
         'ตีราคาแบบคร่าว ๆ',
       ],
+      micro_steps_source: 'ai',
     },
   });
   const task = makeTask({
@@ -660,7 +642,79 @@ test('handleCompleteScaffold enters completion summary on the last step', async 
   assert.equal(latestSession?.task?.currentPlan?.successSignal, 'สรุปและส่ง clarification ได้ครบ');
 });
 
-test('handleStartNewFromCompletedScaffold clears the task after marking the action completed', async () => {
+test('handleCompleteScaffold completes against the full refined scaffold plan, not truncated micro steps', async () => {
+  const payload = makePayload({
+    recommended_action: {
+      title: 'ตอบลูกค้าด้วยลำดับที่เล็กลง',
+      rationale: 'ลดความเสี่ยงก่อนตอบ',
+      micro_steps: [
+        'เปิดแชต ABC Corp ล่าสุด',
+        'แยกเรื่อง prod incident ออกจาก Dashboard/payment API',
+        'ร่างข้อความสถานะที่ยังไม่ commit เวลา',
+      ],
+      micro_steps_source: 'ai',
+    },
+  });
+  const task = makeTask({
+    lifecycleState: 'in_scaffold',
+    assistantMode: 'scaffold_refinement',
+    currentActionId: 'action-1',
+    currentStepIndex: 3,
+    lastSynthesis: payload,
+    currentPlan: {
+      actionTitle: payload.recommended_action.title,
+      steps: [
+        { id: 'step-1', text: 'เปิดแชต ABC Corp ล่าสุด' },
+        { id: 'step-2', text: 'แยกเรื่อง prod incident ออกจาก Dashboard/payment API' },
+        { id: 'step-3', text: 'ร่างข้อความสถานะที่ยังไม่ commit เวลา' },
+        { id: 'step-4', text: 'ตรวจคำตอบสุดท้ายก่อนส่งลูกค้า' },
+      ],
+    },
+  });
+  const session = makeSession(task, payload);
+  const sessionRef = { current: session };
+  let latestSession: AppSession | null = session;
+
+  const controller = createTaskController({
+    session,
+    sessionRef,
+    currentPayload: payload,
+    currentActionState: makeAction(),
+    clarificationPrompt: '',
+    dumpStartTime: null,
+    aiModel: 'qwen2.5:3b',
+    setSession: (value) => {
+      latestSession = value;
+    },
+    setCurrentPayload: () => undefined,
+    setCurrentActionState: () => undefined,
+    setManualFallbackSuggestedActions: () => undefined,
+    setManualFallbackRetryable: () => undefined,
+    setClarificationPrompt: () => undefined,
+    setCurrentWhyThisNow: () => undefined,
+    setCurrentRescueState: () => undefined,
+    setIsRescueLoading: () => undefined,
+    setIsNegotiatingAction: () => undefined,
+    setIsReentryLoading: () => undefined,
+    isScaffoldRefining: false,
+    setIsScaffoldRefining: () => undefined,
+    setScaffoldRefineFeedback: () => undefined,
+    setDumpStartTime: () => undefined,
+    recordAiOpsEntry: () => undefined,
+    persistSession: async () => undefined,
+    persistActionSave: async () => undefined,
+    persistActionUpdate: async () => undefined,
+  });
+
+  await controller.handleCompleteScaffold();
+
+  assert.equal(latestSession?.task?.assistantMode, 'scaffold_completion');
+  assert.equal(latestSession?.task?.currentStepIndex, 3);
+  assert.equal(latestSession?.task?.currentPlan?.steps.length, 4);
+  assert.equal(latestSession?.task?.currentPlan?.steps[3]?.provenance?.confirmedAt !== undefined, true);
+});
+
+test('handleStartNewFromCompletedScaffold soft-resets the Room after marking the action completed', async () => {
   const payload = makePayload();
   const task = makeTask({
     lifecycleState: 'in_scaffold',
@@ -719,10 +773,13 @@ test('handleStartNewFromCompletedScaffold clears the task after marking the acti
   assert.equal(actionUpdates[0]?.id, 'action-1');
   assert.equal(actionUpdates[0]?.modifications.state, 'COMPLETED');
   assert.equal(latestSession?.uiRoute, 'DUMP_ENTRY');
-  assert.equal(latestSession?.task, undefined);
+  assert.equal(latestSession?.task?.lifecycleState, 'dumped');
+  assert.equal(latestSession?.task?.sourceText, task.sourceText);
+  assert.equal(latestSession?.task?.currentActionId, null);
+  assert.equal(latestSession?.task?.currentStepIndex, 0);
   assert.equal(latestSession?.currentPayload, undefined);
   assert.equal(latestSession?.currentActionId, null);
-  assert.equal(latestSession?.activeDumpContext, undefined);
+  assert.equal(latestSession?.activeDumpContext?.text, task.sourceText);
 });
 
 test('handleRejectAction sends the user to decision board without losing the original proposal', async () => {
@@ -879,8 +936,8 @@ test('handleDump falls back to local synthesis when action synthesis times out',
   });
   const sessionRef = { current: session };
   let latestSession: AppSession | null = session;
-  let currentPayload: AiSynthesisResponse | null = null;
-  let currentActionState: Action | null = null;
+  let currentPayload = null as AiSynthesisResponse | null;
+  let currentActionState = null as Action | null;
   const fetchCalls: string[] = [];
 
   const originalFetch = global.fetch;
@@ -1005,12 +1062,12 @@ test('handleDump ignores a second concurrent submit and only runs one AI lifecyc
     lastActive: 100,
     uiRoute: 'DUMP_ENTRY',
     notThisCount: 0,
-    task: null,
+    task: undefined,
   });
   const sessionRef = { current: session };
   let latestSession: AppSession | null = session;
   const fetchCalls: string[] = [];
-  let releaseIntake: (() => void) | null = null;
+  let releaseIntake = null as (() => void) | null;
   const intakeGate = new Promise<void>((resolve) => {
     releaseIntake = resolve;
   });
@@ -1093,7 +1150,7 @@ test('handleDump ignores a second concurrent submit and only runs one AI lifecyc
       aiModel: 'qwen2.5:3b',
       setSession: (value) => {
         latestSession = value;
-        sessionRef.current = value;
+        if (value) sessionRef.current = value;
       },
       setCurrentPayload: () => undefined,
       setCurrentActionState: () => undefined,
@@ -1638,8 +1695,8 @@ test('resumeFromSuggestedReentry seeds one-action state for dumped save-point ro
   });
   const sessionRef = { current: session };
   let latestSession: AppSession | null = session;
-  let currentPayload: AiSynthesisResponse | null = null;
-  let currentActionState: Action | null = null;
+  let currentPayload = null as AiSynthesisResponse | null;
+  let currentActionState = null as Action | null;
   const savedActions: Action[] = [];
 
   const controller = createTaskController({
@@ -1877,6 +1934,106 @@ test('handleAcceptAction emits one_action_accepted_first_try when no alternative
   }
 });
 
+test('handleAcceptAction marks retrieval analytics only when current step has retrieved evidence', async () => {
+  const payload = makePayload();
+  const task = makeTask({
+    lifecycleState: 'has_one_action',
+    currentActionId: 'action-1',
+    lastSynthesis: payload,
+    currentPlan: {
+      actionTitle: payload.recommended_action.title,
+      steps: [
+        {
+          id: 'step-1',
+          text: payload.recommended_action.micro_steps[0],
+          evidence: [
+            {
+              sourceId: 'file:brief',
+              label: 'brief.txt',
+              excerpt: 'ลูกค้ารอ timeline ใหม่',
+              sourceKindLabel: 'retrieved',
+            },
+          ],
+          provenance: {
+            generatedAt: 1,
+            generatedBy: 'action',
+            sourceIds: ['file:brief'],
+          },
+        },
+      ],
+    },
+    oneActionTracking: {
+      hasViewedAlternative: true,
+      hasAdjusted: false,
+    },
+  });
+  const session = normalizeSession({
+    lastActive: 100,
+    uiRoute: 'ONE_ACTION',
+    notThisCount: 0,
+    currentActionId: task.currentActionId,
+    currentPayload: payload,
+    task,
+  });
+  const sessionRef = { current: session };
+  const originalConsoleLog = console.log;
+  const events: Array<{ name: string; properties: Record<string, unknown> }> = [];
+  console.log = (...args: unknown[]) => {
+    const first = args[0];
+    if (typeof first === 'string' && first.startsWith('[EVENT] ')) {
+      events.push({
+        name: first.replace('[EVENT] ', '').trim(),
+        properties: args[1] && typeof args[1] === 'object'
+          ? args[1] as Record<string, unknown>
+          : {},
+      });
+    }
+  };
+
+  try {
+    const controller = createTaskController({
+      session,
+      sessionRef,
+      currentPayload: payload,
+      currentActionState: makeAction(),
+      clarificationPrompt: '',
+      dumpStartTime: null,
+      aiModel: 'qwen2.5:3b',
+      setSession: (value) => {
+        if (value) sessionRef.current = value;
+      },
+      setCurrentPayload: () => undefined,
+      setCurrentActionState: () => undefined,
+      setManualFallbackSuggestedActions: () => undefined,
+      setManualFallbackRetryable: () => undefined,
+      setClarificationPrompt: () => undefined,
+      setCurrentWhyThisNow: () => undefined,
+      setCurrentRescueState: () => undefined,
+      setIsRescueLoading: () => undefined,
+      setIsNegotiatingAction: () => undefined,
+      setIsReentryLoading: () => undefined,
+      isScaffoldRefining: false,
+      setIsScaffoldRefining: () => undefined,
+      setScaffoldRefineFeedback: () => undefined,
+      setDumpStartTime: () => undefined,
+      recordAiOpsEntry: () => undefined,
+      persistSession: async () => undefined,
+      persistActionSave: async () => undefined,
+      persistActionUpdate: async () => undefined,
+    });
+
+    await controller.handleAcceptAction();
+
+    const confirmed = events.find((event) => event.name === 'step_confirmed');
+    assert.equal(confirmed?.properties.retrieval_enabled, true);
+    assert.equal(confirmed?.properties.retrieval_selection_method, 'retrieval');
+    assert.equal(confirmed?.properties.retrieved_source_count, 1);
+    assert.deepEqual(confirmed?.properties.source_ids, ['file:brief']);
+  } finally {
+    console.log = originalConsoleLog;
+  }
+});
+
 test('handleEnterRescue falls back with safe-copy language when rescue fails', async () => {
   const payload = makePayload();
   const task = makeTask({
@@ -1939,10 +2096,8 @@ test('handleEnterRescue falls back with safe-copy language when rescue fails', a
     await controller.handleEnterRescue();
     const rescueExplanation = (latestRescueState as AiRescueResponse | null)?.diagnosis.explanation ?? '';
 
-    assert.equal(
-      rescueExplanation.includes('บริบทงานและข้อความเดิมของคุณยังอยู่ครบ'),
-      true,
-    );
+    assert.match(rescueExplanation, /บริบทเดิม|ส่วนที่เล็กที่สุด|กลับมาต่อ/);
+    assert.doesNotMatch(rescueExplanation, /AI ยังตอบไม่ทัน|ลดแรงเริ่ม|พลังงานต่ำ|งานนี้|MIND ยังวินิจฉัย/);
     assert.equal(latestSession?.uiRoute, 'RESCUE');
     assert.equal(latestSession?.status, 'RESCUE');
     assert.equal(latestSession?.task?.lifecycleState, 'stalled');

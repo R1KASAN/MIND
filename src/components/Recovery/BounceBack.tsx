@@ -3,6 +3,7 @@
 import { useTrackMountEvent } from '@/lib/instrumentation';
 import type { ReentryBrief } from '@/lib/store/idb';
 import type { StudioSnapshot } from '@/lib/orchestrator/studio';
+import { AIProcessingIndicator } from '@/components/AI/AIProcessingIndicator';
 import { ContextSnapshot } from '@/components/Studio/ContextSnapshot';
 
 interface Props {
@@ -39,18 +40,18 @@ export function BounceBack({
     <div className="reentry-hero-shell">
       <div className="reentry-hero-header reentry-hero-header-left">
         <p className="reentry-hero-kicker">กลับเข้าบริบท</p>
-        <h2 className="reentry-hero-title">Catch up in 2 minutes</h2>
+        <h2 className="reentry-hero-title">กลับมาทำต่อใน 2 นาที</h2>
       </div>
       {reentryBrief ? (
         <>
           <div className="reentry-hero-support">
-            <p className="reentry-hero-support-title">What is this work about?</p>
+            <p className="reentry-hero-support-title">งานนี้เกี่ยวกับอะไร</p>
             <p className="reentry-hero-card-copy">{reentryBrief.summary}</p>
-            <p className="reentry-hero-support-title">Where did I leave off last time?</p>
+            <p className="reentry-hero-support-title">ครั้งก่อนค้างตรงไหน</p>
             <p className="reentry-hero-card-copy">
               {primaryTopAction ? primaryTopAction.rationale : 'MIND เก็บ save point ล่าสุดไว้ในห้องนี้แล้ว'}
             </p>
-            <p className="reentry-hero-support-title">What is a safe next step now?</p>
+            <p className="reentry-hero-support-title">ตอนนี้ควรเริ่มตรงไหน</p>
             <p className="reentry-hero-card-copy">
               {primaryTopAction ? primaryTopAction.title : actionTitle}
             </p>
@@ -66,10 +67,10 @@ export function BounceBack({
           <div className="reentry-hero-actions">
             {hasSuggestedAction ? (
               <button className="primary" onClick={onUseSuggested}>
-                Okay, continue here
+                ต่อจากก้าวนี้
               </button>
             ) : (
-              <button className="primary" onClick={onContinue}>Okay, continue here</button>
+              <button className="primary" onClick={onContinue}>ต่อจากก้าวนี้</button>
             )}
             <button
               className="reentry-hero-secondary"
@@ -115,6 +116,18 @@ export function BounceBack({
                     ))}
                   </div>
                 )}
+                {reentryBrief.usedSourceIds && reentryBrief.usedSourceIds.length > 0 && (
+                  <p className="reentry-hero-file-note">
+                    <span className="reentry-hero-file-note-label">ใช้เป็นบริบท</span>
+                    <span>{reentryBrief.usedSourceIds.map((id) => id.replace(/^file:/, '')).join(', ')}</span>
+                  </p>
+                )}
+                {reentryBrief.failedFileNames && reentryBrief.failedFileNames.length > 0 && (
+                  <p className="reentry-hero-file-note reentry-hero-file-note-warning">
+                    <span className="reentry-hero-file-note-label">อ่านไม่สำเร็จ</span>
+                    <span>{reentryBrief.failedFileNames.join(', ')} — retry ได้</span>
+                  </p>
+                )}
                 <button type="button" onClick={onStartFresh}>เริ่มใหม่</button>
               </div>
             </details>
@@ -135,9 +148,12 @@ export function BounceBack({
       )}
 
       {loading && (
-        <p className="reentry-hero-loading">
-          MIND กำลังสรุปว่าควรกลับเข้างานนี้แบบไหนดี
-        </p>
+        <AIProcessingIndicator
+          size="panel"
+          label="กำลังสรุปจุดกลับมาทำต่อ"
+          detail="MIND กำลังสรุปว่าควรกลับเข้างานนี้แบบไหนดี"
+          showSkeleton
+        />
       )}
       {!reentryBrief && (
         <div className="reentry-hero-actions">

@@ -14,6 +14,16 @@
 /coverage
 /test-results
 
+# generated local artifacts
+/.next-mockup
+/generated
+/outputs
+/tmp
+/mockup-app/.next
+.agents/
+.playwright-mcp/
+graphify-out/
+
 # next.js
 /.next/
 /out/

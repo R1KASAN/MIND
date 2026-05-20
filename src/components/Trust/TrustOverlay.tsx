@@ -14,6 +14,8 @@ export function TrustOverlay({ onClose, onDataDeleted }: Props) {
   useTrackMountEvent('overview_opened');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [backupAttempted, setBackupAttempted] = useState(false);
+  const [backupResult, setBackupResult] = useState<'success' | 'failed' | null>(null);
 
   // T039: Wire JSON export download
   const handleExport = async () => {
@@ -34,10 +36,34 @@ export function TrustOverlay({ onClose, onDataDeleted }: Props) {
     }
   };
 
+  const attemptBackupSnapshot = async () => {
+    try {
+      const data = await exportAllData();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const date = new Date().toISOString().split('T')[0];
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `mind-backup-before-reset-${date}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setBackupResult('success');
+      trackEvent('data_exported', { reason: 'pre_reset_backup' });
+    } catch {
+      setBackupResult('failed');
+    } finally {
+      setBackupAttempted(true);
+    }
+  };
+
   // T040: Wire Delete All — clears IDB and triggers full page reset
   const handleDeleteAll = async () => {
     if (!confirmDelete) {
       setConfirmDelete(true);
+      return;
+    }
+    if (!backupAttempted) {
+      await attemptBackupSnapshot();
       return;
     }
     await clearAllData();
@@ -97,12 +123,30 @@ export function TrustOverlay({ onClose, onDataDeleted }: Props) {
               </p>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button onClick={handleDeleteAll} style={{ color: 'var(--danger)', flex: 1 }}>
-                  ใช่ ลบทั้งหมด
+                  {!backupAttempted
+                    ? 'สำรองก่อน แล้วค่อยยืนยัน'
+                    : backupResult === 'success'
+                      ? 'ยืนยันลบหลังสำรองแล้ว'
+                      : 'ยืนยันลบแม้สำรองไม่สำเร็จ'}
                 </button>
-                <button onClick={() => setConfirmDelete(false)} style={{ flex: 1 }}>
+                <button
+                  onClick={() => {
+                    setConfirmDelete(false);
+                    setBackupAttempted(false);
+                    setBackupResult(null);
+                  }}
+                  style={{ flex: 1 }}
+                >
                   ยกเลิก
                 </button>
               </div>
+              {backupResult && (
+                <p style={{ color: 'var(--text-secondary)', margin: 0, fontSize: '0.82rem' }}>
+                  {backupResult === 'success'
+                    ? 'สร้าง backup snapshot แล้ว ต้องกดยืนยันอีกครั้งก่อนลบจริง'
+                    : 'พยายาม backup แล้วแต่ไม่สำเร็จ ต้องกดยืนยันอีกครั้งก่อนลบจริง'}
+                </p>
+              )}
             </div>
           )}
         </div>

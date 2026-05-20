@@ -1,15 +1,10 @@
 import type { Action, TaskContext } from '@/lib/store/idb';
 import { parseAiRescueResponse } from '@/lib/ai/operation-contract';
-import { buildManualRescueResponse, resolveRescueRouteBudget } from '@/lib/ai/rescue-runtime';
+import { buildManualRescueResponse, inferRescueFallbackReason, resolveRescueRouteBudget } from '@/lib/ai/rescue-runtime';
+import { getAiClient } from '@/lib/ai/client';
+import { handleAiRouteError } from '@/lib/ai/operation-route-helpers';
+import { buildOperationTaskContext } from '@/lib/ai/operation-prompts';
 import { logAiOperationTelemetry } from '@/lib/ai/operation-telemetry';
-import {
-  AI_OPERATION_REPAIR_PROMPT,
-  buildOperationRepairUserPrompt,
-  buildOperationTaskContext,
-  buildRescueUserPrompt,
-  RESCUE_SYSTEM_PROMPT,
-} from '@/lib/ai/operation-prompts';
-import { runAiOperation } from '@/lib/ai/operation-route-helpers';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -98,18 +93,7 @@ export async function POST(req: Request) {
   }
 
   const taskContext = buildOperationTaskContext(task);
-  const fallbackReason =
-    task.blockerSignals.includes('missing_file_or_context')
-      ? 'missing_context'
-      : task.blockerSignals.includes('dependency')
-        ? 'dependency'
-        : task.blockerSignals.includes('unclear_scope')
-          ? 'unclear_scope'
-          : task.blockerSignals.includes('low_energy')
-            ? 'low_energy'
-            : task.blockerSignals.includes('too_big') || task.lifecycleState === 'stalled'
-              ? 'too_big'
-              : 'unknown';
+  const fallbackReason = inferRescueFallbackReason(task);
   const fallbackActionTitle = action?.title ?? task.currentPlan?.actionTitle ?? task.taskFrame?.objective;
   const fallbackCurrentStep =
     action?.microSteps[currentStepIndex] ??
@@ -125,57 +109,39 @@ export async function POST(req: Request) {
     return Response.json(buildDeterministicMissingContextRescue(task, action, currentStepIndex));
   }
 
-  const rescueBudget = resolveRescueRouteBudget({
-    primaryTimeoutMs: RESCUE_TIMEOUT_MS,
-    repairTimeoutMs: RESCUE_REPAIR_TIMEOUT_MS,
-    fallbackTimeoutMs: RESCUE_FALLBACK_TIMEOUT_MS,
-    overallBudgetMs: RESCUE_OVERALL_BUDGET_MS,
-  }, retryContext);
+  try {
+    const aiResponse = await getAiClient().runRescue(task, { action, currentStepIndex, retryContext });
+    return Response.json(aiResponse);
+  } catch (error) {
+    if (error && typeof error === 'object' && 'name' in error && error.name === 'AiRouteError') {
+      const durationMs = (error as any).telemetry?.durationMs ?? Date.now() - routeStartedAt;
+      const model = (error as any).model;
+      const detail = (error as any).detail;
+      const repairUsed = (error as any).telemetry?.repairUsed ?? false;
 
-  const aiResponse = await runAiOperation({
-    operationName: 'rescue',
-    systemPrompt: RESCUE_SYSTEM_PROMPT,
-    repairPrompt: AI_OPERATION_REPAIR_PROMPT,
-    userPrompt: buildRescueUserPrompt(task, action ?? null, currentStepIndex),
-    buildRepairUserPrompt: (invalidOutput, failureDetail) =>
-      buildOperationRepairUserPrompt('rescue', taskContext, invalidOutput, failureDetail),
-    parse: (raw) => parseAiRescueResponse(raw, {
-      fallbackReason,
-      fallbackActionTitle,
-      fallbackCurrentStep,
-    }),
-    numPredict: RESCUE_NUM_PREDICT,
-    repairNumPredict: RESCUE_REPAIR_NUM_PREDICT,
-    primaryTimeoutMs: rescueBudget.primaryTimeoutMs,
-    repairTimeoutMs: rescueBudget.repairTimeoutMs,
-    fallbackTimeoutMs: rescueBudget.fallbackTimeoutMs,
-    overallBudgetMs: rescueBudget.overallBudgetMs,
-  });
+      logAiOperationTelemetry({
+        operationName: 'rescue',
+        passType: 'fallback_pass',
+        model: model ? `manual_rescue_after_${model}` : 'manual_rescue',
+        modelTier: 'fallback',
+        attemptStage: 'fallback',
+        repairUsed,
+        durationMs,
+        detail: detail ? `manual rescue returned after AI failure: ${detail}` : 'manual rescue returned after AI failure',
+      });
 
-  if (aiResponse.ok) return aiResponse;
-
-  const failure = await readAiFailure(aiResponse);
-  const durationMs = failure.durationMs ?? Date.now() - routeStartedAt;
-  logAiOperationTelemetry({
-    operationName: 'rescue',
-    passType: 'fallback_pass',
-    model: failure.model ? `manual_rescue_after_${failure.model}` : 'manual_rescue',
-    modelTier: 'fallback',
-    attemptStage: 'fallback',
-    repairUsed: failure.repairUsed,
-    durationMs,
-    detail: failure.detail ? `manual rescue returned after AI failure: ${failure.detail}` : 'manual rescue returned after AI failure',
-  });
-
-  return Response.json(
-    buildManualRescueResponse({
-      task,
-      action,
-      currentStepIndex,
-      durationMs,
-      failedModel: failure.model,
-      failureDetail: failure.detail,
-    }),
-    { status: 200, headers: { 'x-mind-ai-fallback': 'manual_rescue' } },
-  );
+      return Response.json(
+        buildManualRescueResponse({
+          task,
+          action,
+          currentStepIndex,
+          durationMs,
+          failedModel: model,
+          failureDetail: detail,
+        }),
+        { status: 200, headers: { 'x-mind-ai-fallback': 'manual_rescue' } },
+      );
+    }
+    return handleAiRouteError(error);
+  }
 }

@@ -48,6 +48,7 @@ import {
 } from '@/lib/orchestrator/task-machine';
 import { synthesizeLocally } from '@/lib/ai/local-synthesis';
 import type { AnalyticsEventProperties } from '@/lib/analytics/local-analytics';
+import type { ActionEvidenceContext } from '@/lib/orchestrator/evidence-context';
 import type { IcpTag } from '@/lib/business/monetization';
 import {
   buildScaffoldRefineFeedback,
@@ -69,6 +70,7 @@ import {
   requestReentry,
   requestRescue,
   requestScaffold,
+  recordCompletedCycleInRoomMemory,
   SynthesisFailure,
 } from '@/lib/orchestrator/task-events';
 
@@ -103,6 +105,8 @@ export interface TaskControllerBindings {
   setIsScaffoldRefining: Setter<boolean>;
   setScaffoldRefineFeedback: Setter<ScaffoldRefineFeedback | null>;
   setDumpStartTime: Setter<number | null>;
+  isDumpPending?: boolean;
+  setIsDumpPending?: Setter<boolean>;
   recordAiOpsEntry: (entry: AiOpsDebugEntry) => void;
   persistSession?: (session: AppSession) => Promise<void>;
   persistActionSave?: (action: Action) => Promise<void>;
@@ -293,18 +297,30 @@ export function createTaskController(bindings: TaskControllerBindings) {
     task: TaskContext;
     intake: AiIntakeResponse;
     actionResponse: AiActionResponse;
+    evidenceContext?: ActionEvidenceContext;
     fromRetry?: boolean;
     existingAction?: Action | null;
     persistedNegotiationMode?: Extract<AiActionNegotiationMode, 'reply_first' | 'resume_first'>;
   }) => {
-    const { task, intake, actionResponse, fromRetry = false, existingAction, persistedNegotiationMode } = options;
+    const {
+      task,
+      intake,
+      actionResponse,
+      evidenceContext,
+      fromRetry = false,
+      existingAction,
+      persistedNegotiationMode,
+    } = options;
+    console.info('[MIND][AI_PUTER] Raw Action Response:', JSON.stringify(actionResponse, null, 2));
     const artifacts = buildActionSuccessArtifacts({
       task,
       intake,
       actionResponse,
+      evidenceContext,
       existingAction,
       persistedNegotiationMode,
     });
+    console.info('[MIND][AI_PUTER] Normalized Action Response:', JSON.stringify(artifacts.payload, null, 2));
     const stableSummary = buildStableSummary(task, [
       actionResponse.situationSummary,
       intake.roomDigest,
@@ -521,7 +537,11 @@ export function createTaskController(bindings: TaskControllerBindings) {
         lastAiOperation: 'intake',
       };
 
-      if (intake.requiresClarification) {
+      const hasClarificationAnswer = task.pendingInputs.some(
+        (input) => input.kind === 'clarification'
+      );
+
+      if (intake.requiresClarification && !hasClarificationAnswer) {
         bindings.setClarificationPrompt(intake.clarificationQuestion || 'ช่วยบอกอีกนิดว่าตอนนี้ต้องตอบหรือขยับส่วนไหนก่อน');
         bindings.setCurrentWhyThisNow('');
         const clarificationTask: TaskContext = {
@@ -545,7 +565,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
         return;
       }
 
-      const actionResponse = await requestAction({
+      const { actionResponse, evidenceContext } = await requestAction({
         task: intakeTask,
         preferredCandidate: intake.candidateActions[0],
       });
@@ -554,6 +574,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
         task: intakeTask,
         intake,
         actionResponse,
+        evidenceContext,
         fromRetry,
       });
     } catch (err) {
@@ -629,7 +650,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
     bindings.setIsNegotiatingAction(true);
 
     try {
-      const actionResponse = await requestAction({
+      const { actionResponse, evidenceContext } = await requestAction({
         task: trackedTask,
         negotiation: { mode: input.mode, userNote: input.userNote },
       });
@@ -672,6 +693,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
         },
         intake,
         actionResponse,
+        evidenceContext,
         existingAction: bindings.currentActionState,
         persistedNegotiationMode,
       });
@@ -795,11 +817,9 @@ export function createTaskController(bindings: TaskControllerBindings) {
 
         setScaffoldRefineFeedback(feedback);
         trackEvent('make_smaller_no_change', baseEventProperties);
-        await handleEnterRescue({
-          preserveRefineFeedback: true,
-          seedReason: fallback.rescueReason,
-          outcomeLabel: 'make_smaller_no_change',
-        });
+        // Stay on SCAFFOLD and show inline feedback — do NOT auto-route to Rescue.
+        // The user can explicitly click "ฉันติดขัด" if they want Rescue diagnosis.
+        // Auto-routing caused an unintended /api/ai/rescue call on every no_change result.
         return;
       }
 
@@ -859,13 +879,13 @@ export function createTaskController(bindings: TaskControllerBindings) {
       diagnosis: {
         primaryReason: options?.seedReason ?? 'unknown',
         explanation:
-          'MIND ยังวินิจฉัยไม่สำเร็จในรอบนี้ แต่บริบทงานและข้อความเดิมของคุณยังอยู่ครบ ลองย่อยให้เล็กลงอีก หรือพักไว้แล้วกลับมาลอง rescue ใหม่ได้',
+          'บริบทเดิมยังอยู่ครบ แต่รอบนี้ยังสรุปจุดติดได้ไม่ชัดพอ ให้เริ่มจากส่วนที่เล็กที่สุดหรือพักไว้แล้วกลับมาต่อเมื่อพร้อม',
       },
       rescuePlan: {
         mode: 'shrink',
         steps: [
           'กลับไปทำแค่ส่วนเล็กที่สุดของ step นี้ก่อน',
-          'ถ้ายังติดอยู่จริง งานนี้ยังถูกเก็บไว้เหมือนเดิม ค่อยกลับมาลองใหม่เมื่อพร้อม',
+          'ถ้ายังติดอยู่จริง บริบทนี้ยังถูกเก็บไว้เหมือนเดิม ค่อยกลับมาลองใหม่เมื่อพร้อม',
         ],
       },
       suggestedMessage: undefined,
@@ -880,7 +900,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
     } else {
       clearScaffoldRefineState();
     }
-    bindings.setCurrentRescueState(rescueFallbackState);
+    bindings.setCurrentRescueState(null);
     bindings.setIsRescueLoading(true);
     await updateStatus('RESCUE', {}, nextTask);
     trackEvent('rescue_triggered', buildAnalyticsBase(nextTask, {
@@ -938,13 +958,13 @@ export function createTaskController(bindings: TaskControllerBindings) {
         diagnosis: {
           primaryReason: 'unknown',
           explanation:
-            'MIND ยังวินิจฉัยไม่สำเร็จในรอบนี้ แต่บริบทงานและข้อความเดิมของคุณยังอยู่ครบ ลองย่อยให้เล็กลงอีก หรือพักไว้แล้วกลับมาลอง rescue ใหม่ได้',
+            'บริบทเดิมยังอยู่ครบ แต่รอบนี้ยังสรุปจุดติดได้ไม่ชัดพอ ให้เริ่มจากส่วนที่เล็กที่สุดหรือพักไว้แล้วกลับมาต่อเมื่อพร้อม',
         },
         rescuePlan: {
           mode: 'shrink',
           steps: [
             'กลับไปทำแค่ส่วนเล็กที่สุดของ step นี้ก่อน',
-            'ถ้ายังติดอยู่จริง งานนี้ยังถูกเก็บไว้เหมือนเดิม ค่อยกลับมาลองใหม่เมื่อพร้อม',
+            'ถ้ายังติดอยู่จริง บริบทนี้ยังถูกเก็บไว้เหมือนเดิม ค่อยกลับมาลองใหม่เมื่อพร้อม',
           ],
         },
         suggestedMessage: undefined,
@@ -1034,7 +1054,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
     const currentTask = getSessionTask(base);
     const steps = [
       `เปิดสิ่งที่ต้องใช้เพื่อเริ่ม "${actionTitle}"`,
-      'โฟกัสแค่ 2 นาทีแรกของงานนี้พอ',
+      'โฟกัสแค่ 2 นาทีแรกของก้าวนี้พอ',
       'ขยับก้าวเล็กถัดไปให้เริ่มเดินจริง',
     ];
     const actionDraft: Action = {
@@ -1094,13 +1114,13 @@ export function createTaskController(bindings: TaskControllerBindings) {
       lastAttemptAt: Date.now(),
     };
 
+    bindings.setIsDumpPending?.(true);
     await updateStatus('SYNTHESIZING', {
       currentActionId: currentTask.currentActionId,
       currentPayload: currentTask.lastSynthesis,
       lastFailureReason: currentTask.lastFailureReason,
       lastWorkflowType: currentTask.workflowType ?? base.lastWorkflowType,
     }, retriedTask);
-
     try {
       await runAiLifecycle(retriedTask, true);
     } catch (err) {
@@ -1111,6 +1131,8 @@ export function createTaskController(bindings: TaskControllerBindings) {
       if (!recovered) {
         throw failure;
       }
+    } finally {
+      bindings.setIsDumpPending?.(false);
     }
   };
 
@@ -1175,7 +1197,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
         createdAt: Date.now(),
         title: suggested.title,
         rationale: suggested.rationale,
-        microSteps: buildBootstrapMicroSteps({ title: suggested.title }),
+        microSteps: buildBootstrapMicroSteps({ title: suggested.title }, currentTask.taskShape),
         isPinned: false,
         state: 'PENDING',
         workflowType: currentTask.workflowType,
@@ -1238,6 +1260,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
           lifecycleState: 'dumped' as const,
           currentActionId: null,
           currentStepIndex: 0,
+          assistantMode: undefined,
         }
       : null;
 
@@ -1269,6 +1292,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
       lifecycleState: 'synthesizing',
       lastAttemptAt: Date.now(),
     };
+    bindings.setIsDumpPending?.(true);
     await updateStatus('SYNTHESIZING', {
       currentActionId: null,
       currentPayload: undefined,
@@ -1281,6 +1305,8 @@ export function createTaskController(bindings: TaskControllerBindings) {
         ? err
         : new SynthesisFailure('unknown', 'ไม่สามารถเชื่อมต่อกับ AI endpoint ได้');
       await applyDeterministicFallback(nextTask, failure);
+    } finally {
+      bindings.setIsDumpPending?.(false);
     }
   };
 
@@ -1316,13 +1342,19 @@ export function createTaskController(bindings: TaskControllerBindings) {
       currentStepIndex: 0,
       lastSynthesis: bindings.currentPayload,
     };
+    const confirmedStep = nextTask.currentPlan?.steps[0];
+    const retrievedSourceCount = confirmedStep?.evidence?.filter(
+      (item) => item.sourceKindLabel === 'retrieved',
+    ).length ?? 0;
     trackEvent('step_confirmed', buildAnalyticsBase(nextTask, {
-      step_id: nextTask.currentPlan?.steps[0]?.id,
-      source_ids: nextTask.currentPlan?.steps[0]?.evidence?.map((item) => item.sourceId),
-      confidence_level: nextTask.currentPlan?.steps[0]?.confidence?.level,
-      confidence_score: nextTask.currentPlan?.steps[0]?.confidence?.score,
-      destructive_risk: nextTask.currentPlan?.steps[0]?.safety?.risk,
-      retrieval_enabled: false,
+      step_id: confirmedStep?.id,
+      source_ids: confirmedStep?.evidence?.map((item) => item.sourceId),
+      confidence_level: confirmedStep?.confidence?.level,
+      confidence_score: confirmedStep?.confidence?.score,
+      destructive_risk: confirmedStep?.safety?.risk,
+      retrieval_enabled: retrievedSourceCount > 0,
+      retrieval_selection_method: retrievedSourceCount > 0 ? 'retrieval' : 'none',
+      retrieved_source_count: retrievedSourceCount,
     }));
     clearScaffoldRefineState();
     await updateStatus('SCAFFOLD', {
@@ -1402,7 +1434,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
       rationale: alt.rationale,
       microSteps: buildBootstrapMicroSteps({
         title: alt.title,
-      }),
+      }, currentTask.taskShape),
       isPinned: false,
       state: 'PENDING',
       workflowType,
@@ -1578,12 +1610,40 @@ export function createTaskController(bindings: TaskControllerBindings) {
     bindings.setIsNegotiatingAction(false);
     bindings.setIsReentryLoading(false);
     clearScaffoldRefineState();
+
+    // Preserve completed task context so Studio still has data to display.
+    // Without this, both task and activeDumpContext are cleared and Studio
+    // shows an empty "ยังไม่มีบริบท" state even though the room has history.
+    const preservedDumpContext = completedTask?.sourceText
+      ? {
+          text: completedTask.sourceText,
+          createdAt: completedTask.createdAt,
+          lastAttemptAt: completedTask.lastAttemptAt,
+          lastFailureReason: completedTask.lastFailureReason,
+        }
+      : undefined;
+
+    const preservedTask: TaskContext | null = completedTask
+      ? {
+          ...completedTask,
+          lifecycleState: 'done',
+          assistantMode: undefined,
+          currentActionId: null,
+          currentStepIndex: 0,
+          lastFailureReason: undefined,
+        }
+      : null;
+
+    if (completedTask) {
+      await recordCompletedCycleInRoomMemory(completedTask);
+    }
+
     await updateStatus('DUMP_ENTRY', {
       currentActionId: null,
       currentPayload: undefined,
-      activeDumpContext: undefined,
+      activeDumpContext: preservedDumpContext,
       lastFailureReason: undefined,
-    }, null);
+    }, preservedTask);
     if (completedTask) {
       trackEvent('task_completed', buildAnalyticsBase(completedTask, {
         outcome_label: 'completed_and_reset',

@@ -4,9 +4,13 @@ import {
   describeRoomFileFailureReason,
   getPrimaryReadyRoomSourceFile,
   getReadyRoomSourceFiles,
+  getRoomContextStatus,
   getRoomFileUxCopy,
   getRoomSourceIdForFile,
+  stripRoomFileContext,
+  type RoomContextStatus,
   type RoomFileFailureStage,
+  type RoomFileStatus,
   type RoomFileUxCopy,
 } from '@/lib/room';
 import { hasResumableTask } from '@/lib/orchestrator/task-machine';
@@ -37,6 +41,7 @@ export interface StudioProvenance {
 export interface StudioFileIssue {
   id: string;
   name: string;
+  status: RoomFileStatus;
   reason: string;
   copy: RoomFileUxCopy;
   failureReason?: string;
@@ -45,6 +50,8 @@ export interface StudioFileIssue {
   storageKey?: string;
   extractAttemptCount?: number;
   lastExtractAttemptAt?: number;
+  /** True when a retry is possible (storageKey present and file is not pending). */
+  retryable: boolean;
 }
 
 export interface StudioReadyFile {
@@ -56,6 +63,8 @@ export interface StudioReadyFile {
   storageKey?: string;
   isPrimary: boolean;
   isAutoPrimary: boolean;
+  /** True when this file's sourceId appears in the retrievedSourceIds list for the current action. */
+  usedInContext: boolean;
 }
 
 export interface StudioSnapshot {
@@ -72,6 +81,14 @@ export interface StudioSnapshot {
   lastUpdatedLabel: string;
   fileIssues: StudioFileIssue[];
   provenance?: StudioProvenance;
+  contextStatus: RoomContextStatus;
+  /** Source IDs that were selected by retrieval for the current action. */
+  retrievedSourceIds: string[];
+  /**
+   * True when the Room has enough context to proceed (contextStatus is not 'blocked').
+   * Used to gate CTA copy — does NOT disable any UI action by itself.
+   */
+  canProceed: boolean;
 }
 
 function truncateText(value: string, maxLength: number) {
@@ -92,10 +109,11 @@ function normalizeCompactText(value?: string | null) {
 
 function getFailedSourceFileIssues(task: TaskContext): StudioFileIssue[] {
   return task.sourceFiles
-    .filter((file) => file.status === 'failed' || file.status === 'unsupported')
+    .filter((file) => file.status !== 'ready')
     .map((file) => ({
       id: file.id,
       name: file.name,
+      status: file.status,
       reason: describeRoomFileFailureReason(file.failureReason) ?? 'อ่านไฟล์นี้ได้ไม่ชัด',
       copy: getRoomFileUxCopy(file),
       failureReason: file.failureReason,
@@ -104,10 +122,11 @@ function getFailedSourceFileIssues(task: TaskContext): StudioFileIssue[] {
       storageKey: file.storageKey,
       extractAttemptCount: file.extractAttemptCount,
       lastExtractAttemptAt: file.lastExtractAttemptAt,
+      retryable: Boolean(file.storageKey) && file.status !== 'pending',
     }));
 }
 
-function getReadySourceFiles(task: TaskContext): StudioReadyFile[] {
+function getReadySourceFiles(task: TaskContext, retrievedSourceIds: ReadonlySet<string>): StudioReadyFile[] {
   const primaryFile = getPrimaryReadyRoomSourceFile(task.sourceFiles, task.sourcePreference);
   const hasExplicitPrimary = Boolean(task.sourcePreference?.primarySourceId);
   return getReadyRoomSourceFiles(task.sourceFiles)
@@ -120,6 +139,7 @@ function getReadySourceFiles(task: TaskContext): StudioReadyFile[] {
       storageKey: file.storageKey,
       isPrimary: primaryFile?.id === file.id,
       isAutoPrimary: !hasExplicitPrimary && primaryFile?.id === file.id,
+      usedInContext: retrievedSourceIds.has(getRoomSourceIdForFile(file)),
     }));
 }
 
@@ -204,14 +224,27 @@ export function buildStudioSnapshot(
   task?: TaskContext,
   action?: Action | null,
   payload?: AiSynthesisResponse | null,
+  retrievedSourceIds?: string[] | null,
 ): StudioSnapshot | null {
   if (!task) return null;
 
   const fileIssues = getFailedSourceFileIssues(task);
   const hasFailedSourceFiles = fileIssues.length > 0;
 
+  // Only show the file-incomplete title when there's genuinely no other context to anchor on.
+  // If the Room has an objective, plan, or existing summary, prefer those — failed files are
+  // already communicated through the fileIssues panel and the summary fallback message.
+  const hasUsableNonFileContext =
+    Boolean(task.taskFrame?.objective) ||
+    Boolean(task.currentPlan?.actionTitle) ||
+    Boolean(task.reentryBrief?.summary) ||
+    Boolean(task.lastSynthesis?.situation_summary) ||
+    Boolean(action?.title) ||
+    Boolean(payload?.recommended_action.title) ||
+    task.sourceText.trim().length > 0 && stripRoomFileContext(task.sourceText).length > 0;
+
   const title =
-    (hasFailedSourceFiles ? 'บริบทไฟล์ยังไม่สมบูรณ์' : undefined) ||
+    (hasFailedSourceFiles && !hasUsableNonFileContext ? 'บริบทไฟล์ยังไม่สมบูรณ์' : undefined) ||
     task.taskFrame?.objective ||
     task.currentPlan?.actionTitle ||
     action?.title ||
@@ -228,9 +261,11 @@ export function buildStudioSnapshot(
     truncateText(task.sourceText.replace(/\s+/g, ' '), 180);
 
   const fileCount = task.sourceFiles.length;
-  const readyFiles = getReadySourceFiles(task);
+  const retrievedSet = new Set(retrievedSourceIds ?? []);
+  const readyFiles = getReadySourceFiles(task, retrievedSet);
   const primaryReadyFile = getPrimaryReadyRoomSourceFile(task.sourceFiles, task.sourcePreference);
   const needsPrimaryFileSelection = getReadyRoomSourceFiles(task.sourceFiles).length > 1 && !primaryReadyFile;
+  const contextStatusValue = getRoomContextStatus(task);
   const actionTitle =
     task.currentPlan?.actionTitle ||
     action?.title ||
@@ -258,6 +293,9 @@ export function buildStudioSnapshot(
     lastUpdatedLabel: formatRelativeTimestamp(lastUpdatedAt),
     fileIssues,
     provenance: buildStudioProvenance(task, title, summary),
+    contextStatus: contextStatusValue,
+    retrievedSourceIds: retrievedSourceIds ?? [],
+    canProceed: contextStatusValue !== 'blocked',
   };
 }
 

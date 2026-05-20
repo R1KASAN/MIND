@@ -1,18 +1,8 @@
 import { createTaskContext, type TaskContext } from '@/lib/store/idb';
-import { parseAiIntakeResponse } from '@/lib/ai/operation-contract';
-import {
-  buildTaskFrameFallback,
-  deriveTaskShapeFromText,
-  inferWorkflowTypeFromTaskShape,
-} from '@/lib/ai/task-shape';
-import {
-  AI_OPERATION_REPAIR_PROMPT,
-  buildIntakeUserPrompt,
-  buildOperationRepairUserPrompt,
-  buildOperationTaskContext,
-  INTAKE_SYSTEM_PROMPT,
-} from '@/lib/ai/operation-prompts';
-import { runAiOperation } from '@/lib/ai/operation-route-helpers';
+import { getAiClient } from '@/lib/ai/client';
+import { buildManualIntakeResponse } from '@/lib/ai/manual-fallbacks';
+import { handleAiRouteError } from '@/lib/ai/operation-route-helpers';
+import { logAiOperationTelemetry } from '@/lib/ai/operation-telemetry';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -50,6 +40,7 @@ function normalizeIntakeTaskRequest(task: IntakeTaskRequest): TaskContext {
 }
 
 export async function POST(req: Request) {
+  const routeStartedAt = Date.now();
   const body = await req.json().catch(() => null);
   const taskInput = body?.task as IntakeTaskRequest | undefined;
 
@@ -67,28 +58,43 @@ export async function POST(req: Request) {
   }
 
   const task = normalizeIntakeTaskRequest(taskInput);
-  const taskContext = buildOperationTaskContext(task);
-  const fallbackTaskShape = task.taskShape ?? deriveTaskShapeFromText(task.sourceText);
-  const fallbackWorkflowType = task.workflowType ?? inferWorkflowTypeFromTaskShape(fallbackTaskShape);
-  const fallbackTaskFrame = buildTaskFrameFallback(fallbackWorkflowType, fallbackTaskShape);
-  const fallbackRoomDigest = task.sourceText.trim().slice(0, 220) || 'สรุป room นี้จากบริบทที่มีอยู่';
-  const fallbackObjective = task.taskFrame?.objective ?? fallbackTaskFrame.objective;
-  const fallbackStage = task.taskFrame?.stage ?? fallbackTaskFrame.stage;
-  return runAiOperation({
-    operationName: 'intake',
-    systemPrompt: INTAKE_SYSTEM_PROMPT,
-    repairPrompt: AI_OPERATION_REPAIR_PROMPT,
-    userPrompt: buildIntakeUserPrompt(task),
-    buildRepairUserPrompt: (invalidOutput, failureDetail) =>
-      buildOperationRepairUserPrompt('intake', taskContext, invalidOutput, failureDetail),
-    parse: (raw) => parseAiIntakeResponse(raw, {
-      fallbackSourceText: task.sourceText,
-      fallbackTaskShape,
-      fallbackWorkflowType,
-      fallbackRoomDigest,
-      fallbackObjective,
-      fallbackStage,
-    }),
-    numPredict: 360,
-  });
+
+  try {
+    const aiResponse = await getAiClient().runIntake(task);
+    return Response.json(aiResponse);
+  } catch (error) {
+    if (error && typeof error === 'object' && 'name' in error && error.name === 'AiRouteError') {
+      const durationMs = (error as any).telemetry?.durationMs ?? Date.now() - routeStartedAt;
+      const model = (error as any).model;
+      const detail = (error as any).detail;
+      const repairUsed = (error as any).telemetry?.repairUsed ?? false;
+
+      console.warn('[MIND][AI_FALLBACK] Local Gemma failed, using manual response', {
+        operation: 'intake',
+        backend: 'local_gemma',
+        nextBackend: 'manual',
+        reason: (error as any).reason ?? 'unknown',
+      });
+      logAiOperationTelemetry({
+        operationName: 'intake',
+        passType: 'fallback_pass',
+        model: model ? `manual_intake_after_${model}` : 'manual_intake',
+        modelTier: 'fallback',
+        attemptStage: 'fallback',
+        repairUsed,
+        durationMs,
+        detail: detail ? `manual intake returned after AI failure: ${detail}` : 'manual intake returned after AI failure',
+      });
+
+      return Response.json(
+        buildManualIntakeResponse({
+          task,
+          durationMs,
+          failedModel: model,
+        }),
+        { status: 200, headers: { 'x-mind-ai-fallback': 'manual_intake' } },
+      );
+    }
+    return handleAiRouteError(error);
+  }
 }

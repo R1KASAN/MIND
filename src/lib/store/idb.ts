@@ -16,6 +16,11 @@ import {
   type RoomSourcePreference,
   type RoomSourceFile,
 } from '@/lib/room';
+import {
+  clearRoomMemoryData,
+  exportRoomMemoryData,
+  type RoomMemoryExport,
+} from '@/lib/store/room-memory-db';
 
 export type ActionState = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'ARCHIVED';
 export type WorkflowType = 'client_response' | 'client_resume';
@@ -200,6 +205,10 @@ export interface ReentryBrief {
   topActions: ReentryTopAction[];
   ignoredNoise: string[];
   createdAt: number;
+  /** Source IDs that were used as evidence context at save-point time. */
+  usedSourceIds?: string[];
+  /** File names that were in a failed/unreadable state at save-point time. */
+  failedFileNames?: string[];
 }
 
 export interface TaskConstraints {
@@ -280,6 +289,7 @@ export interface Action {
   title: string;
   rationale: string;
   microSteps: string[];
+  microStepsSource?: 'ai' | 'fallback';
   isPinned: boolean;
   state: ActionState;
   workflowType?: WorkflowType;
@@ -314,6 +324,7 @@ export interface MindExport {
   actions: Action[];
   rooms: RoomRecord[];
   roomWorkspace: RoomWorkspace;
+  roomMemory: RoomMemoryExport | null;
   analytics: {
     events: LocalAnalyticsEvent[];
     summary: BusinessLoopSummary;
@@ -347,10 +358,24 @@ export interface RoomWorkspace {
   lastUpdatedAt: number;
 }
 
+export type MemoryMode = 'normal' | 'read_only_degraded';
+export type MemoryDegradationReason =
+  | 'schema_mismatch'
+  | 'migration_exception'
+  | 'critical_validation_failed'
+  | 'unreadable_store';
+
+export interface MemoryInspectionResult {
+  mode: MemoryMode;
+  reason?: MemoryDegradationReason;
+}
+
 const SESSION_KEY = 'mind_session';
 const ACTIONS_KEY = 'mind_actions';
 const ROOM_WORKSPACE_KEY = 'mind_room_workspace_v1';
 const ROOM_FILE_BLOBS_KEY = 'mind_room_file_blobs_v1';
+const SCHEMA_VERSION_KEY = 'mind_schema_version';
+export const MIND_IDB_SCHEMA_VERSION = 1;
 const DEFAULT_ROOM_TITLE = 'ห้องงานใหม่';
 
 interface StoredRoomFileBlob {
@@ -680,6 +705,12 @@ function normalizeTaskShape(value: unknown): TaskShape | undefined {
     record.immediateNeed === 'resume_execution'
       ? record.immediateNeed
       : undefined;
+  const behaviorIntent =
+    record.behaviorIntent === 'personal_friction' ||
+    record.behaviorIntent === 'client_delivery' ||
+    record.behaviorIntent === 'admin_task'
+      ? record.behaviorIntent
+      : undefined;
   const missingInputs = Array.isArray(record.missingInputs)
     ? record.missingInputs.map((item) => normalizeOptionalString(item)).filter((item): item is string => Boolean(item))
     : [];
@@ -693,6 +724,7 @@ function normalizeTaskShape(value: unknown): TaskShape | undefined {
   return {
     deliverableType,
     immediateNeed,
+    behaviorIntent,
     missingInputs,
     workContext,
     confidence,
@@ -789,7 +821,22 @@ function normalizeReentryBrief(value: unknown): ReentryBrief | undefined {
     : [];
 
   if (topActions.length === 0) return undefined;
-  return { summary, topActions, ignoredNoise, createdAt };
+
+  const usedSourceIds = Array.isArray(record.usedSourceIds)
+    ? record.usedSourceIds.map((item) => normalizeOptionalString(item)).filter((item): item is string => Boolean(item))
+    : undefined;
+  const failedFileNames = Array.isArray(record.failedFileNames)
+    ? record.failedFileNames.map((item) => normalizeOptionalString(item)).filter((item): item is string => Boolean(item))
+    : undefined;
+
+  return {
+    summary,
+    topActions,
+    ignoredNoise,
+    createdAt,
+    ...(usedSourceIds && usedSourceIds.length > 0 ? { usedSourceIds } : {}),
+    ...(failedFileNames && failedFileNames.length > 0 ? { failedFileNames } : {}),
+  };
 }
 
 function normalizeAssistantMode(value: unknown): AssistantMode | undefined {
@@ -1404,7 +1451,16 @@ export function normalizeSession(session: Partial<AppSession> & { status?: unkno
     : undefined;
 
   const completedTask = task?.lifecycleState === 'done' ? task : undefined;
-  const activeTask = completedTask ? undefined : task;
+  const activeTask = completedTask
+    ? {
+        ...completedTask,
+        lifecycleState: 'dumped' as const,
+        assistantMode: undefined,
+        currentActionId: null,
+        currentStepIndex: 0,
+        lastFailureReason: undefined,
+      }
+    : task;
   const uiRoute = completedTask ? 'DUMP_ENTRY' : routeForTaskSession(storedUiRoute, activeTask);
   const currentActionId = completedTask
     ? null
@@ -1436,7 +1492,7 @@ export function normalizeSession(session: Partial<AppSession> & { status?: unkno
     lastMorningShown: normalizeOptionalString(session.lastMorningShown),
     hasSeenResetNotice: session.hasSeenResetNotice ?? false,
     hasSeenWalkthrough: session.hasSeenWalkthrough ?? false,
-    lastWorkflowType: isWorkflowType(session.lastWorkflowType) ? session.lastWorkflowType : task?.workflowType,
+    lastWorkflowType: isWorkflowType(session.lastWorkflowType) ? session.lastWorkflowType : activeTask?.workflowType ?? task?.workflowType,
     lastFailureReason: completedTask
       ? undefined
       : isFailureReason(session.lastFailureReason) ? session.lastFailureReason : activeTask?.lastFailureReason,
@@ -1616,6 +1672,101 @@ function normalizeRoomWorkspace(value: unknown): RoomWorkspace | undefined {
     activeRoomId: normalizedActiveRoomId,
     rooms: rooms.map((room) => buildRoomRecordFromSession(room.session, normalizedActiveRoomId, room)),
     lastUpdatedAt: typeof record.lastUpdatedAt === 'number' ? record.lastUpdatedAt : Date.now(),
+  };
+}
+
+export function inspectRawMemoryState(input: {
+  schemaVersion?: unknown;
+  rawWorkspace?: unknown;
+  rawSession?: unknown;
+  readError?: unknown;
+  migrationError?: unknown;
+}): MemoryInspectionResult {
+  if (input.readError) {
+    return { mode: 'read_only_degraded', reason: 'unreadable_store' };
+  }
+
+  if (input.migrationError) {
+    return { mode: 'read_only_degraded', reason: 'migration_exception' };
+  }
+
+  if (
+    input.schemaVersion !== undefined &&
+    (
+      typeof input.schemaVersion !== 'number' ||
+      !Number.isFinite(input.schemaVersion) ||
+      input.schemaVersion > MIND_IDB_SCHEMA_VERSION
+    )
+  ) {
+    return { mode: 'read_only_degraded', reason: 'schema_mismatch' };
+  }
+
+  if (input.rawWorkspace !== undefined && !normalizeRoomWorkspace(input.rawWorkspace)) {
+    return { mode: 'read_only_degraded', reason: 'critical_validation_failed' };
+  }
+
+  if (
+    input.rawSession !== undefined &&
+    (
+      !input.rawSession ||
+      typeof input.rawSession !== 'object' ||
+      Array.isArray(input.rawSession)
+    )
+  ) {
+    return { mode: 'read_only_degraded', reason: 'critical_validation_failed' };
+  }
+
+  return { mode: 'normal' };
+}
+
+export async function inspectStoredMemoryState(): Promise<MemoryInspectionResult> {
+  try {
+    const [schemaVersion, rawWorkspace, rawSession] = await Promise.all([
+      get(SCHEMA_VERSION_KEY),
+      get(ROOM_WORKSPACE_KEY),
+      get(SESSION_KEY),
+    ]);
+    return inspectRawMemoryState({ schemaVersion, rawWorkspace, rawSession });
+  } catch (error) {
+    return inspectRawMemoryState({ readError: error });
+  }
+}
+
+export async function getReadOnlyWorkspaceSnapshot(): Promise<RoomWorkspace> {
+  try {
+    const rawWorkspace = await get(ROOM_WORKSPACE_KEY);
+    const workspace = normalizeRoomWorkspace(rawWorkspace);
+    if (workspace) return workspace;
+
+    const legacySession = await get<AppSession & { activeDumpContext?: string | ActiveDumpContext; task?: TaskContext }>(SESSION_KEY);
+    if (legacySession && typeof legacySession === 'object' && !Array.isArray(legacySession)) {
+      const normalizedLegacy = normalizeSession(legacySession);
+      const roomId = normalizedLegacy.roomId ?? createRoomId();
+      const sessionWithRoom = normalizeSession({
+        ...normalizedLegacy,
+        roomId,
+        roomTitle: normalizedLegacy.roomTitle ?? deriveRoomTitleFromSession(normalizedLegacy),
+        roomScenarioType: normalizedLegacy.roomScenarioType ?? 'general_client_room',
+      });
+      return {
+        activeRoomId: roomId,
+        rooms: [buildRoomRecordFromSession(sessionWithRoom, roomId)],
+        lastUpdatedAt: Date.now(),
+      };
+    }
+  } catch {
+    // Fall through to an in-memory empty room. The caller will keep writes blocked.
+  }
+
+  const seedSession = buildRoomSessionSeed();
+  return {
+    activeRoomId: seedSession.roomId ?? null,
+    rooms: [buildRoomRecordFromSession(seedSession, seedSession.roomId ?? null, {
+      title: DEFAULT_ROOM_TITLE,
+      clientName: DEFAULT_ROOM_TITLE,
+      scenarioType: 'general_client_room',
+    })],
+    lastUpdatedAt: Date.now(),
   };
 }
 
@@ -2060,11 +2211,12 @@ export async function clearRoomWorkspace(): Promise<void> {
 }
 
 export async function exportAllData(): Promise<MindExport> {
-  const [session, actions, analyticsEvents, roomWorkspace] = await Promise.all([
+  const [session, actions, analyticsEvents, roomWorkspace, roomMemory] = await Promise.all([
     getSession(),
     getActions(),
     getAnalyticsEvents(),
     getRoomWorkspace(),
+    exportRoomMemoryData().catch(() => null),
   ]);
   return {
     exportedAt: new Date().toISOString(),
@@ -2072,6 +2224,7 @@ export async function exportAllData(): Promise<MindExport> {
     actions,
     rooms: roomWorkspace.rooms,
     roomWorkspace,
+    roomMemory,
     analytics: {
       events: analyticsEvents,
       summary: buildBusinessLoopSummary(analyticsEvents),
@@ -2080,5 +2233,12 @@ export async function exportAllData(): Promise<MindExport> {
 }
 
 export async function clearAllData(): Promise<void> {
-  await Promise.all([del(SESSION_KEY), del(ACTIONS_KEY), clearAnalyticsEvents(), clearRoomWorkspace(), clearRoomFileBlobs()]);
+  await Promise.all([
+    del(SESSION_KEY),
+    del(ACTIONS_KEY),
+    clearAnalyticsEvents(),
+    clearRoomWorkspace(),
+    clearRoomFileBlobs(),
+    clearRoomMemoryData().catch(() => undefined),
+  ]);
 }

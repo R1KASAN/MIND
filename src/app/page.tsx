@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   getActions, AppSession, saveSession,
@@ -9,6 +9,9 @@ import {
   hydrateRoomSessionFromRecord,
   loadRoomFileBlob,
   normalizeSession,
+  createTaskContext,
+  type MemoryDegradationReason,
+  type MemoryMode,
   type RoomRecord,
 } from '@/lib/store/idb';
 import { processWeeklySweep } from '@/lib/store/memoryRules';
@@ -24,14 +27,25 @@ import {
   hasResumableTask,
 } from '@/lib/orchestrator/task-machine';
 import {
+  buildRoomSidebarItems,
+  rankResumeRooms,
+  selectActiveRoomReentry,
+  resolveHomeEntryState,
+  selectRankedResumeRooms,
+  selectResumeRoom,
+  type ActiveRoomReentryState,
+  type RankedResumeRoom,
+} from '@/lib/orchestrator/home-entry';
+import {
   buildPreferredRoomSourceContext,
   createAutoRoomSourcePreference,
   getRoomSourceIdForFile,
   stripRoomFileContext,
+  type RoomSubmission,
   type RoomSourceFile,
 } from '@/lib/room';
 import {
-  loadBootstrapWorkspace,
+  loadSafeBootstrapWorkspace,
   migrateLegacyActiveDumpContext,
   parseBootstrapFlags,
   resolveBootstrapSession,
@@ -54,6 +68,9 @@ import {
   hasSeenValuePulse,
   type ValuePulseContext,
 } from '@/lib/value-pulse';
+import { recordTaskSourcesInRoomMemory } from '@/lib/orchestrator/task-events';
+import { markRoomMemoryRefDeleted } from '@/lib/store/room-memory-db';
+import { reportClientAsyncError } from '@/lib/orchestrator/async-error';
 
 import { BrainDumpInput } from '@/components/BrainDump/Input';
 import { ManualFallback } from '@/components/BrainDump/Fallback';
@@ -75,6 +92,10 @@ import { DataReviewPanel } from '@/components/Studio/DataReviewPanel';
 import { ValuePulse } from '@/components/ValuePulse/ValuePulse';
 import { RoomSidebar } from '@/components/Rooms/RoomSidebar';
 import { RoomCanvasHeader } from '@/components/Rooms/RoomCanvasHeader';
+import { AIProcessingIndicator } from '@/components/AI/AIProcessingIndicator';
+import { GetStartedHome } from '@/components/Home/GetStartedHome';
+import { ResumePrompt } from '@/components/Home/ResumePrompt';
+import { ActiveRoomReentryCard } from '@/components/Home/ActiveRoomReentryCard';
 
 const DEFAULT_AI_HEALTH: HealthCheckResult = {
   status: 'checking',
@@ -147,6 +168,27 @@ function getHealthRailContent(health: HealthCheckResult) {
     detail: health.actions?.[0] ?? health.detail ?? DEFAULT_AI_START_ACTION,
     tone: 'unavailable' as const,
   };
+}
+
+const AI_OFFLINE_MANUAL_COPY = 'AI ในเครื่องยังไม่พร้อม ใช้ Manual Mode ได้ก่อน ข้อมูลงานยังอยู่ในเครื่องนี้';
+
+function isAiOfflineManualMode(health: HealthCheckResult) {
+  return health.status === 'unavailable' || health.status === 'model_missing';
+}
+
+function memoryDegradationCopy(reason?: MemoryDegradationReason) {
+  switch (reason) {
+    case 'schema_mismatch':
+      return 'schema ของ memory ไม่ตรงกับแอปเวอร์ชันนี้';
+    case 'migration_exception':
+      return 'migration ของ memory ล้มเหลวระหว่างเปิดแอป';
+    case 'critical_validation_failed':
+      return 'ข้อมูลสำคัญบางส่วนไม่ผ่าน validation';
+    case 'unreadable_store':
+      return 'อ่าน IndexedDB บาง store ไม่สำเร็จ';
+    default:
+      return 'memory บางส่วนอาจไม่เข้ากับแอปเวอร์ชันนี้';
+  }
 }
 
 // T028/T029: Local-timezone "today" string for morning ritual day comparison
@@ -288,6 +330,10 @@ export default function StateMachinePage() {
   const [session, setSession] = useState<AppSession | null>(null);
   const [rooms, setRooms] = useState<RoomRecord[]>([]);
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
+  const [resumeHomeRoom, setResumeHomeRoom] = useState<RankedResumeRoom | null>(null);
+  const [rankedSidebarRooms, setRankedSidebarRooms] = useState<RankedResumeRoom[]>([]);
+  const [activeRoomReentry, setActiveRoomReentry] = useState<ActiveRoomReentryState | null>(null);
+  const [forceInputEditor, setForceInputEditor] = useState(false);
   const sessionRef = useRef<AppSession | null>(null);
   const aiStatusRef = useRef<HealthCheckResult['status']>('checking');
   const [currentPayload, setCurrentPayload] = useState<AiSynthesisResponse | null>(null);
@@ -302,6 +348,8 @@ export default function StateMachinePage() {
   const [isReentryLoading, setIsReentryLoading] = useState(false);
   const [isScaffoldRefining, setIsScaffoldRefining] = useState(false);
   const [scaffoldRefineFeedback, setScaffoldRefineFeedback] = useState<ScaffoldRefineFeedback | null>(null);
+  // Covers the gap between dump submit and SYNTHESIZING route — prevents blank main panel
+  const [isDumpPending, setIsDumpPending] = useState(false);
 
   // Overlays
   const [showArchive, setShowArchive] = useState(false);
@@ -310,12 +358,15 @@ export default function StateMachinePage() {
   const [showWalkthrough, setShowWalkthrough] = useState(false);
   const [showDataReview, setShowDataReview] = useState<'manage' | 'review' | null>(null);
   const [aiOpsEntries, setAiOpsEntries] = useState<AiOpsDebugEntry[]>([]);
-  const [allowAiDebug, setAllowAiDebug] = useState(process.env.NODE_ENV !== 'production');
+  const [allowAiDebug, setAllowAiDebug] = useState(false);
   const [showAiOpsDebug, setShowAiOpsDebug] = useState(false);
   const [allowObservationCapture, setAllowObservationCapture] = useState(false);
   const [showObservationCapture, setShowObservationCapture] = useState(false);
   const [activeStudioIntent, setActiveStudioIntent] = useState<StudioIntentId | null>(null);
   const [retryingFileId, setRetryingFileId] = useState<string | null>(null);
+  const [aiOfflineNotice, setAiOfflineNotice] = useState<string | null>(null);
+  const [memoryMode, setMemoryMode] = useState<MemoryMode>('normal');
+  const [memoryDegradationReason, setMemoryDegradationReason] = useState<MemoryDegradationReason | undefined>();
 
   // T046: Background AI status — non-blocking passive indicator
   const [aiHealth, setAiHealth] = useState<HealthCheckResult>(DEFAULT_AI_HEALTH);
@@ -336,6 +387,8 @@ export default function StateMachinePage() {
   const [uiViewMode, setUiViewMode] = useState<'FOCUS' | 'POWER'>('FOCUS');
   const reentryUnderstoodRef = useRef<string | null>(null);
   const previousUiRouteRef = useRef<UIRoute | null>(null);
+  const previousActiveRoomIdRef = useRef<string | null>(null);
+  const memoryModeRef = useRef<MemoryMode>('normal');
   const valuePulseAnchorRef = useRef<ValuePulseContext | null>(null);
   const [activeValuePulseContext, setActiveValuePulseContext] = useState<ValuePulseContext | null>(null);
 
@@ -346,10 +399,12 @@ export default function StateMachinePage() {
 
   // T017: Sync pin count when action/status changes
   useEffect(() => {
-    getActions().then((acts) => {
-      const count = acts.filter((a) => a.isPinned && a.state !== 'ARCHIVED').length;
-      setPinnedCountLocal(count);
-    });
+    getActions()
+      .then((acts) => {
+        const count = acts.filter((a) => a.isPinned && a.state !== 'ARCHIVED').length;
+        setPinnedCountLocal(count);
+      })
+      .catch((error) => reportClientAsyncError("[MIND] Sync pin count", error));
   }, [session?.uiRoute, currentActionState?.isPinned]);
 
   useEffect(() => {
@@ -387,6 +442,24 @@ export default function StateMachinePage() {
     const handleChange = (event: MediaQueryListEvent) => syncViewportState(event.matches);
     mediaQuery.addEventListener('change', handleChange);
     return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
+
+  useEffect(() => {
+    memoryModeRef.current = memoryMode;
+  }, [memoryMode]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const handleDebugToggle = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || !event.shiftKey || event.key.toLowerCase() !== 'd') return;
+      event.preventDefault();
+      setAllowAiDebug(true);
+      setAllowObservationCapture(true);
+      setShowAiOpsDebug((value) => !value);
+      setShowObservationCapture((value) => !value);
+    };
+    window.addEventListener('keydown', handleDebugToggle);
+    return () => window.removeEventListener('keydown', handleDebugToggle);
   }, []);
 
   const refreshRooms = useCallback(async () => {
@@ -438,22 +511,45 @@ export default function StateMachinePage() {
       setAllowObservationCapture(flags.allowObservationCapture);
       setShowObservationCapture(flags.showObservationCapture);
 
-      await processWeeklySweep();
-      const { workspace, storedSession } = await loadBootstrapWorkspace({
-        isPresentationMode: flags.isPresentationMode,
-        scenarioId: flags.scenarioId,
-      });
+      let bootstrap;
+      try {
+        bootstrap = await loadSafeBootstrapWorkspace({
+          isPresentationMode: flags.isPresentationMode,
+          scenarioId: flags.scenarioId,
+        });
+      } catch (error) {
+        console.error('[MIND] bootstrap failed; falling back to in-memory start state', error);
+        const fallbackSession = createDefaultSession();
+        if (cancelled) return;
+        setRooms([]);
+        setActiveRoomId(null);
+        setMemoryMode('normal');
+        memoryModeRef.current = 'normal';
+        setMemoryDegradationReason(undefined);
+        setAiOfflineNotice('โหลด memory ไม่สำเร็จชั่วคราว เปิดหน้าเริ่มงานแบบ in-memory ให้ก่อน');
+        await hydrateSessionState(fallbackSession);
+        return;
+      }
+      const { workspace, storedSession } = bootstrap;
       if (cancelled) return;
+
+      setMemoryMode(bootstrap.memoryMode);
+      memoryModeRef.current = bootstrap.memoryMode;
+      setMemoryDegradationReason(bootstrap.memoryDegradationReason);
 
       setRooms(workspace.rooms);
       setActiveRoomId(workspace.activeRoomId);
       let nextSession = storedSession;
       const activeRoomSession = workspace.rooms.find((room) => room.id === workspace.activeRoomId)?.session;
-      if (activeRoomSession && activeRoomSession !== storedSession) {
+      if (bootstrap.memoryMode === 'normal') {
+        await processWeeklySweep();
+      }
+
+      if (bootstrap.memoryMode === 'normal' && activeRoomSession && activeRoomSession !== storedSession) {
         await saveSession(storedSession);
       }
       const migratedSession = migrateLegacyActiveDumpContext(storedSession);
-      if (migratedSession) {
+      if (bootstrap.memoryMode === 'normal' && migratedSession) {
         nextSession = migratedSession;
         await saveSession(nextSession);
       }
@@ -465,7 +561,7 @@ export default function StateMachinePage() {
       });
 
       nextSession = resolvedBootstrap.session;
-      if (resolvedBootstrap.interceptRoute) {
+      if (bootstrap.memoryMode === 'normal' && resolvedBootstrap.interceptRoute) {
         await saveSession(nextSession);
       }
       if (cancelled) return;
@@ -475,10 +571,12 @@ export default function StateMachinePage() {
 
       await hydrateSessionState(nextSession);
       if (cancelled) return;
-      await refreshRooms();
+      if (bootstrap.memoryMode === 'normal') {
+        await refreshRooms();
+      }
     }
 
-    void load();
+    void load().catch((error) => reportClientAsyncError("[MIND] On load bootstrap data", error));
 
     return () => {
       cancelled = true;
@@ -500,6 +598,10 @@ export default function StateMachinePage() {
   }, [isCompactViewport, session?.uiRoute]);
 
   const persistSessionWithRooms = useCallback(async (nextSession: AppSession) => {
+    if (memoryModeRef.current === 'read_only_degraded') {
+      setAiOfflineNotice('Memory may be partially incompatible. Operating in View-Only mode. Resetting database is recommended only as a last resort.');
+      return;
+    }
     await saveSession(nextSession);
     const workspace = await refreshRooms();
     setRooms(workspace.rooms);
@@ -529,6 +631,8 @@ export default function StateMachinePage() {
     setIsScaffoldRefining,
     setScaffoldRefineFeedback,
     setDumpStartTime,
+    isDumpPending,
+    setIsDumpPending,
     recordAiOpsEntry: (entry) => {
       setAiOpsEntries((current) => [entry, ...current].slice(0, 12));
     },
@@ -542,6 +646,7 @@ export default function StateMachinePage() {
   useEffect(() => {
     if (!session) return;
     if (isReentryLoading) return;
+    if (isAiOfflineManualMode(aiHealth) || memoryModeRef.current === 'read_only_degraded') return;
     if (session.uiRoute !== 'BOUNCE_BACK' && session.uiRoute !== 'MORNING_RITUAL') return;
     if (!hasResumableTask(session.task)) return;
     const existingBrief = session.task?.reentryBrief;
@@ -549,11 +654,25 @@ export default function StateMachinePage() {
     if (reentryIsFresh) return;
     const scope = session.uiRoute === 'BOUNCE_BACK' ? 'bounce_back' : 'morning_ritual';
 
-    void controller.loadReentryBrief(scope);
+    void controller.loadReentryBrief(scope).catch((error) =>
+      reportClientAsyncError("[MIND] Load reentry brief", error)
+    );
     // We intentionally key this effect off task/session state instead of the helper identity
     // so dev-time HMR does not trip over callback reinitialization for reentry loading.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentActionState, isReentryLoading, session, session?.lastActive, session?.task?.id, session?.task?.reentryBrief?.createdAt, session?.uiRoute]);
+  }, [aiHealth, currentActionState, isReentryLoading, session, session?.lastActive, session?.task?.id, session?.task?.reentryBrief?.createdAt, session?.uiRoute]);
+
+  useEffect(() => {
+    if (!session) return;
+    if (isRescueLoading) return;
+    if (session.uiRoute !== 'RESCUE') return;
+    if (currentRescueState) return;
+
+    void controller.handleEnterRescue({ preserveRefineFeedback: true }).catch((error) =>
+      reportClientAsyncError("[MIND] Enter rescue", error)
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.uiRoute, currentRescueState, isRescueLoading]);
 
   useEffect(() => {
     if (!session?.task?.reentryBrief) return;
@@ -601,10 +720,23 @@ export default function StateMachinePage() {
     if (!previousRoute) return;
     if (presentationMode) return;
 
-    if (session.uiRoute !== 'DUMP_ENTRY' || previousRoute === 'DUMP_ENTRY') {
+    // Only trigger ValuePulse after the user has interacted with an action
+    // (i.e. after ONE_ACTION or SCAFFOLD), not on the first DUMP_ENTRY load
+    // or immediately after dump submission. This prevents the modal from
+    // appearing before the user has seen the action recommendation.
+    const isPostActionReturn =
+      session.uiRoute === 'DUMP_ENTRY' &&
+      (previousRoute === 'ONE_ACTION' || previousRoute === 'SCAFFOLD');
+
+    if (!isPostActionReturn) {
       if (session.uiRoute !== 'DUMP_ENTRY') {
         setActiveValuePulseContext(null);
       }
+      return;
+    }
+
+    if (forceInputEditor) {
+      setActiveValuePulseContext(null);
       return;
     }
 
@@ -612,12 +744,66 @@ export default function StateMachinePage() {
     if (!anchor) return;
     if (hasSeenValuePulse(anchor.id)) return;
     setActiveValuePulseContext(anchor);
-  }, [presentationMode, session?.uiRoute, session]);
+  }, [forceInputEditor, presentationMode, session?.uiRoute, session]);
 
   useEffect(() => {
     if (session?.uiRoute === 'DUMP_ENTRY') return;
     setActiveValuePulseContext(null);
   }, [session?.uiRoute]);
+
+  const fallbackResumeHomeRoom = useMemo(() => {
+    if (!session || session.uiRoute !== 'DUMP_ENTRY' || hasResumableTask(session.task)) return null;
+    return rankResumeRooms(
+      rooms
+        .map((room) => ({ room })),
+    )[0] ?? null;
+  }, [rooms, session]);
+
+  const fallbackRankedSidebarRooms = useMemo(
+    () => rankResumeRooms(rooms.map((room) => ({ room }))),
+    [rooms],
+  );
+  const effectiveRankedSidebarRooms = rankedSidebarRooms.length > 0
+    ? rankedSidebarRooms
+    : fallbackRankedSidebarRooms;
+  const roomSidebarItems = useMemo(() => buildRoomSidebarItems({
+    rooms,
+    activeRoomId,
+    rankedResumeRooms: effectiveRankedSidebarRooms,
+  }), [activeRoomId, effectiveRankedSidebarRooms, rooms]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRankedSidebarRooms([]);
+    void selectRankedResumeRooms({ rooms })
+      .then((ranked) => {
+        if (!cancelled) setRankedSidebarRooms(ranked);
+      })
+      .catch((error) => reportClientAsyncError("[MIND] Select ranked resume rooms", error));
+
+    return () => {
+      cancelled = true;
+    };
+  }, [rooms]);
+
+  useEffect(() => {
+    if (!session || session.uiRoute !== 'DUMP_ENTRY' || hasResumableTask(session.task)) {
+      setResumeHomeRoom(null);
+      return;
+    }
+
+    let cancelled = false;
+    setResumeHomeRoom(null);
+    void selectResumeRoom({ rooms })
+      .then((candidate) => {
+        if (!cancelled) setResumeHomeRoom(candidate);
+      })
+      .catch((error) => reportClientAsyncError("[MIND] Select resume room candidate", error));
+
+    return () => {
+      cancelled = true;
+    };
+  }, [rooms, session]);
 
   const {
     activeRoom,
@@ -641,11 +827,36 @@ export default function StateMachinePage() {
       reentryUnderstoodRef.current = null;
       previousUiRouteRef.current = null;
     },
+    readOnly: memoryMode === 'read_only_degraded',
+    onReadOnlyBlocked: () => {
+      setAiOfflineNotice('Memory may be partially incompatible. Operating in View-Only mode. Resetting database is recommended only as a last resort.');
+    },
   });
 
   useEffect(() => {
+    if (!session || session.uiRoute !== 'DUMP_ENTRY' || !activeRoom) {
+      setActiveRoomReentry(null);
+      return;
+    }
+
+    let cancelled = false;
+    setActiveRoomReentry(null);
+    void selectActiveRoomReentry({ room: activeRoom })
+      .then((state) => {
+        if (!cancelled) setActiveRoomReentry(state);
+      })
+      .catch((error) => reportClientAsyncError("[MIND] Select active room reentry", error));
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRoom, session]);
+
+  useEffect(() => {
     if (!session || !activeRoom) return;
-    if (isNegotiatingAction || isReentryLoading || isRescueLoading || isScaffoldRefining) return;
+    if (isNegotiatingAction || isReentryLoading || isRescueLoading || isScaffoldRefining || isDumpPending) return;
+    // Skip hydration while the user is editing context — prevents jitter from resetting the editor
+    if (forceInputEditor) return;
 
     const recoveredSession = hydrateRoomSessionFromRecord(session, activeRoom);
     if (recoveredSession === session) return;
@@ -653,20 +864,59 @@ export default function StateMachinePage() {
     void (async () => {
       await hydrateSessionState(recoveredSession);
       await persistSessionWithRooms(recoveredSession);
-    })();
+    })().catch((error) => reportClientAsyncError("[MIND] Hydrate and persist session", error));
   }, [
     activeRoom,
+    forceInputEditor,
     hydrateSessionState,
     isNegotiatingAction,
     isReentryLoading,
     isRescueLoading,
     isScaffoldRefining,
+    isDumpPending,
     persistSessionWithRooms,
     session,
   ]);
 
+  const resetRoomViewport = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, behavior: 'auto' });
+      if (session?.uiRoute !== 'DUMP_ENTRY') return;
+      window.requestAnimationFrame(() => {
+        const input = document.getElementById('brain-dump-text') as HTMLTextAreaElement | null;
+        if (!input) return;
+        input.focus();
+      });
+    });
+  }, [session?.uiRoute]);
+
+  useEffect(() => {
+    if (previousActiveRoomIdRef.current === null) {
+      previousActiveRoomIdRef.current = activeRoomId;
+      return;
+    }
+
+    if (previousActiveRoomIdRef.current === activeRoomId) return;
+    previousActiveRoomIdRef.current = activeRoomId;
+    // Only reset forceInputEditor on genuine room switches — same-room ID jitter
+    // from persistSessionWithRooms should not clear the editor mid-edit
+    if (activeRoomId !== session?.roomId) {
+      setForceInputEditor(false);
+    }
+    resetRoomViewport();
+  }, [activeRoomId, resetRoomViewport, session?.roomId]);
+
   if (!session) return null;
 
+  const aiOfflineManualMode = isAiOfflineManualMode(aiHealth);
+  const readOnlyMemory = memoryMode === 'read_only_degraded';
+  const homeEntryState = resolveHomeEntryState({
+    rooms,
+    activeSession: session,
+    resumeRoom: resumeHomeRoom ?? fallbackResumeHomeRoom,
+    activeRoomId,
+  });
   const studioSnapshot = buildStudioSnapshot(session.task, currentActionState, currentPayload);
   const studioIntents = getStudioIntents(session, currentActionState, currentPayload);
   const isFocusMode = uiViewMode === 'FOCUS';
@@ -677,29 +927,44 @@ export default function StateMachinePage() {
     activeRoom?.title ?? session.roomTitle,
   );
   const studioMode = getStudioMode(session.uiRoute);
+  const activeRoomHasSavedContext = Boolean(
+    activeRoom?.session.task?.sourceText?.trim() ||
+      activeRoom?.session.activeDumpContext?.text?.trim(),
+  );
+  const showDumpOnlyFirstView = isFocusMode && session.uiRoute === 'DUMP_ENTRY' && !activeRoomHasSavedContext;
+  const showInternalReferenceTools = allowAiDebug;
   const utilitySections = [
     {
-      title: 'ดูบริบท',
+      title: 'บริบทของงาน',
       items: [
         ...(session.task
           ? [
-              { key: 'manage-data', label: 'Manage Data', onClick: () => setShowDataReview('manage' as const) },
-              { key: 'review-room', label: 'Review Room', onClick: () => setShowDataReview('review' as const) },
+              { key: 'manage-data', label: 'ดู/จัดการบริบทและไฟล์', onClick: () => setShowDataReview('manage' as const) },
+              { key: 'review-room', label: 'ตรวจหลักฐานของห้องนี้', onClick: () => setShowDataReview('review' as const) },
             ]
           : []),
-        { key: 'archive', label: 'Archive', onClick: () => setShowArchive(true) },
-        { key: 'overview', label: 'Overview', onClick: () => setShowOverview(true) },
-        { key: 'trust', label: 'Why this / ความไว้ใจ', onClick: () => setShowTrust(true) },
+        ...(isFocusMode
+          ? []
+          : [
+              { key: 'archive', label: 'Archive', onClick: () => setShowArchive(true) },
+              { key: 'overview', label: 'Overview', onClick: () => setShowOverview(true) },
+            ]),
+        { key: 'trust', label: 'ทำไม MIND แนะนำแบบนี้', onClick: () => setShowTrust(true) },
       ],
     },
     {
-      title: 'คู่มือและทางลัด',
+      title: 'เดโม',
       items: [
         { key: 'walkthrough', label: routeUsesReducedChrome ? 'วิธีใช้' : 'ดูเดโม 30 วินาที', onClick: () => setShowWalkthrough(true) },
-        ...(session.uiRoute === 'DUMP_ENTRY'
+      ],
+    },
+    {
+      title: 'Internal reference',
+      items: [
+        ...(showInternalReferenceTools && session.uiRoute === 'DUMP_ENTRY'
           ? [
-              { key: 'pmf', label: 'PMF guide', onClick: () => router.push('/pmf-guide') },
-              { key: 'business', label: 'Business gates', onClick: () => router.push('/business') },
+              { key: 'business', label: 'Internal: business dashboard', onClick: () => router.push('/business') },
+              { key: 'pmf', label: 'Internal: PMF reference', onClick: () => router.push('/pmf-guide') },
             ]
           : []),
       ],
@@ -717,14 +982,196 @@ export default function StateMachinePage() {
     },
   ].filter((section) => section.items.length > 0);
 
+  const appendReadySourcesToRoomMemory = async (task: NonNullable<AppSession['task']>, sourceOperationId: string) => {
+    try {
+      await recordTaskSourcesInRoomMemory(task, sourceOperationId);
+    } catch (error) {
+      console.warn('[MIND] failed to append ready room sources to memory', error);
+    }
+  };
+
+  const handleDumpSubmission = async (submission: RoomSubmission) => {
+    if (readOnlyMemory) {
+      setAiOfflineNotice('Memory may be partially incompatible. Operating in View-Only mode. Resetting database is recommended only as a last resort.');
+      return;
+    }
+
+    const normalizeContextEditSubmission = (input: RoomSubmission): RoomSubmission => {
+      const baseSession = sessionRef.current ?? session;
+      const existingFiles = forceInputEditor ? baseSession?.task?.sourceFiles ?? [] : [];
+      if (existingFiles.length === 0) return input;
+
+      const incomingIds = new Set(input.sourceFiles.map((file) => file.id));
+      const incomingNames = new Set(input.sourceFiles.map((file) => file.name));
+      const preservedFiles = existingFiles.filter((file) => !incomingIds.has(file.id) && !incomingNames.has(file.name));
+      const sourceFiles = [...preservedFiles, ...input.sourceFiles];
+      const createdAt = Date.now();
+      const sourcePreference = baseSession?.task?.sourcePreference?.primarySourceId &&
+        sourceFiles.some((file) => getRoomSourceIdForFile(file) === baseSession.task?.sourcePreference?.primarySourceId)
+        ? baseSession.task.sourcePreference
+        : createAutoRoomSourcePreference(sourceFiles, createdAt);
+      const preferredSourceContext = buildPreferredRoomSourceContext(
+        input.text || input.sourceText,
+        sourceFiles,
+        sourcePreference,
+      );
+
+      return {
+        ...input,
+        sourceText: preferredSourceContext.sourceText || input.sourceText,
+        extractedText: preferredSourceContext.extractedText || input.extractedText,
+        sourceFiles,
+      };
+    };
+
+    const nextSubmission = normalizeContextEditSubmission(submission);
+
+    if (!aiOfflineManualMode) {
+      setForceInputEditor(false);
+      setIsDumpPending(true);
+      try {
+        await controller.handleDump(nextSubmission);
+      } finally {
+        setIsDumpPending(false);
+      }
+      return;
+    }
+
+    const base = sessionRef.current ?? session;
+    const createdAt = Date.now();
+    const sourcePreference = createAutoRoomSourcePreference(nextSubmission.sourceFiles, createdAt);
+    const preferredSourceContext = buildPreferredRoomSourceContext(
+      nextSubmission.text || nextSubmission.sourceText,
+      nextSubmission.sourceFiles,
+      sourcePreference,
+    );
+    const task = createTaskContext({
+      roomId: base.roomId,
+      sourceText: preferredSourceContext.sourceText || nextSubmission.sourceText,
+      sourceFiles: nextSubmission.sourceFiles,
+      sourcePreference,
+      extractedText: preferredSourceContext.extractedText || (sourcePreference ? nextSubmission.extractedText : ''),
+      createdAt,
+      lifecycleState: 'dumped',
+      lastAttemptAt: createdAt,
+      blockerSignals: [],
+    });
+    task.blockerSignals = deriveRoomBlockers(task);
+
+    const nextSession = normalizeSession({
+      ...base,
+      uiRoute: 'DUMP_ENTRY',
+      status: 'DUMP_ENTRY',
+      task,
+      activeDumpContext: {
+        text: task.sourceText,
+        createdAt,
+        lastAttemptAt: createdAt,
+      },
+      currentPayload: undefined,
+      currentActionId: null,
+      lastFailureReason: 'service_down',
+    });
+
+    sessionRef.current = nextSession;
+    setSession(nextSession);
+    setCurrentPayload(null);
+    setCurrentActionState(null);
+    setCurrentWhyThisNow('');
+    setCurrentRescueState(null);
+    setForceInputEditor(false);
+    setAiOfflineNotice(AI_OFFLINE_MANUAL_COPY);
+    trackEvent('task_opened', {
+      room_id: nextSession.roomId,
+      room_title: nextSession.roomTitle,
+      ui_route: nextSession.uiRoute,
+      assistant_mode: nextSession.task?.assistantMode,
+      outcome_label: 'manual_mode_dump_saved',
+    });
+    await persistSessionWithRooms(nextSession);
+    await appendReadySourcesToRoomMemory(task, 'manual_dump');
+  };
+
+  const handleFileExtractionComplete = async (submission: RoomSubmission) => {
+    if (readOnlyMemory) return;
+    const baseSession = sessionRef.current ?? session;
+    if (!baseSession.task) return;
+
+    const incomingById = new Map(submission.sourceFiles.map((file) => [file.id, file]));
+    const hasMatchingFile = baseSession.task.sourceFiles.some((file) => incomingById.has(file.id));
+    if (!hasMatchingFile) return;
+
+    const now = Date.now();
+    const nextSourceFiles = baseSession.task.sourceFiles.map((file) => incomingById.get(file.id) ?? file);
+    const existingPrimaryReady = baseSession.task.sourcePreference?.primarySourceId
+      ? nextSourceFiles.some((file) => file.status === 'ready' && getRoomSourceIdForFile(file) === baseSession.task?.sourcePreference?.primarySourceId)
+      : false;
+    const sourcePreference = existingPrimaryReady
+      ? baseSession.task.sourcePreference
+      : createAutoRoomSourcePreference(nextSourceFiles, now);
+    const preferredContext = buildPreferredRoomSourceContext(
+      stripRoomFileContext(baseSession.task.sourceText),
+      nextSourceFiles,
+      sourcePreference,
+    );
+    const taskWithContext = {
+      ...baseSession.task,
+      sourceFiles: nextSourceFiles,
+      sourcePreference,
+      extractedText: preferredContext.extractedText,
+      sourceText: preferredContext.sourceText,
+      lastAttemptAt: now,
+    };
+    const nextTask = {
+      ...taskWithContext,
+      blockerSignals: deriveRoomBlockers({
+        ...taskWithContext,
+        blockerSignals: taskWithContext.blockerSignals.filter((blocker) => blocker !== 'missing_file_or_context'),
+      }),
+    };
+    const nextSession = normalizeSession({
+      ...baseSession,
+      task: nextTask,
+      activeDumpContext: {
+        text: preferredContext.sourceText,
+        createdAt: baseSession.task.createdAt,
+        lastAttemptAt: now,
+        lastFailureReason: baseSession.task.lastFailureReason,
+      },
+    });
+
+    sessionRef.current = nextSession;
+    setSession(nextSession);
+    await persistSessionWithRooms(nextSession);
+    await appendReadySourcesToRoomMemory(nextTask, 'file_extraction');
+  };
+
   const handleEditCurrentContext = async () => {
+    if (readOnlyMemory) {
+      setAiOfflineNotice('Memory may be partially incompatible. Operating in View-Only mode. Resetting database is recommended only as a last resort.');
+      return;
+    }
+    setForceInputEditor(true);
+    setActiveValuePulseContext(null);
     await controller.openDumpWithCurrentContext();
+    if (typeof window !== 'undefined') {
+      window.requestAnimationFrame(() => {
+        const input = document.getElementById('brain-dump-text') as HTMLTextAreaElement | null;
+        input?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        input?.focus();
+      });
+    }
   };
 
   const handleDeleteRoomSources = async (deleteTokens: string[]) => {
+    if (readOnlyMemory) {
+      setAiOfflineNotice('Memory may be partially incompatible. Operating in View-Only mode. Resetting database is recommended only as a last resort.');
+      return;
+    }
     const baseSession = sessionRef.current ?? session;
     if (!baseSession.task) return;
     const tokenSet = new Set(deleteTokens);
+    const roomId = baseSession.task.roomId ?? baseSession.roomId ?? baseSession.task.id;
     const removeManualText = tokenSet.has(`manual:${baseSession.task.id}`);
     const nextPendingInputs = baseSession.task.pendingInputs.filter((item, index) => (
       !tokenSet.has(`pending:${item.kind}:${index}`)
@@ -767,6 +1214,12 @@ export default function StateMachinePage() {
     sessionRef.current = nextSession;
     setSession(nextSession);
     await persistSessionWithRooms(nextSession);
+    await Promise.all(deleteTokens.map((token) => markRoomMemoryRefDeleted({
+      roomId,
+      refId: token,
+      reason: 'user_deleted_source',
+      summary: 'Source was removed from this room by the user',
+    }).catch(() => undefined)));
   };
 
   const handleStudioIntent = async (intent: StudioIntent) => {
@@ -787,12 +1240,34 @@ export default function StateMachinePage() {
       return;
     }
 
+    if (readOnlyMemory) {
+      setAiOfflineNotice('Memory may be partially incompatible. Operating in View-Only mode. Resetting database is recommended only as a last resort.');
+      trackEvent('studio_intent_blocked', {
+        ...baseProperties,
+        blockedReason: 'read_only_degraded_memory',
+      });
+      return;
+    }
+
+    if (aiOfflineManualMode && intent.id !== 'review_status') {
+      setAiOfflineNotice(AI_OFFLINE_MANUAL_COPY);
+      trackEvent('studio_intent_blocked', {
+        ...baseProperties,
+        blockedReason: 'ai_offline_manual_mode',
+      });
+      return;
+    }
+
     trackEvent('studio_intent_clicked', baseProperties);
     setActiveStudioIntent(intent.id);
 
     try {
       switch (intent.id) {
         case 'review_status': {
+          if (aiOfflineManualMode) {
+            setAiOfflineNotice(AI_OFFLINE_MANUAL_COPY);
+            break;
+          }
           if (session.task && hasResumableTask(session.task) && !hasFreshReentryBrief(session.task, session.lastActive)) {
             await controller.loadReentryBrief('bounce_back');
           }
@@ -833,8 +1308,8 @@ export default function StateMachinePage() {
     const nextSourceFiles = baseSession.task.sourceFiles.map((file) => (
       file.id === fileId
         ? {
-            ...file,
-            status: 'failed' as const,
+          ...file,
+            status: 'failed_extraction' as const,
             failureReason: failureReason ?? file.failureReason ?? 'file_extraction_unavailable',
             failureDetail,
             failureStage: file.failureStage ?? 'unknown',
@@ -876,9 +1351,13 @@ export default function StateMachinePage() {
   };
 
   const handleRetrySourceFile = async (fileId: string) => {
+    if (readOnlyMemory) {
+      setAiOfflineNotice('Memory may be partially incompatible. Operating in View-Only mode. Resetting database is recommended only as a last resort.');
+      return;
+    }
     const baseSession = sessionRef.current ?? session;
     const targetFile = baseSession.task?.sourceFiles.find((file) => file.id === fileId);
-    if (!baseSession.task || !targetFile) return;
+    if (!baseSession.task || !targetFile || targetFile.status === 'pending') return;
 
     setRetryingFileId(fileId);
     trackEvent('room_file_retry_started', {
@@ -923,7 +1402,11 @@ export default function StateMachinePage() {
       const now = Date.now();
       const nextSourceFiles: RoomSourceFile[] = latestSession.task.sourceFiles.map((fileItem) => {
         if (fileItem.id !== fileId) return fileItem;
-        const nextStatus = extractedFile.status ?? 'failed';
+        const nextStatus = extractedFile.status === 'failed'
+          ? extractedFile.failureReason === 'pdf_text_garbled_after_ocr' || extractedFile.failureReason === 'pdf_text_layer_garbled'
+            ? 'unreadable'
+            : 'failed_extraction'
+          : extractedFile.status ?? 'failed_extraction';
         return {
           ...fileItem,
           ...extractedFile,
@@ -977,6 +1460,7 @@ export default function StateMachinePage() {
       sessionRef.current = nextSession;
       setSession(nextSession);
       await persistSessionWithRooms(nextSession);
+      await appendReadySourcesToRoomMemory(nextTask, 'file_retry');
       const updatedFile = nextSourceFiles.find((file) => file.id === fileId);
       if (updatedFile) {
         trackEvent('ocr_extract_finished', {
@@ -1015,6 +1499,10 @@ export default function StateMachinePage() {
   };
 
   const handleSelectPrimarySourceFile = async (fileId: string) => {
+    if (readOnlyMemory) {
+      setAiOfflineNotice('Memory may be partially incompatible. Operating in View-Only mode. Resetting database is recommended only as a last resort.');
+      return;
+    }
     const baseSession = sessionRef.current ?? session;
     if (!baseSession.task) return;
     const targetFile = baseSession.task.sourceFiles.find((file) => file.id === fileId);
@@ -1091,6 +1579,48 @@ export default function StateMachinePage() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
+  const blockAiAction = () => {
+    setAiOfflineNotice(readOnlyMemory
+      ? 'Memory may be partially incompatible. Operating in View-Only mode. Resetting database is recommended only as a last resort.'
+      : AI_OFFLINE_MANUAL_COPY);
+  };
+
+  const handleActiveReentryPrimary = async () => {
+    if (!activeRoomReentry) return;
+    if (readOnlyMemory) {
+      blockAiAction();
+      return;
+    }
+
+    if (activeRoomReentry.primaryAction === 'fix_context') {
+      if (session.task) {
+        setShowDataReview('manage');
+        return;
+      }
+      await handleEditCurrentContext();
+      return;
+    }
+
+    if (activeRoomReentry.primaryAction === 'answer_question') {
+      const input = document.getElementById('brain-dump-text') as HTMLTextAreaElement | null;
+      input?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      input?.focus();
+      return;
+    }
+
+    if (aiActionsBlocked) {
+      blockAiAction();
+      return;
+    }
+
+    if (roomCardCanContinue || hasResumableTask(session.task)) {
+      await handleContinueFromRoomCard();
+      return;
+    }
+
+    await controller.handleRetry();
+  };
+
   const renderState = () => {
     switch (session.uiRoute) {
       case 'MORNING_RITUAL':
@@ -1099,9 +1629,13 @@ export default function StateMachinePage() {
             reentryBrief={session.task?.reentryBrief}
             snapshot={studioSnapshot}
             loading={isReentryLoading}
-            onResumeSuggested={session.task?.reentryBrief ? controller.resumeFromSuggestedReentry : undefined}
+            onResumeSuggested={session.task?.reentryBrief ? (aiActionsBlocked ? blockAiAction : controller.resumeFromSuggestedReentry) : undefined}
             onResumeCheckpoint={hasResumableTask(session.task)
               ? async () => {
+                  if (aiActionsBlocked) {
+                    blockAiAction();
+                    return;
+                  }
                   trackEvent('morning_ritual_reentry_checkpoint');
                   await controller.resumeTaskFromRoute(controller.deriveResumeRoute());
                 }
@@ -1126,12 +1660,20 @@ export default function StateMachinePage() {
             reentryBrief={session.task?.reentryBrief}
             snapshot={studioSnapshot}
             loading={isReentryLoading}
-            onUseSuggested={session.task?.reentryBrief ? controller.resumeFromSuggestedReentry : undefined}
+            onUseSuggested={session.task?.reentryBrief ? (aiActionsBlocked ? blockAiAction : controller.resumeFromSuggestedReentry) : undefined}
             onContinue={async () => {
+              if (aiActionsBlocked) {
+                blockAiAction();
+                return;
+              }
               trackEvent('bounce_back_resumed');
               await controller.resumeTaskFromRoute(controller.deriveResumeRoute());
             }}
             onStartFresh={async () => {
+              if (readOnlyMemory) {
+                blockAiAction();
+                return;
+              }
               await controller.resumeTaskFromRoute('DUMP_ENTRY');
             }}
             onEditContext={studioSnapshot ? handleEditCurrentContext : undefined}
@@ -1149,15 +1691,61 @@ export default function StateMachinePage() {
         );
 
       case 'DUMP_ENTRY':
+        // isDumpPending covers the brief gap between ไปต่อ submit and SYNTHESIZING route
+        // — prevents blank main panel during AI latency
+        if (isDumpPending) {
+          return (
+            <div style={{ paddingTop: '2rem', textAlign: 'center' }}>
+              <AIProcessingIndicator
+                size="hero"
+                label="กำลังคลี่สิ่งที่อยู่ในหัว"
+                detail="MIND กำลังสรุปบริบทและหา next move แรก"
+              />
+            </div>
+          );
+        }
         return (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <GetStartedHome showIntro={homeEntryState.mode === 'get_started'}>
+            {!forceInputEditor && !showDumpOnlyFirstView && homeEntryState.mode === 'active_room' && activeRoomReentry?.room.id === activeRoomId && (
+              <ActiveRoomReentryCard
+                state={activeRoomReentry}
+                onPrimary={handleActiveReentryPrimary}
+                onWhy={() => setShowTrust(true)}
+                onShowRooms={() => {
+                  setIsRoomSidebarCollapsed(false);
+                  if (isCompactViewport) setShowMobileRooms(true);
+                }}
+              />
+            )}
+            {!showDumpOnlyFirstView && homeEntryState.mode === 'resume_prompt' && homeEntryState.resumeRoom && (
+              <ResumePrompt
+                candidate={homeEntryState.resumeRoom}
+                onOpen={() => handleSelectRoomFromShell(homeEntryState.resumeRoom?.room.id ?? '')}
+                onShowRooms={() => {
+                  setIsRoomSidebarCollapsed(false);
+                  if (isCompactViewport) setShowMobileRooms(true);
+                }}
+              />
+            )}
             <BrainDumpInput
-              onNext={controller.handleDump}
+              onNext={handleDumpSubmission}
+              onFileExtractionComplete={handleFileExtractionComplete}
               initialText={session.activeDumpContext?.text}
+              contextReturnNotice={forceInputEditor}
+              existingSourceFiles={forceInputEditor ? session.task?.sourceFiles : undefined}
               presentationMode={presentationMode}
               defaultScenarioId={demoScenarioId}
               focusMode={isFocusMode}
               roomId={session.roomId}
+              disabled={readOnlyMemory}
+              disabledReason="View-Only mode"
+              entryVariant={showDumpOnlyFirstView
+                ? 'default'
+                : homeEntryState.mode === 'get_started'
+                ? 'get_started'
+                : homeEntryState.mode === 'active_room'
+                  ? 'active_context'
+                  : 'default'}
             />
             {showResetBanner && (
               <div
@@ -1180,14 +1768,17 @@ export default function StateMachinePage() {
                 </button>
               </div>
             )}
-          </div>
+          </GetStartedHome>
         );
 
       case 'SYNTHESIZING':
         return (
           <div style={{ paddingTop: '2rem', textAlign: 'center' }}>
-            <div className="spinner" />
-            <p>กำลังคลี่สิ่งที่อยู่ในหัว…</p>
+            <AIProcessingIndicator
+              size="hero"
+              label="กำลังคลี่สิ่งที่อยู่ในหัว"
+              detail="MIND กำลังสรุปบริบทและหา next move แรก"
+            />
           </div>
         );
 
@@ -1200,12 +1791,12 @@ export default function StateMachinePage() {
             whyThisNow={currentWhyThisNow}
             constraints={session.task?.constraints}
             plan={session.task?.currentPlan}
+            sourceFiles={session.task?.sourceFiles}
             negotiationLoading={isNegotiatingAction}
-            onMarkAdjusted={controller.handleOneActionAdjustmentTouched}
-            onNegotiate={controller.handleActionNegotiation}
-            onAccept={controller.handleAcceptAction}
-            onReject={controller.handleRejectAction}
-            onNotLikeThis={controller.handleEnterRescue}
+            onMarkAdjusted={readOnlyMemory ? blockAiAction : controller.handleOneActionAdjustmentTouched}
+            onNegotiate={aiActionsBlocked ? blockAiAction : controller.handleActionNegotiation}
+            onAccept={aiActionsBlocked ? blockAiAction : controller.handleAcceptAction}
+            onNotLikeThis={aiActionsBlocked ? blockAiAction : controller.handleEnterRescue}
             focusMode={isFocusMode}
           />
         );
@@ -1234,12 +1825,13 @@ export default function StateMachinePage() {
             successSignal={session.task?.currentPlan?.successSignal}
             refineLoading={isScaffoldRefining}
             refineFeedback={scaffoldRefineFeedback}
-            onRescue={controller.handleEnterRescue}
-            onMakeSmaller={controller.handleMakeSmaller}
-            onComplete={controller.handleCompleteScaffold}
-            onEditStep={controller.handleEditCurrentPlanStep}
+            onRescue={aiActionsBlocked ? blockAiAction : controller.handleEnterRescue}
+            onMakeSmaller={aiActionsBlocked ? blockAiAction : controller.handleMakeSmaller}
+            onBackToInput={readOnlyMemory ? blockAiAction : handleEditCurrentContext}
+            onComplete={readOnlyMemory ? blockAiAction : controller.handleCompleteScaffold}
+            onEditStep={readOnlyMemory ? undefined : controller.handleEditCurrentPlanStep}
             onBackToSteps={controller.handleReturnToScaffoldSteps}
-            onStartNew={controller.handleStartNewFromCompletedScaffold}
+            onStartNew={readOnlyMemory ? blockAiAction : controller.handleStartNewFromCompletedScaffold}
             focusMode={isFocusMode}
           />
         );
@@ -1251,8 +1843,10 @@ export default function StateMachinePage() {
             rescueState={currentRescueState}
             refineLoading={isScaffoldRefining}
             refineFeedback={scaffoldRefineFeedback}
-            onMakeSmaller={controller.handleMakeSmaller}
-            onWalkAway={controller.handleWalkAwayFromRescue}
+            onMakeSmaller={aiActionsBlocked ? blockAiAction : controller.handleMakeSmaller}
+            onBackToStep={aiActionsBlocked ? blockAiAction : async () => controller.resumeTaskFromRoute('SCAFFOLD')}
+            onBackToInput={readOnlyMemory ? blockAiAction : handleEditCurrentContext}
+            onWalkAway={readOnlyMemory ? blockAiAction : controller.handleWalkAwayFromRescue}
             focusMode={isFocusMode}
           />
         );
@@ -1265,7 +1859,7 @@ export default function StateMachinePage() {
             onManualContinue={() => undefined}
             lastFailureReason={session.task?.lastFailureReason ?? session.lastFailureReason}
             suggestedActions={manualFallbackSuggestedActions.length > 0 ? manualFallbackSuggestedActions : aiHealth.actions}
-            retryable={manualFallbackRetryable}
+            retryable={manualFallbackRetryable && !aiOfflineManualMode && !readOnlyMemory}
             focusMode={isFocusMode}
           />
         );
@@ -1281,6 +1875,7 @@ export default function StateMachinePage() {
   const showPinButton = ['ONE_ACTION', 'SCAFFOLD'].includes(session.uiRoute) && !!currentActionState;
   const isPinned = currentActionState?.isPinned ?? false;
   const pinDisabled = !isPinned && pinnedCountLocal >= 3;
+  const aiActionsBlocked = aiOfflineManualMode || readOnlyMemory;
   const utilityButtonLabel = showUtilityMenu ? 'ซ่อนเครื่องมือ' : 'เครื่องมือ';
 
   const handleSelectRoomFromShell = async (roomId: string) => {
@@ -1355,7 +1950,7 @@ export default function StateMachinePage() {
         />
       )}
 
-      <div className={`mind-shell-layout ${isFocusMode ? 'is-focus-mode' : 'is-power-mode'}`}>
+      <div className={`mind-shell-layout ${isFocusMode ? 'is-focus-mode' : 'is-power-mode'} ${showDumpOnlyFirstView ? 'is-dump-first-view' : ''}`}>
         <header className={`mind-shell-topbar ${routeUsesReducedChrome ? 'is-reduced' : ''}`}>
           <div className="mind-shell-topbar-left">
             <button
@@ -1386,8 +1981,11 @@ export default function StateMachinePage() {
           </div>
 
           <div className="mind-shell-route">
-            <p className="mind-shell-route-kicker">{routeMeta.kicker}</p>
-            <p className="mind-shell-route-title">{routeMeta.title}</p>
+            <div className="mind-shell-route-header" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.1rem' }}>
+              <span className="mind-shell-route-kicker" style={{ margin: 0, padding: 0 }}>{routeMeta.kicker}</span>
+              <span className="mind-shell-route-separator" style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', opacity: 0.5, userSelect: 'none' }}>›</span>
+              <h1 className="mind-shell-route-title" style={{ margin: 0, padding: 0 }}>{routeMeta.title}</h1>
+            </div>
             <p className="mind-shell-route-detail">{routeMeta.detail}</p>
           </div>
 
@@ -1411,7 +2009,7 @@ export default function StateMachinePage() {
                 {isPinned ? 'เอาหมุดออก' : 'ปักหมุด'}
               </button>
             )}
-            {isCompactViewport && (
+            {isCompactViewport && !showDumpOnlyFirstView && (
               <button
                 type="button"
                 className="shell-secondary-button"
@@ -1425,7 +2023,7 @@ export default function StateMachinePage() {
             )}
             <button
               type="button"
-              className="shell-secondary-button"
+              className="shell-secondary-button mind-shell-utility-toggle"
               onClick={() => setShowUtilityMenu((value) => !value)}
             >
               {utilityButtonLabel}
@@ -1455,11 +2053,42 @@ export default function StateMachinePage() {
           </div>
         )}
 
+        {readOnlyMemory && (
+          <div className="mind-inline-note" role="status" style={{ margin: '0.75rem 1rem 0' }}>
+            <p style={{ margin: 0, fontSize: '0.86rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+              Memory may be partially incompatible. Operating in View-Only mode. Resetting database is recommended only as a last resort.
+              {' '}({memoryDegradationCopy(memoryDegradationReason)})
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowTrust(true)}
+              style={{ background: 'transparent', fontSize: '0.8rem', padding: '0.2rem 0.4rem', color: 'var(--text-secondary)' }}
+            >
+              เปิดข้อมูลและ reset
+            </button>
+          </div>
+        )}
+
+        {aiOfflineNotice && (
+          <div className="mind-inline-note" role="status" style={{ margin: '0.75rem 1rem 0' }}>
+            <p style={{ margin: 0, fontSize: '0.86rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+              {aiOfflineNotice}
+            </p>
+            <button
+              type="button"
+              onClick={() => setAiOfflineNotice(null)}
+              style={{ background: 'transparent', fontSize: '0.8rem', padding: '0.2rem 0.4rem', color: 'var(--text-secondary)' }}
+            >
+              ซ่อน
+            </button>
+          </div>
+        )}
+
         {pinDisabled && showPinButton && (
           <p className="mind-shell-pin-note">ปักหมุดได้สูงสุด 3 รายการ</p>
         )}
 
-        {(showMobileRooms || showMobileStudio) && (
+        {(showMobileRooms || (!showDumpOnlyFirstView && showMobileStudio)) && (
           <button
             type="button"
             className="mind-shell-backdrop"
@@ -1472,12 +2101,11 @@ export default function StateMachinePage() {
         )}
 
         <div
-          className={`mind-room-shell ${isRoomSidebarCollapsed ? 'rooms-collapsed' : ''} ${isStudioCollapsed ? 'studio-collapsed' : ''} ${isFocusMode ? 'is-focus-mode' : 'is-power-mode'}`}
+          className={`mind-room-shell ${isRoomSidebarCollapsed ? 'rooms-collapsed' : ''} ${isStudioCollapsed ? 'studio-collapsed' : ''} ${isFocusMode ? 'is-focus-mode' : 'is-power-mode'} ${showDumpOnlyFirstView ? 'is-dump-first-view' : ''}`}
         >
           <div className={`mind-room-sidebar-wrap ${showMobileRooms ? 'is-open' : ''}`}>
             <RoomSidebar
-              rooms={rooms}
-              activeRoomId={activeRoomId}
+              items={roomSidebarItems}
               onSelectRoom={handleSelectRoomFromShell}
               onCreateRoom={handleCreateRoom}
               collapsed={!isCompactViewport && isRoomSidebarCollapsed}
@@ -1493,8 +2121,8 @@ export default function StateMachinePage() {
                   room={activeRoom}
                   onContinue={handleContinueFromRoomCard}
                   onMakeSmaller={handleMakeSmallerFromRoomCard}
-                  continueDisabled={!roomCardCanContinue}
-                  makeSmallerDisabled={!roomCardCanMakeSmaller}
+                  continueDisabled={!roomCardCanContinue || aiActionsBlocked}
+                  makeSmallerDisabled={!roomCardCanMakeSmaller || aiActionsBlocked}
                   focusMode={isFocusMode}
                 />
               )}
@@ -1509,6 +2137,7 @@ export default function StateMachinePage() {
             </section>
           </div>
 
+          {!showDumpOnlyFirstView && (
           <aside className={`mind-room-studio-wrap ${showMobileStudio ? 'is-open' : ''} ${isStudioCollapsed ? 'is-collapsed' : ''}`}>
             {isStudioCollapsed ? (
               <button
@@ -1524,7 +2153,7 @@ export default function StateMachinePage() {
                 aria-label={isCompactViewport ? 'ปิดตัวช่วย' : 'ขยายตัวช่วย'}
                 title={isCompactViewport ? 'ปิดตัวช่วย' : 'ขยายตัวช่วย'}
               >
-                <span className="studio-eyebrow">Studio</span>
+                <span className="studio-eyebrow">บริบทช่วยงาน</span>
                 <span className="mind-room-studio-collapsed-label">ตัวช่วย</span>
                 <span className="mind-room-studio-collapsed-arrow">←</span>
               </button>
@@ -1532,7 +2161,7 @@ export default function StateMachinePage() {
               <>
                 <div className="mind-room-studio-header">
                   <div>
-                    <p className="studio-eyebrow">Studio</p>
+                    <p className="studio-eyebrow">บริบทช่วยงาน</p>
                     <h2 className="mind-room-studio-title">ตัวช่วย</h2>
                   </div>
                   <button
@@ -1566,6 +2195,7 @@ export default function StateMachinePage() {
               </>
             )}
           </aside>
+          )}
         </div>
       </div>
       {activeValuePulseContext && !presentationMode && !showArchive && !showDataReview && !showOverview && !showTrust && !showWalkthrough && !showAiOpsDebug && !showObservationCapture && (

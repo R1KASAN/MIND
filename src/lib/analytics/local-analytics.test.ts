@@ -136,19 +136,37 @@ test('buildBusinessLoopSummary calculates v1.5 reentry and evidence metrics', ()
     normalizeAnalyticsEvent('step_draft_shown', { task_id: 'task-1', step_id: 'step-1' }, 1200),
     normalizeAnalyticsEvent('step_evidence_clicked', { task_id: 'task-1', step_id: 'step-1' }, 1500),
     normalizeAnalyticsEvent('reentry_brief_shown', { task_id: 'task-1' }, 2000),
-    normalizeAnalyticsEvent('step_confirmed', { task_id: 'task-1', step_id: 'step-1' }, 4000),
+    normalizeAnalyticsEvent('step_confirmed', { task_id: 'task-1', step_id: 'step-1', retrieval_enabled: true }, 4000),
     normalizeAnalyticsEvent('task_opened', { task_id: 'task-2' }, 10000),
     normalizeAnalyticsEvent('step_draft_shown', { task_id: 'task-2', step_id: 'step-2' }, 11000),
     normalizeAnalyticsEvent('step_not_like_this', { task_id: 'task-2', step_id: 'step-2' }, 12000),
+    normalizeAnalyticsEvent('step_confirmed', { task_id: 'task-2', step_id: 'step-2', retrieval_enabled: false }, 13000),
     normalizeAnalyticsEvent('destructive_step_warning_shown', { task_id: 'task-2', step_id: 'step-2' }, 13000),
   ]);
 
   assert.equal(summary.timeToFirstConfirmedActionMs.median, 3000);
   assert.equal(summary.reentryToConfirmedActionRate5m, 100);
   assert.equal(summary.notLikeThisRate, 50);
+  assert.equal(summary.evidenceBackedActionRate, 50);
   assert.equal(summary.evidenceClickRate, 50);
-  assert.equal(summary.draftToConfirmConversionRate, 50);
+  assert.equal(summary.draftToConfirmConversionRate, 100);
   assert.equal(summary.destructiveWarningHitRate, 0);
+});
+
+test('buildBusinessLoopSummary calculates round-1 usage-learning KPIs', () => {
+  const summary = buildBusinessLoopSummary([
+    normalizeAnalyticsEvent('first_action_selected', { task_id: 'task-1' }, 1000),
+    normalizeAnalyticsEvent('one_action_accepted_first_try', { task_id: 'task-1' }, 1500),
+    normalizeAnalyticsEvent('first_action_selected', { task_id: 'task-2' }, 2000),
+    normalizeAnalyticsEvent('time_to_action_ms', { task_id: 'task-1', ms: 2400 }, 2500),
+  ]);
+
+  assert.equal(summary.firstActionCount, 2);
+  assert.equal(summary.oneActionAcceptedFirstTryCount, 1);
+  assert.equal(summary.oneActionAcceptedFirstTryRate, 0.5);
+  assert.equal(summary.timeToNextActionMs.count, 1);
+  assert.deepEqual(summary.timeToNextActionMs.values, [2400]);
+  assert.equal(summary.timeToNextActionMs.median, 2400);
 });
 
 test('buildBusinessLoopSummary calculates OCR ingest metrics', () => {
@@ -217,6 +235,8 @@ test('buildBusinessLoopSummaryByRoom groups metrics by room', () => {
   assert.equal(summaries.length, 2);
   assert.equal(summaries[0]?.roomTitle, 'ACME');
   assert.equal(summaries.find((summary) => summary.roomId === 'room-b')?.timeToNextMoveMs.median, 1500);
+  assert.equal(summaries.find((summary) => summary.roomId === 'room-b')?.oneActionAcceptedFirstTryCount, 0);
+  assert.equal(summaries.find((summary) => summary.roomId === 'room-b')?.oneActionAcceptedFirstTryRate, 0);
 });
 
 test('normalizeAnalyticsEvent preserves make_smaller refinement outcome details', () => {

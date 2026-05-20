@@ -1,14 +1,17 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useTrackMountEvent, trackEvent } from '@/lib/instrumentation';
 import { AiSynthesisResponse } from '@/lib/ai/schema';
-import type { CurrentPlanStep, PlanGeneratedBy, PlanSourceKindLabel } from '@/lib/store/idb';
+import type { CurrentPlanStep } from '@/lib/store/idb';
 import { formatConfidenceLabel } from '@/lib/orchestrator/plan-provenance';
 import {
   SCAFFOLD_REFINE_LOADING_COPY,
   type ScaffoldRefineFeedback,
 } from '@/lib/orchestrator/scaffold-refine';
+import { AIProcessingIndicator } from '@/components/AI/AIProcessingIndicator';
+import { StepEvidencePanel } from './StepEvidencePanel';
+import { hasRetrievedEvidence } from '@/lib/orchestrator/step-evidence-display';
 
 interface Props {
   action: AiSynthesisResponse['recommended_action'];
@@ -20,6 +23,7 @@ interface Props {
   refineFeedback?: ScaffoldRefineFeedback | null;
   onRescue: () => void;
   onMakeSmaller: () => void;
+  onBackToInput: () => void;
   onComplete: () => void;
   onEditStep?: (stepId: string, text: string) => void;
   onBackToSteps: () => void;
@@ -68,120 +72,6 @@ function renderRefineFeedbackBadges(refineFeedback: ScaffoldRefineFeedback) {
   );
 }
 
-function hasRetrievedEvidence(step?: CurrentPlanStep) {
-  return Boolean(step?.evidence?.some((item) => item.sourceKindLabel === 'retrieved'));
-}
-
-function formatTimestamp(timestamp?: number) {
-  if (!timestamp) return undefined;
-  return new Intl.DateTimeFormat('th-TH', {
-    day: 'numeric',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(timestamp));
-}
-
-function formatSourceKindLabel(value?: PlanSourceKindLabel) {
-  if (value === 'manual_summary') return 'สรุปด้วยมือ';
-  if (value === 'extracted') return 'ดึงจากไฟล์';
-  if (value === 'retrieved') return 'ดึงจากหลักฐาน';
-  return 'หลักฐานในห้อง';
-}
-
-function formatGeneratedByLabel(value?: PlanGeneratedBy) {
-  if (value === 'action') return 'แผนหลัก';
-  if (value === 'scaffold') return 'ย่อยงาน';
-  if (value === 'rescue') return 'ช่วยตอนติด';
-  if (value === 'reentry') return 'กลับเข้าห้อง';
-  return value ?? '';
-}
-
-function StepProvenance({ step }: { step?: CurrentPlanStep }) {
-  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
-  if (!step) return null;
-  const selectedEvidence = step.evidence?.find((item) => item.sourceId === selectedSourceId) ?? step.evidence?.[0];
-  const generatedLabel = formatTimestamp(step.provenance?.generatedAt);
-  const confirmedLabel = formatTimestamp(step.provenance?.confirmedAt);
-  return (
-    <details className="supporting-panel" style={{ width: '100%', maxWidth: '44rem' }}>
-          <summary
-          style={{
-            cursor: 'pointer',
-            color: 'var(--text-secondary)',
-            fontSize: '0.88rem',
-            fontWeight: 600,
-            listStyle: 'none',
-            textAlign: 'left',
-          }}
-        >
-          เหตุผล / ประวัติ
-        </summary>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', marginTop: '0.85rem' }}>
-        <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-          <span className="supporting-label">ร่างจาก MIND</span>
-          <span className="supporting-label">{formatConfidenceLabel(step.confidence)}</span>
-          {step.provenance?.userEdited && <span className="supporting-label">แก้ไขโดยคุณ</span>}
-          {step.provenance?.confirmedAt && <span className="supporting-label">ยืนยันแล้ว</span>}
-          {step.safety?.manualOnly && <span className="supporting-label" style={{ color: 'var(--danger)' }}>ทำด้วยมือเท่านั้น</span>}
-        </div>
-        {step.evidence && step.evidence.length > 0 && (
-          <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-            {step.evidence.map((item) => (
-              <button
-                key={`${step.id}-${item.sourceId}`}
-                type="button"
-                onClick={() => {
-                  setSelectedSourceId(item.sourceId);
-                  trackEvent('step_evidence_clicked', {
-                    step_id: step.id,
-                    source_ids: [item.sourceId],
-                    confidence_level: step.confidence?.level,
-                    confidence_score: step.confidence?.score,
-                    destructive_risk: step.safety?.risk,
-                    retrieval_enabled: hasRetrievedEvidence(step),
-                  });
-                }}
-                title={item.excerpt}
-                style={{
-                  background: selectedSourceId === item.sourceId ? 'rgba(94,106,210,0.16)' : 'rgba(255,255,255,0.04)',
-                  border: selectedSourceId === item.sourceId ? '1px solid rgba(94,106,210,0.35)' : '1px solid rgba(255,255,255,0.09)',
-                  color: selectedSourceId === item.sourceId ? 'var(--text-primary)' : 'var(--text-secondary)',
-                  padding: '0.34rem 0.58rem',
-                  fontSize: '0.76rem',
-                }}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        )}
-        {selectedEvidence && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-            <span className="supporting-label" style={{ marginBottom: 0 }}>
-              {formatSourceKindLabel(selectedEvidence.sourceKindLabel)} · {selectedEvidence.label}
-            </span>
-            <p className="supporting-summary" style={{ margin: 0 }}>
-              {selectedEvidence.excerpt || 'ยังไม่มี excerpt สั้น ๆ จาก source นี้'}
-            </p>
-          </div>
-        )}
-        <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-          {generatedLabel && <span className="studio-chip">สร้างเมื่อ {generatedLabel}</span>}
-          {confirmedLabel && <span className="studio-chip">ยืนยันเมื่อ {confirmedLabel}</span>}
-              {step.provenance?.generatedBy && <span className="studio-chip">{formatGeneratedByLabel(step.provenance.generatedBy)}</span>}
-          {step.safety?.risk && <span className="studio-chip">ความเสี่ยง: {step.safety.risk}</span>}
-        </div>
-        {step.provenance?.overrideNote && (
-          <p className="studio-inline-note" style={{ margin: 0 }}>
-            แก้ไข: {step.provenance.overrideNote}
-          </p>
-        )}
-      </div>
-    </details>
-  );
-}
-
 function StepMiniMeta({ step }: { step: CurrentPlanStep }) {
   const evidenceCount = step.evidence?.length ?? 0;
   if (!step.confidence && evidenceCount === 0 && !step.safety?.manualOnly && !step.provenance?.userEdited) return null;
@@ -196,6 +86,35 @@ function StepMiniMeta({ step }: { step: CurrentPlanStep }) {
   );
 }
 
+function ScaffoldContextHeader({
+  actionTitle,
+  stepLabel,
+}: {
+  actionTitle: string;
+  stepLabel: string;
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '0.3rem',
+        padding: '0.78rem 0.9rem',
+        borderRadius: 'var(--radius)',
+        background: 'rgba(255,255,255,0.04)',
+        border: '1px solid rgba(255,255,255,0.08)',
+      }}
+    >
+      <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.78rem', lineHeight: 1.45 }}>
+        เป้าหมายรอบนี้: <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{actionTitle}</span>
+      </p>
+      <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.78rem', lineHeight: 1.45 }}>
+        ตอนนี้: <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{stepLabel}</span>
+      </p>
+    </div>
+  );
+}
+
 export function Scaffold({
   action,
   steps,
@@ -206,6 +125,7 @@ export function Scaffold({
   refineFeedback,
   onRescue,
   onMakeSmaller,
+  onBackToInput,
   onComplete,
   onEditStep,
   onBackToSteps,
@@ -216,8 +136,12 @@ export function Scaffold({
   const visibleSteps: CurrentPlanStep[] = steps.length > 0
     ? steps
     : action.micro_steps.map((step, index) => ({ id: `step-${index + 1}`, text: step }));
+  const stepsSource = action.micro_steps_source ?? 'fallback';
+  console.info('[MIND][UI_SCAFFOLD] Rendered CurrentPlanSteps:', JSON.stringify(visibleSteps, null, 2), 'source:', stepsSource);
   const activeStepIndex = Math.min(currentStepIndex, Math.max(visibleSteps.length - 1, 0));
   const currentStep = visibleSteps[activeStepIndex] ?? visibleSteps[0];
+  const stepProgressLabel = visibleSteps.length === 0 ? 'ขั้นตอน 0' : `ขั้นตอน ${activeStepIndex + 1} / ${visibleSteps.length}`;
+  const currentStepLabel = currentStep?.text ? `${stepProgressLabel} — ${currentStep.text}` : stepProgressLabel;
   useEffect(() => {
     if (!currentStep) return;
     trackEvent('step_draft_shown', {
@@ -242,7 +166,7 @@ export function Scaffold({
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', maxWidth: '44rem', margin: '0 auto', gap: '0.95rem', paddingTop: '1.5rem' }}>
           <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>{action.title}</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '-0.2rem' }}>
-            งานรอบนี้จบแล้ว เหลือแค่ตัดสินใจว่าจะเริ่มใหม่หรือย้อนดูขั้นตอน
+            งานรอบนี้จบแล้ว บริบทจะยังอยู่ในห้องนี้เพื่อเริ่มรอบถัดไป
           </p>
 
           <div
@@ -260,13 +184,13 @@ export function Scaffold({
               คุณทำครบ {visibleSteps.length} ขั้นตอนของงานรอบนี้แล้ว
             </strong>
             <p style={{ margin: 0, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-              {successSignal ?? 'ถ้าจะไปต่อ ให้เริ่มงานใหม่หรือย้อนกลับไปดู step ล่าสุดได้'}
+              {successSignal ?? 'ถ้าจะไปต่อ ให้เริ่มรอบใหม่ในห้องนี้หรือย้อนกลับไปดู step ล่าสุดได้'}
             </p>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             <button className="primary" onClick={onStartNew}>
-              เริ่มงานใหม่
+              เริ่มรอบใหม่ในห้องนี้
             </button>
             <button onClick={onBackToSteps}>กลับไปดูขั้นตอน</button>
           </div>
@@ -310,11 +234,8 @@ export function Scaffold({
     }
 
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', maxWidth: '44rem', margin: '0 auto', gap: '0.95rem', paddingTop: '1.5rem' }}>
-        <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>{action.title}</h2>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '-0.2rem' }}>
-          ตอนนี้อยู่ที่ขั้นตอน {visibleSteps.length === 0 ? '0' : `${activeStepIndex + 1} / ${visibleSteps.length}`}
-        </p>
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', maxWidth: '44rem', margin: '0 auto', gap: '0.95rem', paddingTop: '1.5rem', paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom))' }}>
+        <ScaffoldContextHeader actionTitle={action.title} stepLabel={currentStepLabel} />
 
         <div className="action-hero-card" style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
@@ -341,12 +262,10 @@ export function Scaffold({
           )}
         </div>
 
-        <StepProvenance step={currentStep} />
+        <StepEvidencePanel step={currentStep} />
 
         {refineLoading && (
-          <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-            {SCAFFOLD_REFINE_LOADING_COPY}
-          </p>
+          <AIProcessingIndicator label="กำลังย่อยให้เล็กลง" detail={SCAFFOLD_REFINE_LOADING_COPY} />
         )}
         {!refineLoading && refineFeedback?.kind === 'error' && (
           <div
@@ -375,10 +294,15 @@ export function Scaffold({
             disabled={refineLoading}
             onClick={() => { trackEvent('scaffold_completed'); onComplete(); }}
           >
-            เสร็จแล้ว
+            ใช้ก้าวย่อยนี้ต่อ
           </button>
-          <button disabled={refineLoading} onClick={onMakeSmaller}>ย่อยให้เล็กลงอีก</button>
-          <button disabled={refineLoading} onClick={onRescue}>ไม่ใช่แบบนี้</button>
+          <div className="scaffold-secondary-actions-group">
+            <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
+              <button style={{ flex: '1 1 calc(50% - 0.25rem)' }} disabled={refineLoading} onClick={onMakeSmaller}>แบ่งก้าวนี้ให้เล็กลง</button>
+              <button style={{ flex: '1 1 calc(50% - 0.25rem)' }} disabled={refineLoading} onClick={onBackToInput}>กลับไปแก้บริบท</button>
+            </div>
+            <button disabled={refineLoading} onClick={onRescue}>ฉันติดขัด / ช่วยวินิจฉัยจุดที่บล็อกอยู่</button>
+          </div>
           <details className="supporting-panel" style={{ width: '100%', maxWidth: '44rem' }}>
             <summary
               style={{
@@ -392,7 +316,7 @@ export function Scaffold({
             >
               ดูขั้นตอนทั้งหมด
             </summary>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.85rem' }}>
+            <div data-source={stepsSource} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.85rem' }}>
               {visibleSteps.map((step, idx) => (
                 <div
                   key={step.id}
@@ -413,7 +337,6 @@ export function Scaffold({
               ))}
             </div>
           </details>
-          <button disabled={refineLoading} onClick={onRescue} style={{ color: 'var(--danger)' }}>ฉันติดอยู่</button>
         </div>
       </div>
     );
@@ -441,7 +364,7 @@ export function Scaffold({
             คุณทำครบ {visibleSteps.length} ขั้นตอนของงานรอบนี้แล้ว
           </strong>
           <p style={{ margin: 0, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-            {successSignal ?? 'ตอนนี้งานรอบนี้ขยับจนจบชุดขั้นตอนแล้ว ถ้าพร้อมค่อยเริ่มงานใหม่ หรือย้อนกลับไปดู step ล่าสุดได้'}
+            {successSignal ?? 'ตอนนี้งานรอบนี้ขยับจนจบชุดขั้นตอนแล้ว ถ้าพร้อมค่อยเริ่มรอบใหม่ในห้องนี้ หรือย้อนกลับไปดู step ล่าสุดได้'}
           </p>
         </div>
 
@@ -467,7 +390,7 @@ export function Scaffold({
 
         <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <button className="primary" onClick={onStartNew}>
-            เริ่มงานใหม่
+            เริ่มรอบใหม่ในห้องนี้
           </button>
           <button onClick={onBackToSteps}>กลับไปดูขั้นตอน</button>
         </div>
@@ -476,11 +399,8 @@ export function Scaffold({
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', maxWidth: '44rem', margin: '0 auto', gap: '1rem', paddingTop: '2rem' }}>
-      <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>{action.title}</h2>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '-0.35rem' }}>
-        ตอนนี้อยู่ที่ขั้นตอน {visibleSteps.length === 0 ? '0' : `${activeStepIndex + 1} / ${visibleSteps.length}`}
-      </p>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', maxWidth: '44rem', margin: '0 auto', gap: '1rem', paddingTop: '2rem', paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom))' }}>
+      <ScaffoldContextHeader actionTitle={action.title} stepLabel={currentStepLabel} />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '1rem' }}>
         {visibleSteps.map((step, idx) => (
@@ -503,13 +423,11 @@ export function Scaffold({
         ))}
       </div>
 
-      <StepProvenance step={currentStep} />
+      <StepEvidencePanel step={currentStep} />
 
-      <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem', paddingBottom: 'env(safe-area-inset-bottom)' }}>
         {refineLoading && (
-          <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-            {SCAFFOLD_REFINE_LOADING_COPY}
-          </p>
+          <AIProcessingIndicator label="กำลังย่อยให้เล็กลง" detail={SCAFFOLD_REFINE_LOADING_COPY} />
         )}
         {!refineLoading && refineFeedback?.kind === 'error' && (
           <div
@@ -536,11 +454,13 @@ export function Scaffold({
           disabled={refineLoading}
           onClick={() => { trackEvent('scaffold_completed'); onComplete(); }}
         >
-          เสร็จแล้ว
+          ใช้ก้าวย่อยนี้ต่อ
         </button>
-        <button disabled={refineLoading} onClick={onMakeSmaller}>ย่อยให้เล็กลงอีก</button>
-        <button disabled={refineLoading} onClick={onRescue}>ไม่ใช่แบบนี้</button>
-        <button disabled={refineLoading} onClick={onRescue} style={{ color: 'var(--danger)' }}>ฉันติดอยู่</button>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+          <button style={{ flex: '1 1 calc(50% - 0.25rem)' }} disabled={refineLoading} onClick={onMakeSmaller}>แบ่งก้าวนี้ให้เล็กลง</button>
+          <button style={{ flex: '1 1 calc(50% - 0.25rem)' }} disabled={refineLoading} onClick={onBackToInput}>กลับไปแก้บริบท</button>
+        </div>
+        <button disabled={refineLoading} onClick={onRescue}>ฉันติดขัด / ช่วยวินิจฉัยจุดที่บล็อกอยู่</button>
       </div>
     </div>
   );

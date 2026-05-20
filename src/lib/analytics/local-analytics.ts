@@ -144,6 +144,10 @@ export interface AnalyticsEventProperties extends Record<string, unknown> {
   timeSinceLastActiveMs?: number;
   retrieval_enabled?: boolean;
   retrievalEnabled?: boolean;
+  retrieval_selection_method?: string;
+  retrievalSelectionMethod?: string;
+  retrieved_source_count?: number;
+  retrievedSourceCount?: number;
   file_name?: string;
   fileName?: string;
   file_kind?: string;
@@ -211,12 +215,15 @@ export interface BusinessLoopSummary {
   uniqueTaskCount: number;
   taskOpenCount: number;
   firstActionCount: number;
+  oneActionAcceptedFirstTryCount: number;
+  oneActionAcceptedFirstTryRate: number | null;
   reentryStartCount: number;
   reentryUnderstoodCount: number;
   rescueTriggeredCount: number;
   rescueResolvedCount: number;
   taskCompletedCount: number;
   timeToNextMoveMs: MetricDistribution;
+  timeToNextActionMs: MetricDistribution;
   reentryTimeMs: MetricDistribution;
   sourceContextCount: MetricDistribution;
   rescueSuccessRate: number | null;
@@ -234,6 +241,7 @@ export interface BusinessLoopSummary {
   timeToFirstConfirmedActionMs: MetricDistribution;
   reentryToConfirmedActionRate5m: number | null;
   notLikeThisRate: number | null;
+  evidenceBackedActionRate: number | null;
   evidenceClickRate: number | null;
   draftToConfirmConversionRate: number | null;
   destructiveWarningHitRate: number | null;
@@ -250,9 +258,12 @@ export interface RoomBusinessSummary {
   totalEvents: number;
   taskCount: number;
   timeToNextMoveMs: MetricDistribution;
+  timeToNextActionMs: MetricDistribution;
   reentryTimeMs: MetricDistribution;
   rescueSuccessRate: number | null;
   repeatUsageRate: number | null;
+  oneActionAcceptedFirstTryCount: number;
+  oneActionAcceptedFirstTryRate: number | null;
   dominantValuePulseSignal: ValuePulseSignal | null;
   reentryToConfirmedActionRate5m: number | null;
   notLikeThisRate: number | null;
@@ -448,6 +459,14 @@ function propertyString(event: LocalAnalyticsEvent, ...keys: string[]) {
   return undefined;
 }
 
+function propertyBoolean(event: LocalAnalyticsEvent, ...keys: string[]) {
+  for (const key of keys) {
+    const value = event.properties[key];
+    if (typeof value === 'boolean') return value;
+  }
+  return undefined;
+}
+
 function countReentryConfirmationsWithin(events: LocalAnalyticsEvent[], windowMs: number) {
   const sorted = [...events].sort((left, right) => left.timestamp - right.timestamp);
   const reentryEvents = sorted.filter(
@@ -482,6 +501,10 @@ function collectTaskIds(events: LocalAnalyticsEvent[]) {
 export function buildBusinessLoopSummary(events: LocalAnalyticsEvent[]): BusinessLoopSummary {
   const taskOpenedDurations = pairDurations(events, 'task_opened', 'first_action_selected');
   const confirmedActionDurations = pairDurations(events, 'task_opened', 'step_confirmed');
+  const nextActionDurations = events
+    .filter((event) => event.eventName === 'time_to_action_ms')
+    .map((event) => event.properties.ms)
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0);
   const reentryDurations = pairDurations(events, 'reentry_started', 'reentry_understood');
   const reentryConfirmations = countReentryConfirmationsWithin(events, 1000 * 60 * 5);
   const taskIds = collectTaskIds(events);
@@ -503,6 +526,11 @@ export function buildBusinessLoopSummary(events: LocalAnalyticsEvent[]): Busines
   const rescueResolvedCount = countEvents(events, 'rescue_resolved');
   const draftShownCount = countEvents(events, 'step_draft_shown');
   const stepConfirmedCount = countEvents(events, 'step_confirmed');
+  const firstActionCount = countEvents(events, 'first_action_selected');
+  const oneActionAcceptedFirstTryCount = countEvents(events, 'one_action_accepted_first_try');
+  const evidenceBackedActionCount = events.filter(
+    (event) => event.eventName === 'step_confirmed' && propertyBoolean(event, 'retrieval_enabled', 'retrievalEnabled') === true,
+  ).length;
   const notLikeThisCount = countEvents(events, 'step_not_like_this');
   const evidenceClickCount = countEvents(events, 'step_evidence_clicked');
   const destructiveWarningCount = countEvents(events, 'destructive_step_warning_shown');
@@ -512,7 +540,10 @@ export function buildBusinessLoopSummary(events: LocalAnalyticsEvent[]): Busines
     const kind = propertyString(event, 'file_kind', 'fileKind');
     return kind === 'pdf' || kind === 'image';
   });
-  const failedOcrEvents = ocrCandidateEvents.filter((event) => propertyString(event, 'file_status', 'fileStatus') === 'failed');
+  const failedOcrEvents = ocrCandidateEvents.filter((event) => {
+    const status = propertyString(event, 'file_status', 'fileStatus');
+    return status === 'failed' || status === 'failed_extraction' || status === 'unreadable';
+  });
   const garbledOcrEvents = ocrCandidateEvents.filter((event) => propertyString(event, 'failure_reason', 'failureReason') === 'pdf_text_garbled_after_ocr');
   const demoPdfEvents = extractEvents.filter((event) => {
     const kind = propertyString(event, 'file_kind', 'fileKind');
@@ -579,13 +610,18 @@ export function buildBusinessLoopSummary(events: LocalAnalyticsEvent[]): Busines
     totalEvents: events.length,
     uniqueTaskCount: taskIds.size,
     taskOpenCount: events.filter((event) => event.eventName === 'task_opened').length,
-    firstActionCount: events.filter((event) => event.eventName === 'first_action_selected').length,
+    firstActionCount,
+    oneActionAcceptedFirstTryCount,
+    oneActionAcceptedFirstTryRate: firstActionCount > 0
+      ? oneActionAcceptedFirstTryCount / firstActionCount
+      : null,
     reentryStartCount: events.filter((event) => event.eventName === 'reentry_started').length,
     reentryUnderstoodCount: events.filter((event) => event.eventName === 'reentry_understood').length,
     rescueTriggeredCount,
     rescueResolvedCount,
     taskCompletedCount: completedTasks.size,
     timeToNextMoveMs: buildDistribution(taskOpenedDurations),
+    timeToNextActionMs: buildDistribution(nextActionDurations),
     reentryTimeMs: buildDistribution(reentryDurations),
     sourceContextCount: buildDistribution(sourceContextValues),
     rescueSuccessRate: rescueTriggeredCount > 0 ? (rescueResolvedCount / rescueTriggeredCount) * 100 : null,
@@ -605,6 +641,7 @@ export function buildBusinessLoopSummary(events: LocalAnalyticsEvent[]): Busines
     timeToFirstConfirmedActionMs: buildDistribution(confirmedActionDurations),
     reentryToConfirmedActionRate5m: ratio(reentryConfirmations.confirmed, reentryConfirmations.reentryCount),
     notLikeThisRate: ratio(notLikeThisCount, draftShownCount),
+    evidenceBackedActionRate: ratio(evidenceBackedActionCount, stepConfirmedCount),
     evidenceClickRate: ratio(evidenceClickCount, draftShownCount),
     draftToConfirmConversionRate: ratio(stepConfirmedCount, draftShownCount),
     destructiveWarningHitRate: ratio(destructiveConfirmedCount, destructiveWarningCount),
@@ -636,9 +673,12 @@ export function buildBusinessLoopSummaryByRoom(events: LocalAnalyticsEvent[]): R
         totalEvents: roomEvents.length,
         taskCount: summary.uniqueTaskCount,
         timeToNextMoveMs: summary.timeToNextMoveMs,
+        timeToNextActionMs: summary.timeToNextActionMs,
         reentryTimeMs: summary.reentryTimeMs,
         rescueSuccessRate: summary.rescueSuccessRate,
         repeatUsageRate: summary.repeatUsageRate,
+        oneActionAcceptedFirstTryCount: summary.oneActionAcceptedFirstTryCount,
+        oneActionAcceptedFirstTryRate: summary.oneActionAcceptedFirstTryRate,
         dominantValuePulseSignal: summary.dominantValuePulseSignal,
         reentryToConfirmedActionRate5m: summary.reentryToConfirmedActionRate5m,
         notLikeThisRate: summary.notLikeThisRate,

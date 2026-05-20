@@ -18,7 +18,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="th">
+    // Browser translation/extensions can mutate html lang/dir before React hydrates.
+    <html lang="th" dir="ltr" suppressHydrationWarning>
       <body>
         <main className="container">{children}</main>
       </body>

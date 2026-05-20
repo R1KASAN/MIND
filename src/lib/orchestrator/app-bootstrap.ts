@@ -1,11 +1,15 @@
 import {
   type AppSession,
+  type MemoryDegradationReason,
+  type MemoryMode,
   type RoomScenarioType,
   type RoomWorkspace,
   ensureDemoRooms,
+  getReadOnlyWorkspaceSnapshot,
   getRoomWorkspace,
   getSession,
   hydrateRoomSessionFromRecord,
+  inspectStoredMemoryState,
   normalizeSession,
 } from '@/lib/store/idb';
 
@@ -33,6 +37,13 @@ interface LoadBootstrapWorkspaceOptions {
   scenarioId: RoomScenarioType;
 }
 
+export interface SafeBootstrapWorkspace {
+  workspace: RoomWorkspace;
+  storedSession: AppSession;
+  memoryMode: MemoryMode;
+  memoryDegradationReason?: MemoryDegradationReason;
+}
+
 export function parseBootstrapFlags(searchParams: URLSearchParams | null, nodeEnv = process.env.NODE_ENV): BootstrapFlags {
   const demoMode = searchParams?.get('demo');
 
@@ -43,7 +54,7 @@ export function parseBootstrapFlags(searchParams: URLSearchParams | null, nodeEn
     scenarioId: searchParams?.get('scenario') === 'sales'
       ? 'sales_inquiry_demo_request'
       : 'client_project_restart',
-    allowAiDebug: nodeEnv !== 'production' || searchParams?.get('debug') === 'ai',
+    allowAiDebug: searchParams?.get('debug') === 'ai',
     showAiOpsDebug: searchParams?.get('debug') === 'ai',
     allowObservationCapture: searchParams?.get('observe') === '1',
     showObservationCapture: searchParams?.get('observe') === '1',
@@ -133,6 +144,35 @@ export async function loadBootstrapWorkspace({
     ? hydrateRoomSessionFromRecord(activeRoom.session, activeRoom)
     : await getSession();
   return { workspace, storedSession };
+}
+
+export async function loadSafeBootstrapWorkspace(options: LoadBootstrapWorkspaceOptions): Promise<SafeBootstrapWorkspace> {
+  const memory = await inspectStoredMemoryState();
+  if (memory.mode === 'normal') {
+    const loaded = await loadBootstrapWorkspace(options);
+    return {
+      ...loaded,
+      memoryMode: 'normal',
+    };
+  }
+
+  const workspace = await getReadOnlyWorkspaceSnapshot();
+  const activeRoom = workspace.rooms.find((room) => room.id === workspace.activeRoomId);
+  const storedSession = activeRoom
+    ? hydrateRoomSessionFromRecord(activeRoom.session, activeRoom)
+    : workspace.rooms[0]?.session ?? normalizeSession({
+      lastActive: Date.now(),
+      uiRoute: 'DUMP_ENTRY',
+      notThisCount: 0,
+      currentActionId: null,
+    });
+
+  return {
+    workspace,
+    storedSession,
+    memoryMode: 'read_only_degraded',
+    memoryDegradationReason: memory.reason,
+  };
 }
 
 export function startAiHealthPolling(

@@ -1,9 +1,19 @@
+import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { Action, TaskContext } from '../store/idb';
 import { composeRoomSourceText, type RoomSourceFile } from '../room';
-import { requestIntake, requestRescue, SynthesisFailure } from './task-events';
+import { clearRoomMemoryData, getRoomMemoryDb, getRoomMemorySnapshot } from '../store/room-memory-db';
+import {
+  recordCompletedCycleInRoomMemory,
+  recordTaskSourcesInRoomMemory,
+  requestAction,
+  requestIntake,
+  requestRescue,
+  SynthesisFailure,
+  runIntakeActionFlow,
+} from './task-events';
 
 function makeTask(): TaskContext {
   return {
@@ -127,6 +137,45 @@ test('requestRescue retries once on 503 and returns the recovered rescue payload
   }
 });
 
+test('requestRescue fallback appends blocker_updated with fallback diagnosis', async () => {
+  const originalFetch = global.fetch;
+  const originalMaxAttempts = process.env.MIND_RESCUE_RETRY_MAX_ATTEMPTS;
+
+  process.env.MIND_RESCUE_RETRY_MAX_ATTEMPTS = '1';
+  await clearRoomMemoryData();
+
+  global.fetch = async () => new Response(JSON.stringify({
+    ok: false,
+    error: {
+      reason: 'request_timeout',
+      message: 'AI rescue ไม่สำเร็จ (503)',
+      retryable: true,
+    },
+  }), {
+    status: 503,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  try {
+    const rescue = await requestRescue(makeTask(), makeAction(), 0);
+    const snapshot = await getRoomMemorySnapshot('task-1');
+    const events = await getRoomMemoryDb().roomEvents.where('roomId').equals('task-1').toArray();
+
+    assert.equal(rescue.diagnosis.primaryReason, 'unknown');
+    assert.equal(snapshot?.latestRescue?.reason, 'unknown');
+    assert.deepEqual(snapshot?.currentBlockers, ['unknown']);
+    assert.ok(events.some((event) => event.type === 'rescue_created' && event.sourceOperationId === 'rescue:fallback'));
+    assert.ok(events.some((event) => event.type === 'blocker_updated' && event.sourceOperationId === 'rescue:fallback'));
+    assert.ok(events.some((event) => event.type === 'rescue_created' && event.intent?.kind === 'ai_created_rescue'));
+    assert.equal(snapshot?.cognitiveState?.driftWarnings.length, 2);
+  } finally {
+    global.fetch = originalFetch;
+    await clearRoomMemoryData();
+    if (originalMaxAttempts === undefined) delete process.env.MIND_RESCUE_RETRY_MAX_ATTEMPTS;
+    else process.env.MIND_RESCUE_RETRY_MAX_ATTEMPTS = originalMaxAttempts;
+  }
+});
+
 test('requestIntake omits file context when sourceText is the canonical merged room text', async () => {
   const originalFetch = global.fetch;
   const file: RoomSourceFile = {
@@ -165,10 +214,214 @@ test('requestIntake omits file context when sourceText is the canonical merged r
     assert.deepEqual(capturedBody, {
       task: {
         sourceText: task.sourceText,
+        workflowType: 'client_resume',
       },
     });
   } finally {
     global.fetch = originalFetch;
+  }
+});
+
+test('requestIntake appends source_added events for live room sources', async () => {
+  const originalFetch = global.fetch;
+  const file: RoomSourceFile = {
+    id: 'file-1',
+    name: 'brief.pdf',
+    kind: 'pdf',
+    mimeType: 'application/pdf',
+    size: 1200,
+    status: 'ready',
+    createdAt: 1,
+    extractedText: 'Phase 2 budget and deadline notes',
+  };
+  const task: TaskContext = {
+    ...makeTask(),
+    sourceText: 'Manual note about the client scope',
+    sourceFiles: [file],
+  };
+
+  await clearRoomMemoryData();
+  global.fetch = async () => new Response(JSON.stringify(makeIntakeResponse()), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  try {
+    await requestIntake(task);
+    const events = await getRoomMemoryDb().roomEvents.where('roomId').equals('task-1').toArray();
+    const sourceEvents = events.filter((event) => event.type === 'source_added');
+
+    assert.ok(sourceEvents.some((event) => event.refs.some((ref) => ref.id === 'manual:task-1')));
+    assert.ok(sourceEvents.some((event) => event.refs.some((ref) => ref.id === 'file:file-1')));
+    assert.equal(sourceEvents.every((event) => event.actor === 'system'), true);
+    assert.equal(sourceEvents.every((event) => event.intent?.kind === 'context_entered'), true);
+    assert.ok(events.some((event) => event.type === 'blocker_updated' && event.intent?.kind === 'ai_detected_blocker'));
+  } finally {
+    global.fetch = originalFetch;
+    await clearRoomMemoryData();
+  }
+});
+
+test('recordTaskSourcesInRoomMemory appends ready file source after extraction', async () => {
+  const file: RoomSourceFile = {
+    id: 'client-note',
+    name: 'client-note.md',
+    kind: 'text',
+    mimeType: 'text/markdown',
+    size: 128,
+    status: 'ready',
+    createdAt: 1,
+    extractedText: 'Client needs a reply about scope and timeline.',
+  };
+  const task: TaskContext = {
+    ...makeTask(),
+    roomId: 'room-file-extraction',
+    sourceText: 'Manual room note',
+    sourceFiles: [file],
+  };
+
+  await clearRoomMemoryData();
+  try {
+    const refs = await recordTaskSourcesInRoomMemory(task, 'file_extraction');
+    const events = await getRoomMemoryDb().roomEvents.where('roomId').equals('room-file-extraction').toArray();
+    const sourceEvent = events.find((event) => (
+      event.type === 'source_added' &&
+      event.sourceOperationId === 'file_extraction' &&
+      event.refs.some((ref) => ref.id === 'file:client-note')
+    ));
+
+    assert.ok(refs.some((ref) => ref.id === 'file:client-note'));
+    assert.ok(sourceEvent);
+    assert.equal(sourceEvent?.actor, 'system');
+    assert.equal(sourceEvent?.intent?.kind, 'context_entered');
+  } finally {
+    await clearRoomMemoryData();
+  }
+});
+
+test('recordCompletedCycleInRoomMemory appends summary and plan events for Room history', async () => {
+  const task: TaskContext = {
+    ...makeTask(),
+    roomId: 'room-complete',
+    lastSynthesis: {
+      workflow_type: 'client_resume',
+      requires_clarification: false,
+      situation_summary: 'งานรอบนี้ขยับจากบริบทเดิมและมีจุดเริ่มรอบถัดไป',
+      recommended_action: {
+        title: 'เติมสิ่งที่ขาด แล้วเริ่มงานจากก้าวเล็กที่สุด',
+        rationale: 'ลดภาระก่อนกลับไปทำงานต่อ',
+        micro_steps: ['เช็กพลัง', 'เลือกก้าวเล็ก', 'จด checkpoint'],
+      },
+      alternative_actions: [],
+      detected_blockers: [],
+    },
+    currentPlan: {
+      actionTitle: 'เติมสิ่งที่ขาด แล้วเริ่มงานจากก้าวเล็กที่สุด',
+      successSignal: 'รู้ก้าวแรกของรอบถัดไป',
+      steps: [
+        { id: 'step-1', text: 'เช็กพลัง' },
+        { id: 'step-2', text: 'เลือกก้าวเล็ก' },
+        { id: 'step-3', text: 'จด checkpoint' },
+      ],
+    },
+  };
+
+  await clearRoomMemoryData();
+  try {
+    await recordCompletedCycleInRoomMemory(task);
+    const snapshot = await getRoomMemorySnapshot('room-complete');
+    const events = await getRoomMemoryDb().roomEvents.where('roomId').equals('room-complete').toArray();
+
+    assert.equal(snapshot?.currentSummary, 'งานรอบนี้ขยับจากบริบทเดิมและมีจุดเริ่มรอบถัดไป');
+    assert.equal(snapshot?.currentPlan?.actionTitle, 'เติมสิ่งที่ขาด แล้วเริ่มงานจากก้าวเล็กที่สุด');
+    assert.equal(snapshot?.currentPlan?.steps.length, 3);
+    assert.ok(events.some((event) => event.type === 'summary_updated' && event.sourceOperationId === 'cycle_completed'));
+    assert.ok(events.some((event) => event.type === 'plan_updated' && event.sourceOperationId === 'cycle_completed'));
+  } finally {
+    await clearRoomMemoryData();
+  }
+});
+
+test('requestAction sends retrieved evidenceContext to the action route', async () => {
+  const originalFetch = global.fetch;
+  const task: TaskContext = {
+    ...makeTask(),
+    roomId: 'room-action',
+    sourceText: 'Client asks for deadline and scope confirmation.',
+    sourceFiles: [
+      {
+        id: 'scope-brief',
+        name: 'scope-brief.txt',
+        kind: 'text',
+        mimeType: 'text/plain',
+        size: 120,
+        status: 'ready',
+        createdAt: 1,
+        extractedText: 'Client deadline is Friday and scope is limited to CRM automation.',
+      },
+    ],
+    taskFrame: {
+      objective: 'Reply with deadline and scope confirmation',
+      stage: 'awaiting_reply',
+      stakeholders: ['client'],
+    },
+    taskShape: {
+      deliverableType: 'reply',
+      immediateNeed: 'send_reply_now',
+      missingInputs: [],
+      workContext: 'Client needs deadline and scope confirmation.',
+    },
+    blockerSignals: ['deadline_unclear'],
+  };
+  let capturedBody: Record<string, unknown> | null = null;
+
+  await clearRoomMemoryData();
+  global.fetch = async (_input, init) => {
+    capturedBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+    return new Response(JSON.stringify({
+      chosenAction: {
+        title: 'Confirm Friday deadline and CRM scope',
+        rationale: 'This directly answers the client blocker.',
+        successSignal: 'Client has confirmed scope and deadline.',
+      },
+      alternatives: [],
+      whyThisNow: 'The client is waiting for a concrete confirmation.',
+      replyDraft: 'I can confirm the Friday deadline and CRM automation scope.',
+      situationSummary: 'Client needs deadline and scope confirmation.',
+      meta: {
+        model: 'qwen2.5:3b',
+        usedRoomFiles: ['scope-brief.txt'],
+        repairUsed: false,
+      },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    const result = await requestAction({
+      task,
+      preferredCandidate: {
+        title: 'Confirm Friday deadline and CRM scope',
+        rationale: 'deadline scope CRM automation',
+        kind: 'reply_first',
+      },
+    });
+    const evidenceContext = (capturedBody as { evidenceContext?: unknown })?.evidenceContext as {
+      selectionMethod?: string;
+      evidenceChips?: Array<{ sourceId?: string }>;
+      summaryText?: string;
+    } | undefined;
+
+    assert.equal(result.actionResponse.chosenAction.title, 'Confirm Friday deadline and CRM scope');
+    assert.equal(result.evidenceContext.selectionMethod, 'retrieval');
+    assert.equal(evidenceContext?.selectionMethod, 'retrieval');
+    assert.ok(evidenceContext?.evidenceChips?.some((chip) => chip.sourceId === 'file:scope-brief'));
+    assert.match(evidenceContext?.summaryText ?? '', /scope-brief\.txt/);
+  } finally {
+    global.fetch = originalFetch;
+    await clearRoomMemoryData();
   }
 });
 
@@ -214,6 +467,7 @@ test('requestIntake preserves extracted file context when sourceText is not a ca
         sourceText: task.sourceText,
         extractedText,
         sourceFiles: [file],
+        workflowType: 'client_resume',
       },
     });
     assert.notEqual(task.sourceText, composeRoomSourceText('', extractedText, [file]));
@@ -262,6 +516,7 @@ test('requestIntake does not drop file context when sourceText only mentions fil
       task: {
         sourceText: task.sourceText,
         sourceFiles: [file],
+        workflowType: 'client_resume',
       },
     });
   } finally {
@@ -375,6 +630,75 @@ test('requestRescue does not retry invalid rescue input failures', async () => {
       (error: unknown) => error instanceof SynthesisFailure,
     );
     assert.equal(fetchCount, 1);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('runIntakeActionFlow bypasses clarification if a clarification answer already exists in pendingInputs', async () => {
+  const originalFetch = global.fetch;
+  const task: TaskContext = {
+    ...makeTask(),
+    pendingInputs: [
+      {
+        id: 'input-1',
+        kind: 'clarification',
+        question: 'Are you sure?',
+        answer: 'Yes',
+        createdAt: 1,
+      },
+    ],
+  };
+
+  let intakeMockCalled = false;
+  let actionMockCalled = false;
+
+  global.fetch = async (url) => {
+    const urlString = String(url);
+    if (urlString.includes('/api/ai/intake')) {
+      intakeMockCalled = true;
+      return new Response(
+        JSON.stringify({
+          ...makeIntakeResponse(),
+          requiresClarification: true, // Mock returns that it still requires clarification
+          clarificationQuestion: 'Need even more info',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (urlString.includes('/api/ai/action')) {
+      actionMockCalled = true;
+      return new Response(
+        JSON.stringify({
+          chosenAction: {
+            title: 'Mocked Action',
+            rationale: 'Bypassed clarification successfully',
+            successSignal: 'Done',
+          },
+          alternatives: [],
+          whyThisNow: 'Test bypass',
+          replyDraft: '',
+          situationSummary: 'Bypassed clarification',
+          meta: {
+            model: 'qwen2.5:3b',
+            usedRoomFiles: [],
+            repairUsed: false,
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    return new Response(JSON.stringify({}), { status: 404 });
+  };
+
+  try {
+    const result = await runIntakeActionFlow(task);
+    assert.equal(intakeMockCalled, true);
+    assert.equal(actionMockCalled, true);
+    assert.equal(result.kind, 'action');
+    if (result.kind === 'action') {
+      assert.equal(result.actionResponse.chosenAction.title, 'Mocked Action');
+    }
   } finally {
     global.fetch = originalFetch;
   }
