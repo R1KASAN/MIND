@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { reportClientAsyncError } from '@/lib/orchestrator/async-error';
 
 import type { AiSynthesisResponse } from '@/lib/ai/schema';
 import { hasResumableTask } from '@/lib/orchestrator/task-machine';
@@ -115,7 +116,7 @@ export function useRoomActions({
         resetRoomInteractionState();
         await hydrateSessionState(normalizeSession(nextSession));
         await refreshRooms();
-      })();
+      })().catch((error) => reportClientAsyncError("[MIND] Hotkey room switch", error));
     };
 
     window.addEventListener('keydown', handleRoomSwitchHotkeys);

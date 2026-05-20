@@ -70,6 +70,7 @@ import {
 } from '@/lib/value-pulse';
 import { recordTaskSourcesInRoomMemory } from '@/lib/orchestrator/task-events';
 import { markRoomMemoryRefDeleted } from '@/lib/store/room-memory-db';
+import { reportClientAsyncError } from '@/lib/orchestrator/async-error';
 
 import { BrainDumpInput } from '@/components/BrainDump/Input';
 import { ManualFallback } from '@/components/BrainDump/Fallback';
@@ -398,10 +399,12 @@ export default function StateMachinePage() {
 
   // T017: Sync pin count when action/status changes
   useEffect(() => {
-    getActions().then((acts) => {
-      const count = acts.filter((a) => a.isPinned && a.state !== 'ARCHIVED').length;
-      setPinnedCountLocal(count);
-    });
+    getActions()
+      .then((acts) => {
+        const count = acts.filter((a) => a.isPinned && a.state !== 'ARCHIVED').length;
+        setPinnedCountLocal(count);
+      })
+      .catch((error) => reportClientAsyncError("[MIND] Sync pin count", error));
   }, [session?.uiRoute, currentActionState?.isPinned]);
 
   useEffect(() => {
@@ -573,7 +576,7 @@ export default function StateMachinePage() {
       }
     }
 
-    void load();
+    void load().catch((error) => reportClientAsyncError("[MIND] On load bootstrap data", error));
 
     return () => {
       cancelled = true;
@@ -651,7 +654,9 @@ export default function StateMachinePage() {
     if (reentryIsFresh) return;
     const scope = session.uiRoute === 'BOUNCE_BACK' ? 'bounce_back' : 'morning_ritual';
 
-    void controller.loadReentryBrief(scope);
+    void controller.loadReentryBrief(scope).catch((error) =>
+      reportClientAsyncError("[MIND] Load reentry brief", error)
+    );
     // We intentionally key this effect off task/session state instead of the helper identity
     // so dev-time HMR does not trip over callback reinitialization for reentry loading.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -663,7 +668,9 @@ export default function StateMachinePage() {
     if (session.uiRoute !== 'RESCUE') return;
     if (currentRescueState) return;
 
-    void controller.handleEnterRescue({ preserveRefineFeedback: true });
+    void controller.handleEnterRescue({ preserveRefineFeedback: true }).catch((error) =>
+      reportClientAsyncError("[MIND] Enter rescue", error)
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.uiRoute, currentRescueState, isRescueLoading]);
 
@@ -768,9 +775,11 @@ export default function StateMachinePage() {
   useEffect(() => {
     let cancelled = false;
     setRankedSidebarRooms([]);
-    void selectRankedResumeRooms({ rooms }).then((ranked) => {
-      if (!cancelled) setRankedSidebarRooms(ranked);
-    });
+    void selectRankedResumeRooms({ rooms })
+      .then((ranked) => {
+        if (!cancelled) setRankedSidebarRooms(ranked);
+      })
+      .catch((error) => reportClientAsyncError("[MIND] Select ranked resume rooms", error));
 
     return () => {
       cancelled = true;
@@ -785,9 +794,11 @@ export default function StateMachinePage() {
 
     let cancelled = false;
     setResumeHomeRoom(null);
-    void selectResumeRoom({ rooms }).then((candidate) => {
-      if (!cancelled) setResumeHomeRoom(candidate);
-    });
+    void selectResumeRoom({ rooms })
+      .then((candidate) => {
+        if (!cancelled) setResumeHomeRoom(candidate);
+      })
+      .catch((error) => reportClientAsyncError("[MIND] Select resume room candidate", error));
 
     return () => {
       cancelled = true;
@@ -830,9 +841,11 @@ export default function StateMachinePage() {
 
     let cancelled = false;
     setActiveRoomReentry(null);
-    void selectActiveRoomReentry({ room: activeRoom }).then((state) => {
-      if (!cancelled) setActiveRoomReentry(state);
-    });
+    void selectActiveRoomReentry({ room: activeRoom })
+      .then((state) => {
+        if (!cancelled) setActiveRoomReentry(state);
+      })
+      .catch((error) => reportClientAsyncError("[MIND] Select active room reentry", error));
 
     return () => {
       cancelled = true;
@@ -851,7 +864,7 @@ export default function StateMachinePage() {
     void (async () => {
       await hydrateSessionState(recoveredSession);
       await persistSessionWithRooms(recoveredSession);
-    })();
+    })().catch((error) => reportClientAsyncError("[MIND] Hydrate and persist session", error));
   }, [
     activeRoom,
     forceInputEditor,

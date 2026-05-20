@@ -1,11 +1,36 @@
 import { access } from 'node:fs/promises';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
+import { createServer } from 'node:net';
 
 const DEFAULT_PORT = Number(process.env.MIND_DEMO_BROWSER_PORT || 3205) || 3205;
 
 async function ensureBuiltApp() {
   await access('.next/BUILD_ID');
+}
+
+async function checkHealthyServer(baseUrl: string): Promise<boolean> {
+  try {
+    const response = await fetch(`${baseUrl}/api/ai/health`, { signal: AbortSignal.timeout(2000) });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = createServer();
+    server.once('error', () => {
+      resolve(false);
+    });
+    server.once('listening', () => {
+      server.close(() => {
+        resolve(true);
+      });
+    });
+    server.listen(port, '127.0.0.1');
+  });
 }
 
 async function waitForServer(baseUrl: string) {
@@ -75,17 +100,55 @@ async function main() {
     return;
   }
 
+  const baseUrl = `http://127.0.0.1:${DEFAULT_PORT}`;
+
+  // 1. Check if healthy MIND server is already running on the chosen port
+  console.log(`[SMOKE] Checking if healthy server already running on ${baseUrl}...`);
+  const isHealthy = await checkHealthyServer(baseUrl);
+
+  if (isHealthy) {
+    console.log(JSON.stringify({
+      smoke: 'demo-browser',
+      port: DEFAULT_PORT,
+      baseUrl,
+      reused: true,
+      status: 'healthy'
+    }, null, 2));
+
+    const exitCode = await runBrowserVerify(baseUrl);
+    if (exitCode !== 0) process.exitCode = exitCode;
+    return;
+  }
+
+  // 2. If not healthy, check if the port is busy/occupied by a different process
+  const isAvailable = await isPortAvailable(DEFAULT_PORT);
+  if (!isAvailable) {
+    throw new Error(
+      `Port ${DEFAULT_PORT} is currently occupied by a non-MIND process or an unhealthy server. ` +
+      `Please free port ${DEFAULT_PORT} or specify a different port via MIND_DEMO_BROWSER_PORT.`
+    );
+  }
+
+  // 3. Port is free, build and start new server
   await ensureBuiltApp();
 
-  const baseUrl = `http://127.0.0.1:${DEFAULT_PORT}`;
-  console.log(JSON.stringify({ smoke: 'demo-browser', baseUrl }, null, 2));
+  console.log(JSON.stringify({
+    smoke: 'demo-browser',
+    port: DEFAULT_PORT,
+    baseUrl,
+    reused: false,
+    status: 'starting'
+  }, null, 2));
 
   const server = startServer(DEFAULT_PORT);
+  console.log(`[SMOKE] Started Next.js server on port ${DEFAULT_PORT} with owned PID ${server.pid}`);
+
   try {
     await waitForServer(baseUrl);
     const exitCode = await runBrowserVerify(baseUrl);
     if (exitCode !== 0) process.exitCode = exitCode;
   } finally {
+    console.log(`[SMOKE] Stopping owned server process (PID ${server.pid})...`);
     await stopServer(server);
   }
 }
