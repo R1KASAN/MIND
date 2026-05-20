@@ -316,6 +316,59 @@ test('buildScaffoldSuccessArtifacts updates payload and step checkpoint', () => 
   assert.equal(result.nextTask.currentPlan?.steps[1].text, 'แก้แค่บรรทัดแรกของ reply');
 });
 
+test('buildScaffoldSuccessArtifacts keeps revised index within full refined scaffold plan', () => {
+  const task = makeTask({
+    lifecycleState: 'in_scaffold',
+    currentStepIndex: 1,
+  });
+  const action: Action = {
+    id: 'action-1',
+    createdAt: 1,
+    title: 'ตอบลูกค้า',
+    rationale: 'คุยให้ชัดก่อน',
+    microSteps: ['อ่านแชต', 'ร่าง reply', 'ส่ง reply'],
+    isPinned: false,
+    state: 'IN_PROGRESS',
+    workflowType: 'client_response',
+  };
+  const payload: AiSynthesisResponse = {
+    workflow_type: 'client_response',
+    requires_clarification: false,
+    situation_summary: 'ลูกค้ารอคำตอบ',
+    reply_draft: 'draft',
+    recommended_action: {
+      title: 'ตอบลูกค้า',
+      rationale: 'คุยให้ชัดก่อน',
+      micro_steps: ['อ่านแชต', 'ร่าง reply', 'ส่ง reply'],
+    },
+    alternative_actions: [],
+    detected_blockers: [],
+  };
+  const scaffold: AiScaffoldResponse = {
+    planTitle: 'ตอบลูกค้าด้วยลำดับที่เล็กลง',
+    steps: [
+      { id: 'step-1', text: 'เปิดแชต ABC Corp ล่าสุด' },
+      { id: 'step-2', text: 'แยกเรื่อง prod incident ออกจาก Dashboard/payment API' },
+      { id: 'step-3', text: 'ร่างข้อความสถานะที่ยังไม่ commit เวลา' },
+      { id: 'step-4', text: 'ตรวจคำตอบสุดท้ายก่อนส่งลูกค้า' },
+    ],
+    shortcutOptions: [],
+    revisedCurrentStepIndex: 3,
+    meta: {
+      model: 'qwen2.5:3b',
+      usedRoomFiles: [],
+      repairUsed: false,
+    },
+  };
+
+  const result = buildScaffoldSuccessArtifacts({ task, action, payload, scaffold });
+
+  assert.equal(result.nextPayload.recommended_action.micro_steps.length, 3);
+  assert.equal(result.nextTask.currentPlan?.steps.length, 4);
+  assert.equal(result.nextTask.currentStepIndex, 3);
+  assert.equal(result.nextTask.currentPlan?.steps[3]?.text, 'ตรวจคำตอบสุดท้ายก่อนส่งลูกค้า');
+});
+
 test('buildReentryTaskArtifacts stores a reentry save point brief', () => {
   const task = makeTask({
     lifecycleState: 'stalled',

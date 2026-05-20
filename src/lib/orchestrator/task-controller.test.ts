@@ -46,6 +46,7 @@ function makePayload(overrides: Partial<AiSynthesisResponse> = {}): AiSynthesisR
         'ถามลูกค้าว่าต้องการให้เริ่มจากจุดไหน',
         'ร่างข้อความตอบกลับเพื่อขอ clarification',
       ],
+      micro_steps_source: 'ai',
     },
     alternative_actions: [],
     detected_blockers: [],
@@ -102,7 +103,7 @@ test('mergeTaskConstraints persists reply-first and patches time/energy constrai
   assert.equal(result.nextTask.constraints?.energyLevel, 'low');
 });
 
-test('handleMakeSmaller routes to rescue with no_change diagnostics after structural retry still changes nothing', async () => {
+test('handleMakeSmaller stays on SCAFFOLD with no_change feedback after structural retry still changes nothing', async () => {
   const payload = makePayload();
   const task = makeTask({
     lifecycleState: 'in_scaffold',
@@ -161,29 +162,9 @@ test('handleMakeSmaller routes to rescue with no_change diagnostics after struct
       });
     }
 
+
     if (url.includes('/api/ai/rescue')) {
-      return new Response(JSON.stringify({
-        diagnosis: {
-          primaryReason: 'too_big',
-          explanation: 'ก้าวนี้ยังใหญ่เกินกว่าจะย่อยต่อจากถ้อยคำเดิมได้',
-        },
-        rescuePlan: {
-          mode: 'shrink',
-          steps: [
-            'กลับไปทำแค่ส่วนเล็กที่สุดของ step นี้ก่อน',
-            'ถ้ายังติดอยู่ ให้เลือกข้อมูลชิ้นเดียวที่ต้องดูต่อ',
-          ],
-        },
-        suggestedMessage: null,
-        meta: {
-          model: 'qwen2.5:3b',
-          usedRoomFiles: [],
-          repairUsed: false,
-        },
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      throw new Error('rescue must NOT be called automatically on no_change — user must explicitly click "ฉันติขัด"');
     }
 
     throw new Error(`unexpected fetch call: ${url}`);
@@ -231,7 +212,7 @@ test('handleMakeSmaller routes to rescue with no_change diagnostics after struct
 
     await controller.handleMakeSmaller();
 
-    assert.deepEqual(refineLoadingStates, [true, false, false]);
+    assert.deepEqual(refineLoadingStates, [true, false]);
     assert.equal(scaffoldCalls, 2);
     assert.equal(feedback?.message, SCAFFOLD_REFINE_NO_CHANGE_COPY);
     assert.equal(feedback?.reason, 'no_change');
@@ -242,7 +223,7 @@ test('handleMakeSmaller routes to rescue with no_change diagnostics after struct
     assert.equal(noChangeEvent?.properties?.initial_scaffold_model, 'qwen2.5:3b');
     assert.equal(noChangeEvent?.properties?.structural_retry_used, true);
     assert.equal(noChangeEvent?.properties?.structural_retry_model, 'qwen2.5:3b');
-    assert.equal(latestSession?.uiRoute, 'RESCUE');
+    assert.equal(latestSession?.uiRoute, 'SCAFFOLD');
     assert.equal(
       currentPayload?.recommended_action.micro_steps[0],
       'สรุปสถานะงานที่เราทำแล้ว',
@@ -450,6 +431,7 @@ test('handleMakeSmaller accepts a richer scaffold when downstream steps become m
         'ร่าง timeline รอบแรก',
         'ตีราคาแบบคร่าว ๆ',
       ],
+      micro_steps_source: 'ai',
     },
   });
   const task = makeTask({
@@ -658,6 +640,78 @@ test('handleCompleteScaffold enters completion summary on the last step', async 
   assert.equal(latestSession?.task?.assistantMode, 'scaffold_completion');
   assert.equal(latestSession?.task?.currentStepIndex, 2);
   assert.equal(latestSession?.task?.currentPlan?.successSignal, 'สรุปและส่ง clarification ได้ครบ');
+});
+
+test('handleCompleteScaffold completes against the full refined scaffold plan, not truncated micro steps', async () => {
+  const payload = makePayload({
+    recommended_action: {
+      title: 'ตอบลูกค้าด้วยลำดับที่เล็กลง',
+      rationale: 'ลดความเสี่ยงก่อนตอบ',
+      micro_steps: [
+        'เปิดแชต ABC Corp ล่าสุด',
+        'แยกเรื่อง prod incident ออกจาก Dashboard/payment API',
+        'ร่างข้อความสถานะที่ยังไม่ commit เวลา',
+      ],
+      micro_steps_source: 'ai',
+    },
+  });
+  const task = makeTask({
+    lifecycleState: 'in_scaffold',
+    assistantMode: 'scaffold_refinement',
+    currentActionId: 'action-1',
+    currentStepIndex: 3,
+    lastSynthesis: payload,
+    currentPlan: {
+      actionTitle: payload.recommended_action.title,
+      steps: [
+        { id: 'step-1', text: 'เปิดแชต ABC Corp ล่าสุด' },
+        { id: 'step-2', text: 'แยกเรื่อง prod incident ออกจาก Dashboard/payment API' },
+        { id: 'step-3', text: 'ร่างข้อความสถานะที่ยังไม่ commit เวลา' },
+        { id: 'step-4', text: 'ตรวจคำตอบสุดท้ายก่อนส่งลูกค้า' },
+      ],
+    },
+  });
+  const session = makeSession(task, payload);
+  const sessionRef = { current: session };
+  let latestSession: AppSession | null = session;
+
+  const controller = createTaskController({
+    session,
+    sessionRef,
+    currentPayload: payload,
+    currentActionState: makeAction(),
+    clarificationPrompt: '',
+    dumpStartTime: null,
+    aiModel: 'qwen2.5:3b',
+    setSession: (value) => {
+      latestSession = value;
+    },
+    setCurrentPayload: () => undefined,
+    setCurrentActionState: () => undefined,
+    setManualFallbackSuggestedActions: () => undefined,
+    setManualFallbackRetryable: () => undefined,
+    setClarificationPrompt: () => undefined,
+    setCurrentWhyThisNow: () => undefined,
+    setCurrentRescueState: () => undefined,
+    setIsRescueLoading: () => undefined,
+    setIsNegotiatingAction: () => undefined,
+    setIsReentryLoading: () => undefined,
+    isScaffoldRefining: false,
+    setIsScaffoldRefining: () => undefined,
+    setScaffoldRefineFeedback: () => undefined,
+    setDumpStartTime: () => undefined,
+    recordAiOpsEntry: () => undefined,
+    persistSession: async () => undefined,
+    persistActionSave: async () => undefined,
+    persistActionUpdate: async () => undefined,
+  });
+
+  await controller.handleCompleteScaffold();
+
+  assert.equal(latestSession?.task?.assistantMode, 'scaffold_completion');
+  assert.equal(latestSession?.task?.currentStepIndex, 3);
+  assert.equal(latestSession?.task?.currentPlan?.steps.length, 4);
+  assert.equal(latestSession?.task?.currentPlan?.steps[3]?.provenance?.confirmedAt !== undefined, true);
 });
 
 test('handleStartNewFromCompletedScaffold soft-resets the Room after marking the action completed', async () => {

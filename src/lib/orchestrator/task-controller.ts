@@ -817,11 +817,9 @@ export function createTaskController(bindings: TaskControllerBindings) {
 
         setScaffoldRefineFeedback(feedback);
         trackEvent('make_smaller_no_change', baseEventProperties);
-        await handleEnterRescue({
-          preserveRefineFeedback: true,
-          seedReason: fallback.rescueReason,
-          outcomeLabel: 'make_smaller_no_change',
-        });
+        // Stay on SCAFFOLD and show inline feedback — do NOT auto-route to Rescue.
+        // The user can explicitly click "ฉันติดขัด" if they want Rescue diagnosis.
+        // Auto-routing caused an unintended /api/ai/rescue call on every no_change result.
         return;
       }
 

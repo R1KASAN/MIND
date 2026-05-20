@@ -396,7 +396,7 @@ export function buildScaffoldSuccessArtifacts(input: {
     lastAiOperation: 'scaffold',
     currentStepIndex: Math.min(
       scaffold.revisedCurrentStepIndex,
-      nextPayload.recommended_action.micro_steps.length - 1,
+      currentPlan.steps.length - 1,
     ),
     currentPlan,
     pendingPlan: createDraftPlanFromCurrentPlan(currentPlan, 'scaffold', generatedAt),

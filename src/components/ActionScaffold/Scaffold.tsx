@@ -294,7 +294,7 @@ export function Scaffold({
             disabled={refineLoading}
             onClick={() => { trackEvent('scaffold_completed'); onComplete(); }}
           >
-            เสร็จแล้ว
+            ใช้ก้าวย่อยนี้ต่อ
           </button>
           <div className="scaffold-secondary-actions-group">
             <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
@@ -454,7 +454,7 @@ export function Scaffold({
           disabled={refineLoading}
           onClick={() => { trackEvent('scaffold_completed'); onComplete(); }}
         >
-          เสร็จแล้ว
+          ใช้ก้าวย่อยนี้ต่อ
         </button>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
           <button style={{ flex: '1 1 calc(50% - 0.25rem)' }} disabled={refineLoading} onClick={onMakeSmaller}>แบ่งก้าวนี้ให้เล็กลง</button>
