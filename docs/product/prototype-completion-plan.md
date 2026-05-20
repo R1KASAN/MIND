@@ -111,13 +111,13 @@ Objective:
 
 Checklist:
 
-- [ ] Fresh paste-text intake creates or updates a room and reaches `ONE_ACTION`.
-- [ ] `ใช้ก้าวนี้` confirms the action and enters scaffold.
-- [ ] `ขอก้าวอื่น` can produce an alternate path without a dead end.
-- [ ] `ช่วยแก้ก้าวนี้` or rescue path gives the presenter a recoverable story.
-- [ ] `ย่อยให้เล็กลงอีก` works or is clearly not used in the demo.
-- [ ] Reopening an existing room preserves enough context to continue.
-- [ ] Evidence chips remain visible and clickable after scaffold confirmation.
+- [x] Fresh paste-text intake creates or updates a room and reaches `ONE_ACTION`.
+- [x] `ใช้ก้าวนี้` confirms the action and enters scaffold.
+- [x] `ขอก้าวอื่น` can produce an alternate path without a dead end.
+- [x] `ช่วยแก้ก้าวนี้` or rescue path gives the presenter a recoverable story.
+- [x] `ย่อยให้เล็กลงอีก` works or is clearly not used in the demo.
+- [x] Reopening an existing room preserves enough context to continue.
+- [x] Evidence chips remain visible and clickable after scaffold confirmation.
 
 Fix-now defects:
 
@@ -143,8 +143,8 @@ Checklist:
 - [x] Advanced controls remain visible but visually quieter.
 - [x] Reentry fallback copy says `กลับมาทำต่อ`.
 - [x] Evidence chip click reveals source/provenance detail.
-- [ ] Review remaining visible labels in the demo path for product-builder language.
-- [ ] Check mobile viewport for first-load, evidence, and reentry readability.
+- [x] Review remaining visible labels in the demo path for product-builder language.
+- [x] Check mobile viewport for first-load, evidence, and reentry readability.
 
 Exit criteria:
 
