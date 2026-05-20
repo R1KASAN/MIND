@@ -217,7 +217,7 @@ test('FreePuterClient.runIntake calls Puter first and parses a successful intake
   puterSdk.ai.chat = (async (...args: unknown[]) => {
     chatCalls.push(args);
     return puterMessage(intakeFixture());
-  }) as typeof puterSdk.ai.chat;
+  }) as any;
 
   const response = await new FreePuterClient().runIntake(buildTask());
 
@@ -235,7 +235,7 @@ test('FreePuterClient.runAction calls Puter first and parses a successful action
   puterSdk.ai.chat = (async (...args: unknown[]) => {
     chatCalls.push(args);
     return puterMessage(actionFixture());
-  }) as typeof puterSdk.ai.chat;
+  }) as any;
 
   const response = await new FreePuterClient().runAction(buildTask());
 
@@ -253,7 +253,7 @@ test('FreePuterClient.runRescue calls Puter first and parses a successful rescue
   puterSdk.ai.chat = (async (...args: unknown[]) => {
     chatCalls.push(args);
     return puterMessage(rescueFixture());
-  }) as typeof puterSdk.ai.chat;
+  }) as any;
 
   const response = await new FreePuterClient().runRescue(buildTask());
 
@@ -268,7 +268,7 @@ test('FreePuterClient logs Puter success latency and contract status', async () 
   const infoLogs: string[] = [];
   process.env.PUTER_API_KEY = 'puter-token';
   puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
-  puterSdk.ai.chat = (async () => puterMessage(intakeFixture())) as typeof puterSdk.ai.chat;
+  puterSdk.ai.chat = (async () => puterMessage(intakeFixture())) as any;
   console.info = ((...args: unknown[]) => {
     infoLogs.push(stringifyLogArgs(args));
   }) as typeof console.info;
@@ -298,7 +298,7 @@ test('FreePuterClient honors Puter env overrides for model, timeout, and operati
   puterSdk.ai.chat = (async (...args: unknown[]) => {
     chatCalls.push(args);
     return puterMessage(actionFixture());
-  }) as typeof puterSdk.ai.chat;
+  }) as any;
 
   await new FreePuterClient().runAction(buildTask());
 
@@ -318,7 +318,7 @@ test('FreePuterClient extracts fenced Puter intake JSON without using fallback',
   puterSdk.ai.chat = (async (...args: unknown[]) => {
     chatCalls.push(args);
     return puterMessage(`\`\`\`json\n${JSON.stringify(intakeFixture())}\n\`\`\``);
-  }) as typeof puterSdk.ai.chat;
+  }) as any;
   LocalGemmaClient.prototype.runIntake = (async () => {
     throw new Error('Local Gemma fallback should not run');
   }) as typeof LocalGemmaClient.prototype.runIntake;
@@ -352,7 +352,7 @@ test('FreePuterClient normalizes Puter intake candidate kinds before parsing', a
         kind: 'client_reply',
       },
     ],
-  })) as typeof puterSdk.ai.chat;
+  })) as any;
   LocalGemmaClient.prototype.runIntake = (async () => {
     throw new Error('Local Gemma fallback should not run');
   }) as typeof LocalGemmaClient.prototype.runIntake;
@@ -371,7 +371,7 @@ test('FreePuterClient extracts action JSON surrounded by prose without using fal
   puterSdk.ai.chat = (async (...args: unknown[]) => {
     chatCalls.push(args);
     return puterMessage(`ได้ครับ นี่คือ JSON:\n${JSON.stringify(actionFixture())}\nจบ`);
-  }) as typeof puterSdk.ai.chat;
+  }) as any;
   LocalGemmaClient.prototype.runAction = (async () => {
     throw new Error('Local Gemma fallback should not run');
   }) as typeof LocalGemmaClient.prototype.runAction;
@@ -437,7 +437,7 @@ test('FreePuterClient accepts realistic compact Puter demo JSON for intake and a
   let callCount = 0;
   process.env.PUTER_API_KEY = 'puter-token';
   puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
-  puterSdk.ai.chat = (async () => puterMessage(callCount++ === 0 ? compactIntake : compactAction)) as typeof puterSdk.ai.chat;
+  puterSdk.ai.chat = (async () => puterMessage(callCount++ === 0 ? compactIntake : compactAction)) as any;
   LocalGemmaClient.prototype.runIntake = (async () => {
     throw new Error('Local Gemma fallback should not run');
   }) as typeof LocalGemmaClient.prototype.runIntake;
@@ -461,7 +461,7 @@ test('FreePuterClient raw diagnostics classify fenced JSON when enabled', async 
   process.env.PUTER_API_KEY = 'puter-token';
   process.env.MIND_PUTER_DEBUG_RAW = '1';
   puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
-  puterSdk.ai.chat = (async () => puterMessage(`\`\`\`json\n${JSON.stringify(actionFixture())}\n\`\`\``)) as typeof puterSdk.ai.chat;
+  puterSdk.ai.chat = (async () => puterMessage(`\`\`\`json\n${JSON.stringify(actionFixture())}\n\`\`\``)) as any;
   console.info = ((...args: unknown[]) => {
     infoLogs.push(stringifyLogArgs(args));
   }) as typeof console.info;
@@ -480,7 +480,7 @@ test('FreePuterClient raw diagnostics classify empty Puter output before fallbac
   process.env.PUTER_API_KEY = 'puter-token';
   process.env.MIND_PUTER_DEBUG_RAW = '1';
   puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
-  puterSdk.ai.chat = (async () => puterMessage('')) as typeof puterSdk.ai.chat;
+  puterSdk.ai.chat = (async () => puterMessage('')) as any;
   console.info = ((...args: unknown[]) => {
     infoLogs.push(stringifyLogArgs(args));
   }) as typeof console.info;
@@ -507,7 +507,7 @@ test('FreePuterClient timeout fallback log includes elapsed and timeout metadata
   process.env.MIND_PUTER_TIMEOUT_MS = '5';
   process.env.MIND_PUTER_MODEL = 'gpt-5-nano';
   puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
-  puterSdk.ai.chat = (() => new Promise(() => undefined)) as typeof puterSdk.ai.chat;
+  puterSdk.ai.chat = (() => new Promise(() => undefined)) as any;
   console.warn = ((...args: unknown[]) => {
     warnings.push(stringifyLogArgs(args));
   }) as typeof console.warn;
@@ -540,7 +540,7 @@ test('FreePuterClient falls back to LocalGemmaClient when Puter fails without EN
   puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
   puterSdk.ai.chat = (async () => {
     throw new Error('Puter auth failed');
-  }) as typeof puterSdk.ai.chat;
+  }) as any;
   console.warn = ((...args: unknown[]) => {
     warnings.push(stringifyLogArgs(args));
   }) as typeof console.warn;
@@ -587,7 +587,7 @@ test('FreePuterClient falls back when Puter returns non-JSON output', async () =
   const warnings: string[] = [];
   process.env.PUTER_API_KEY = 'puter-token';
   puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
-  puterSdk.ai.chat = (async () => puterMessage('```json\n{\n```')) as typeof puterSdk.ai.chat;
+  puterSdk.ai.chat = (async () => puterMessage('```json\n{\n```')) as any;
   console.warn = ((...args: unknown[]) => {
     warnings.push(args.map((arg) => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' '));
   }) as typeof console.warn;
@@ -616,7 +616,7 @@ test('FreePuterClient opens a Puter circuit after repeated failures', async () =
   puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
   puterSdk.ai.chat = (async () => {
     throw new Error('Puter auth failed');
-  }) as typeof puterSdk.ai.chat;
+  }) as any;
 
   const localFallbackIntake = (async () => ({
     ...intakeFixture(),
@@ -648,7 +648,7 @@ test('FreePuterClient skips Puter while the circuit is open', async () => {
   puterSdk.ai.chat = (async (...args: unknown[]) => {
     chatCalls.push(args);
     return puterMessage(intakeFixture());
-  }) as typeof puterSdk.ai.chat;
+  }) as any;
 
   const localFallbackIntake = (async () => ({
     ...intakeFixture(),
@@ -681,7 +681,7 @@ test('FreePuterClient allows a Puter probe again after cooldown expires', async 
   puterSdk.ai.chat = (async (...args: unknown[]) => {
     chatCalls.push(args);
     return puterMessage(intakeFixture());
-  }) as typeof puterSdk.ai.chat;
+  }) as any;
 
   const localFallbackIntake = (async () => ({
     ...intakeFixture(),

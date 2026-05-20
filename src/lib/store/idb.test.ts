@@ -145,9 +145,9 @@ test('room records mirror and hydrate primary source preference', () => {
     ...session,
     task: session.task
       ? {
-          ...session.task,
-          sourcePreference: undefined,
-        }
+        ...session.task,
+        sourcePreference: undefined,
+      }
       : undefined,
   });
   const hydrated = hydrateRoomSessionFromRecord(staleSession, room);
@@ -265,6 +265,7 @@ test('normalizeSession turns completed scaffold into a soft Room cycle without r
         title: 'งานนี้เสร็จแล้ว',
         rationale: 'ไม่ต้อง revive task นี้อีก',
         micro_steps: ['step 1', 'step 2', 'step 3'],
+        micro_steps_source: 'ai' as const,
       },
       alternative_actions: [],
       detected_blockers: [],
@@ -300,6 +301,7 @@ test('normalizeSession turns completed scaffold into a soft Room cycle without r
           title: 'งานนี้เสร็จแล้ว',
           rationale: 'ไม่ต้อง revive task นี้อีก',
           micro_steps: ['step 1', 'step 2', 'step 3'],
+          micro_steps_source: 'ai' as const,
         },
         alternative_actions: [],
         detected_blockers: [],
@@ -331,6 +333,7 @@ test('normalizeSession preserves scaffold completion assistant mode during hydra
         title: 'ล็อก requirement ก่อนทำ proposal',
         rationale: 'จะได้ไม่เด้งกลับไปเริ่มจากศูนย์',
         micro_steps: ['รวบ requirement', 'แยก assumption', 'เตรียม timeline'],
+        micro_steps_source: 'ai' as const,
       },
       alternative_actions: [],
       detected_blockers: [],

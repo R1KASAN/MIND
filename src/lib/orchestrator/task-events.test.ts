@@ -311,6 +311,7 @@ test('recordCompletedCycleInRoomMemory appends summary and plan events for Room 
         title: 'เติมสิ่งที่ขาด แล้วเริ่มงานจากก้าวเล็กที่สุด',
         rationale: 'ลดภาระก่อนกลับไปทำงานต่อ',
         micro_steps: ['เช็กพลัง', 'เลือกก้าวเล็ก', 'จด checkpoint'],
+        micro_steps_source: 'ai' as const,
       },
       alternative_actions: [],
       detected_blockers: [],
@@ -408,7 +409,7 @@ test('requestAction sends retrieved evidenceContext to the action route', async 
         kind: 'reply_first',
       },
     });
-    const evidenceContext = (capturedBody as { evidenceContext?: unknown })?.evidenceContext as {
+    const evidenceContext = (capturedBody as any)?.evidenceContext as {
       selectionMethod?: string;
       evidenceChips?: Array<{ sourceId?: string }>;
       summaryText?: string;
@@ -641,9 +642,8 @@ test('runIntakeActionFlow bypasses clarification if a clarification answer alrea
     ...makeTask(),
     pendingInputs: [
       {
-        id: 'input-1',
         kind: 'clarification',
-        question: 'Are you sure?',
+        prompt: 'Are you sure?',
         answer: 'Yes',
         createdAt: 1,
       },

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { AiActionResponse, AiIntakeResponse, AiScaffoldResponse } from '../ai/operations';
+import type { AiSynthesisResponse } from '../ai/schema';
 import type { Action, TaskContext } from '../store/idb';
 import {
   buildActionSuccessArtifacts,
@@ -289,6 +290,7 @@ test('buildScaffoldSuccessArtifacts updates payload and step checkpoint', () => 
       title: 'ตอบลูกค้า',
       rationale: 'คุยให้ชัดก่อน',
       micro_steps: ['อ่านแชต', 'ร่าง reply', 'ส่ง reply'],
+      micro_steps_source: 'ai' as const,
     },
     alternative_actions: [],
     detected_blockers: [],
@@ -340,6 +342,7 @@ test('buildScaffoldSuccessArtifacts keeps revised index within full refined scaf
       title: 'ตอบลูกค้า',
       rationale: 'คุยให้ชัดก่อน',
       micro_steps: ['อ่านแชต', 'ร่าง reply', 'ส่ง reply'],
+      micro_steps_source: 'ai' as const,
     },
     alternative_actions: [],
     detected_blockers: [],
@@ -387,6 +390,7 @@ test('buildReentryTaskArtifacts stores a reentry save point brief', () => {
       },
     ],
     ignoredNoise: ['งานเก่า'],
+    meta: { model: "mock", passType: "primary_pass" as const, durationMs: 100, repairUsed: false, usedRoomFiles: [] }
   };
 
   const result = buildReentryTaskArtifacts(task, reentry);
@@ -450,8 +454,8 @@ test('Phase 2.5: buildReentryTaskArtifacts includes failedFileNames from failed 
       resumeTarget: 'ONE_ACTION' as const,
     }],
     ignoredNoise: [],
-      meta: { model: "mock", passType: "primary_pass", durationMs: 100, repairUsed: false, usedRoomFiles: [] }
-    };
+    meta: { model: "mock", passType: "primary_pass" as const, durationMs: 100, repairUsed: false, usedRoomFiles: [] }
+  };
 
   const result = buildReentryTaskArtifacts(task, reentry);
   const brief = result.nextTask.reentryBrief;
@@ -498,8 +502,8 @@ test('Phase 2.5: buildReentryTaskArtifacts includes usedSourceIds from plan evid
       resumeTarget: 'ONE_ACTION' as const,
     }],
     ignoredNoise: [],
-      meta: { model: "mock", passType: "primary_pass", durationMs: 100, repairUsed: false, usedRoomFiles: [] }
-    };
+    meta: { model: "mock", passType: "primary_pass" as const, durationMs: 100, repairUsed: false, usedRoomFiles: [] }
+  };
 
   const result = buildReentryTaskArtifacts(task, reentry);
   const brief = result.nextTask.reentryBrief;
@@ -523,8 +527,8 @@ test('Phase 2.5: buildReentryTaskArtifacts omits metadata fields when no failed 
       resumeTarget: 'ONE_ACTION' as const,
     }],
     ignoredNoise: [],
-      meta: { model: "mock", passType: "primary_pass", durationMs: 100, repairUsed: false, usedRoomFiles: [] }
-    };
+    meta: { model: "mock", passType: "primary_pass" as const, durationMs: 100, repairUsed: false, usedRoomFiles: [] }
+  };
 
   const result = buildReentryTaskArtifacts(task, reentry);
   const brief = result.nextTask.reentryBrief;

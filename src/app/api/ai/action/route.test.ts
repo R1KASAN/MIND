@@ -42,7 +42,7 @@ test('/api/ai/action returns manual 200 after Puter failure and Local Gemma time
   puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
   puterSdk.ai.chat = (async () => {
     throw new Error('Puter auth failed');
-  }) as typeof puterSdk.ai.chat;
+  }) as any;
   console.warn = ((...args: unknown[]) => {
     warnings.push(args.map((arg) => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' '));
   }) as typeof console.warn;

@@ -39,7 +39,7 @@ test('/api/ai/intake returns manual 200 after Puter failure and Local Gemma time
   process.env.MIND_AI_BACKEND = 'external_safe';
   process.env.PUTER_API_KEY = 'puter-token';
   puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
-  puterSdk.ai.chat = (async () => ({ message: { content: 'not json' } })) as typeof puterSdk.ai.chat;
+  puterSdk.ai.chat = (async () => ({ message: { content: 'not json' } })) as any;
   console.warn = ((...args: unknown[]) => {
     warnings.push(args.map((arg) => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' '));
   }) as typeof console.warn;

@@ -50,6 +50,7 @@ const mockPayload = {
     title: 'Reply to client',
     rationale: 'Fastest unblock',
     micro_steps: ['Open reply', 'Send reply'],
+    micro_steps_source: 'ai' as const,
   },
   alternative_actions: [],
 } satisfies AiSynthesisResponse;

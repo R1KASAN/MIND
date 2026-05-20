@@ -171,167 +171,167 @@ test('buildActionEvidenceContext covers five client-facing evidence fixtures', a
     preferredCandidate: { title: string; rationale: string; kind?: string };
     expectedSourceId: string;
   }> = [
-    {
-      name: 'client reply',
-      task: makeTask({
-        id: 'task-client-reply',
-        sourceText: 'ลูกค้าส่ง feedback ยาวหลายข้อเกี่ยวกับ landing page',
-        taskFrame: {
-          objective: 'ตอบลูกค้าเรื่อง feedback วันนี้',
-          stage: 'awaiting_reply',
-          stakeholders: ['client'],
-        },
-        taskShape: {
-          deliverableType: 'reply',
-          immediateNeed: 'send_reply_now',
-          missingInputs: [],
-          workContext: 'ต้องตอบ feedback landing page ให้ชัด',
-        },
-        blockerSignals: ['feedback_overload'],
-        sourceFiles: [
-          makeFile({
-            id: 'client-feedback',
-            name: 'client-feedback.txt',
-            extractedText: 'Client feedback asks for hero copy changes and a reply today before the landing page review.',
-          }),
-          makeFile({
-            id: 'unrelated-invoice',
-            name: 'invoice-note.txt',
-            extractedText: 'Invoice payment note unrelated to landing page feedback.',
-          }),
-        ],
-      }),
-      preferredCandidate: {
-        title: 'Draft the client reply about landing page feedback',
-        rationale: 'The client is waiting for a reply today.',
-      },
-      expectedSourceId: 'file:client-feedback',
-    },
-    {
-      name: 'proposal scope',
-      task: makeTask({
-        id: 'task-proposal-scope',
-        sourceText: 'ต้องทำ proposal แต่ scope ยังไม่ชัด',
-        workflowType: 'client_resume',
-        taskFrame: {
-          objective: 'ล็อก scope proposal ก่อน estimate',
-          stage: 'scope_definition',
-          stakeholders: ['client'],
-        },
-        taskShape: {
-          deliverableType: 'proposal',
-          immediateNeed: 'define_scope',
-          missingInputs: ['final scope'],
-          workContext: 'proposal ยังขาดขอบเขตและ timeline',
-        },
-        blockerSignals: ['unclear_scope'],
-        pendingInputs: [
-          {
-            kind: 'clarification',
-            prompt: 'scope ที่ชัดแล้วคืออะไร',
-            answer: 'Scope confirmed: CRM automation only. Do not include analytics dashboard. Timeline estimate still needed.',
-            createdAt: 2,
+      {
+        name: 'client reply',
+        task: makeTask({
+          id: 'task-client-reply',
+          sourceText: 'ลูกค้าส่ง feedback ยาวหลายข้อเกี่ยวกับ landing page',
+          taskFrame: {
+            objective: 'ตอบลูกค้าเรื่อง feedback วันนี้',
+            stage: 'awaiting_reply',
+            stakeholders: ['client'],
           },
-        ],
-      }),
-      preferredCandidate: {
-        title: 'Clarify proposal scope before estimating timeline',
-        rationale: 'Scope must exclude the analytics dashboard.',
-      },
-      expectedSourceId: 'pending:clarification:0',
-    },
-    {
-      name: 'stale task reentry',
-      task: makeTask({
-        id: 'task-stale-reentry',
-        roomId: 'room-1',
-        sourceText: 'กลับมางานเดิมหลังหายไปหลายวัน',
-        workflowType: 'client_resume',
-        taskFrame: {
-          objective: 'กลับมาเริ่ม proposal ต่อจากจุดค้าง',
-          stage: 'reentry',
-          stakeholders: ['client'],
-        },
-        taskShape: {
-          deliverableType: 'proposal',
-          immediateNeed: 'resume_execution',
-          missingInputs: [],
-          workContext: 'ต้องรู้จุดค้างล่าสุดก่อนเริ่มใหม่',
-        },
-        blockerSignals: ['stale_context'],
-        sourceFiles: [
-          makeFile({
-            id: 'stale-handoff',
-            name: 'stale-handoff.md',
-            extractedText: 'Last unfinished item was the pricing table. Next action is update estimate and send client follow-up.',
-          }),
-        ],
-      }),
-      preferredCandidate: {
-        title: 'Resume from the stale handoff and update estimate',
-        rationale: 'The handoff identifies the unfinished pricing table.',
-      },
-      expectedSourceId: 'file:stale-handoff',
-    },
-    {
-      name: 'missing context',
-      task: makeTask({
-        id: 'task-missing-context',
-        sourceText: 'งานติดเพราะข้อมูลไม่ครบ',
-        workflowType: 'client_resume',
-        taskFrame: {
-          objective: 'ปลดล็อกข้อมูลที่ขาดก่อนเดินงานต่อ',
-          stage: 'blocked',
-          stakeholders: ['client'],
-        },
-        taskShape: {
-          deliverableType: 'unknown',
-          immediateNeed: 'ask_clarifying_question',
-          missingInputs: ['access credentials', 'final asset folder'],
-          workContext: 'ยังไม่มีข้อมูลพอจะทำงานต่อ',
-        },
-        blockerSignals: ['missing_context'],
-        pendingInputs: [
-          {
-            kind: 'clarification',
-            prompt: 'ข้อมูลอะไรที่ยังขาด',
-            answer: 'Missing context: client access credentials and final asset folder are required before implementation.',
-            createdAt: 3,
+          taskShape: {
+            deliverableType: 'reply',
+            immediateNeed: 'send_reply_now',
+            missingInputs: [],
+            workContext: 'ต้องตอบ feedback landing page ให้ชัด',
           },
-        ],
-      }),
-      preferredCandidate: {
-        title: 'Ask client for access credentials and final asset folder',
-        rationale: 'These missing inputs block implementation.',
-      },
-      expectedSourceId: 'pending:clarification:0',
-    },
-    {
-      name: 'low energy restart',
-      task: makeTask({
-        id: 'task-low-energy',
-        sourceText: 'Low energy restart: do the five minute smallest step by opening the invoice checklist and marking one client follow-up item.',
-        workflowType: 'client_resume',
-        taskFrame: {
-          objective: 'เริ่มงานค้างแบบใช้แรงน้อยที่สุด',
-          stage: 'low_energy_restart',
-          stakeholders: ['client'],
+          blockerSignals: ['feedback_overload'],
+          sourceFiles: [
+            makeFile({
+              id: 'client-feedback',
+              name: 'client-feedback.txt',
+              extractedText: 'Client feedback asks for hero copy changes and a reply today before the landing page review.',
+            }),
+            makeFile({
+              id: 'unrelated-invoice',
+              name: 'invoice-note.txt',
+              extractedText: 'Invoice payment note unrelated to landing page feedback.',
+            }),
+          ],
+        }),
+        preferredCandidate: {
+          title: 'Draft the client reply about landing page feedback',
+          rationale: 'The client is waiting for a reply today.',
         },
-        taskShape: {
-          deliverableType: 'follow_up',
-          immediateNeed: 'resume_execution',
-          missingInputs: [],
-          workContext: 'ผู้ใช้พลังงานต่ำและต้องเริ่มจากก้าวเล็ก',
-        },
-        blockerSignals: ['low_energy'],
-      }),
-      preferredCandidate: {
-        title: 'Open the invoice checklist and mark one client follow-up',
-        rationale: 'This is the smallest five minute restart step.',
+        expectedSourceId: 'file:client-feedback',
       },
-      expectedSourceId: 'manual:task-low-energy',
-    },
-  ];
+      {
+        name: 'proposal scope',
+        task: makeTask({
+          id: 'task-proposal-scope',
+          sourceText: 'ต้องทำ proposal แต่ scope ยังไม่ชัด',
+          workflowType: 'client_resume',
+          taskFrame: {
+            objective: 'ล็อก scope proposal ก่อน estimate',
+            stage: 'scope_definition',
+            stakeholders: ['client'],
+          },
+          taskShape: {
+            deliverableType: 'proposal',
+            immediateNeed: 'define_scope',
+            missingInputs: ['final scope'],
+            workContext: 'proposal ยังขาดขอบเขตและ timeline',
+          },
+          blockerSignals: ['unclear_scope'],
+          pendingInputs: [
+            {
+              kind: 'clarification',
+              prompt: 'scope ที่ชัดแล้วคืออะไร',
+              answer: 'Scope confirmed: CRM automation only. Do not include analytics dashboard. Timeline estimate still needed.',
+              createdAt: 2,
+            },
+          ],
+        }),
+        preferredCandidate: {
+          title: 'Clarify proposal scope before estimating timeline',
+          rationale: 'Scope must exclude the analytics dashboard.',
+        },
+        expectedSourceId: 'pending:clarification:0',
+      },
+      {
+        name: 'stale task reentry',
+        task: makeTask({
+          id: 'task-stale-reentry',
+          roomId: 'room-1',
+          sourceText: 'กลับมางานเดิมหลังหายไปหลายวัน',
+          workflowType: 'client_resume',
+          taskFrame: {
+            objective: 'กลับมาเริ่ม proposal ต่อจากจุดค้าง',
+            stage: 'reentry',
+            stakeholders: ['client'],
+          },
+          taskShape: {
+            deliverableType: 'proposal',
+            immediateNeed: 'resume_execution',
+            missingInputs: [],
+            workContext: 'ต้องรู้จุดค้างล่าสุดก่อนเริ่มใหม่',
+          },
+          blockerSignals: ['stale_context'],
+          sourceFiles: [
+            makeFile({
+              id: 'stale-handoff',
+              name: 'stale-handoff.md',
+              extractedText: 'Last unfinished item was the pricing table. Next action is update estimate and send client follow-up.',
+            }),
+          ],
+        }),
+        preferredCandidate: {
+          title: 'Resume from the stale handoff and update estimate',
+          rationale: 'The handoff identifies the unfinished pricing table.',
+        },
+        expectedSourceId: 'file:stale-handoff',
+      },
+      {
+        name: 'missing context',
+        task: makeTask({
+          id: 'task-missing-context',
+          sourceText: 'งานติดเพราะข้อมูลไม่ครบ',
+          workflowType: 'client_resume',
+          taskFrame: {
+            objective: 'ปลดล็อกข้อมูลที่ขาดก่อนเดินงานต่อ',
+            stage: 'blocked',
+            stakeholders: ['client'],
+          },
+          taskShape: {
+            deliverableType: 'unknown',
+            immediateNeed: 'ask_clarifying_question' as any,
+            missingInputs: ['access credentials', 'final asset folder'],
+            workContext: 'ยังไม่มีข้อมูลพอจะทำงานต่อ',
+          },
+          blockerSignals: ['missing_context'],
+          pendingInputs: [
+            {
+              kind: 'clarification',
+              prompt: 'ข้อมูลอะไรที่ยังขาด',
+              answer: 'Missing context: client access credentials and final asset folder are required before implementation.',
+              createdAt: 3,
+            },
+          ],
+        }),
+        preferredCandidate: {
+          title: 'Ask client for access credentials and final asset folder',
+          rationale: 'These missing inputs block implementation.',
+        },
+        expectedSourceId: 'pending:clarification:0',
+      },
+      {
+        name: 'low energy restart',
+        task: makeTask({
+          id: 'task-low-energy',
+          sourceText: 'Low energy restart: do the five minute smallest step by opening the invoice checklist and marking one client follow-up item.',
+          workflowType: 'client_resume',
+          taskFrame: {
+            objective: 'เริ่มงานค้างแบบใช้แรงน้อยที่สุด',
+            stage: 'low_energy_restart',
+            stakeholders: ['client'],
+          },
+          taskShape: {
+            deliverableType: 'follow_up' as any,
+            immediateNeed: 'resume_execution',
+            missingInputs: [],
+            workContext: 'ผู้ใช้พลังงานต่ำและต้องเริ่มจากก้าวเล็ก',
+          },
+          blockerSignals: ['low_energy'],
+        }),
+        preferredCandidate: {
+          title: 'Open the invoice checklist and mark one client follow-up',
+          rationale: 'This is the smallest five minute restart step.',
+        },
+        expectedSourceId: 'manual:task-low-energy',
+      },
+    ];
 
   try {
     for (const item of cases) {

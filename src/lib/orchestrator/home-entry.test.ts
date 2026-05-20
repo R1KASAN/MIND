@@ -489,28 +489,32 @@ test('selectActiveRoomReentry keeps the same room cycle visible after reentry', 
     createdAt: 100,
     lastAttemptAt: 200,
     blockerSignals: ['waiting_client'],
-    currentPlan: {
-      actionTitle: 'ส่งคำตอบยืนยันเดโม',
-      successSignal: 'ลูกค้ารู้เวลาถัดไป',
-      steps: [
-        { id: 'step-1', text: 'ร่าง reply สั้นเพื่อยืนยันเวลานัด' },
-        { id: 'step-2', text: 'แนบ timeline คร่าว ๆ ถ้าจำเป็น' },
-      ],
-    },
-    reentryBrief: {
-      summary: 'กลับมาทำต่อที่เดโมเดิม',
-      topActions: [
-        {
-          roomId: 'cycle-room',
-          title: 'ส่งคำตอบยืนยันเดโม',
-          rationale: 'รักษา momentum ของห้องนี้',
-          resumeTarget: 'ONE_ACTION',
-        },
-      ],
-      ignoredNoise: [],
-      createdAt: 250,
-    },
-  });
+  } as any);
+
+  task.currentPlan = {
+    actionTitle: 'ส่งคำตอบยืนยันเดโม',
+    successSignal: 'ลูกค้ารู้เวลาถัดไป',
+    steps: [
+      { id: 'step-1', text: 'ร่าง reply สั้นเพื่อยืนยันเวลานัด' },
+      { id: 'step-2', text: 'แนบ timeline คร่าว ๆ ถ้าจำเป็น' },
+    ],
+  };
+
+  task.reentryBrief = {
+    summary: 'กลับมาทำต่อที่เดโมเดิม',
+    topActions: [
+      {
+        roomId: 'cycle-room',
+        title: 'ส่งคำตอบยืนยันเดโม',
+        rationale: 'รักษา momentum ของห้องนี้',
+        resumeTarget: 'ONE_ACTION',
+        impact: 'high',
+        effort: 'low',
+      },
+    ],
+    ignoredNoise: [],
+    createdAt: 250,
+  };
 
   const roomRecord = room('cycle-room', {
     contextSummary: 'กลับมาทำต่อที่เดโมเดิม',
@@ -525,6 +529,8 @@ test('selectActiveRoomReentry keeps the same room cycle visible after reentry', 
           title: 'ส่งคำตอบยืนยันเดโม',
           rationale: 'รักษา momentum ของห้องนี้',
           resumeTarget: 'ONE_ACTION',
+          impact: 'high',
+          effort: 'low',
         },
       ],
       ignoredNoise: [],
