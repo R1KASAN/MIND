@@ -373,7 +373,7 @@ export function OneAction({
       )}
 
       {workflowType === 'client_response' && replyDraft && (
-        <details className="supporting-panel expanded" style={{ width: '100%', maxWidth: '42rem' }} open={showReplyDraft}>
+        <details className="supporting-panel expanded reply-draft-panel" style={{ width: '100%', maxWidth: '42rem' }} open={showReplyDraft}>
           <summary
             style={{
               cursor: 'pointer',
@@ -387,7 +387,7 @@ export function OneAction({
           >
             ดูร่างตอบลูกค้าเพิ่มเติม
           </summary>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', marginTop: '0.85rem' }}>
+          <div className="reply-draft-panel-body" style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', marginTop: '0.85rem' }}>
             {!showReplyDraft && (
               <div
                 style={{

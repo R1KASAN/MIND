@@ -155,6 +155,16 @@ select:focus {
   max-height: 40rem;
 }
 
+.reply-draft-panel {
+  max-height: min(68dvh, 44rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.reply-draft-panel .reply-draft-panel-body {
+  padding-right: 0.15rem;
+}
+
 .supporting-label {
   font-size: 0.8rem;
   font-weight: 600;
@@ -172,6 +182,8 @@ select:focus {
   border-color: rgba(255, 255, 255, 0.08);
   background: rgba(0, 0, 0, 0.14);
   margin-top: 0.4rem;
+  max-height: min(42dvh, 22rem);
+  overflow-y: auto;
 }
 
 .dump-stage-layout {
