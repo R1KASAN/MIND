@@ -49,6 +49,7 @@ type PuterFailureReason =
   | 'puter_auth_error'
   | 'puter_network_error'
   | 'puter_empty_response'
+  | 'puter_circuit_open'
   | 'puter_error';
 
 type PuterRawResponseCategory =
@@ -79,6 +80,62 @@ class PuterOperationError extends Error {
     super(message);
     this.name = 'PuterOperationError';
   }
+}
+
+type PuterCircuitState = {
+  failureTimestamps: number[];
+  openUntil: number;
+  probeInFlight: boolean;
+};
+
+export interface PuterCircuitBreakerSnapshot {
+  failureTimestamps: number[];
+  openUntil: number;
+  probeInFlight: boolean;
+}
+
+type PuterCircuitGate =
+  | {
+      skip: true;
+      reason: 'puter_circuit_open';
+      openUntil: number;
+    }
+  | {
+      skip: false;
+    };
+
+const DEFAULT_PUTER_CIRCUIT_FAILURE_THRESHOLD = 3;
+const DEFAULT_PUTER_CIRCUIT_WINDOW_MS = 60_000;
+const DEFAULT_PUTER_CIRCUIT_COOLDOWN_MS = 300_000;
+
+const puterCircuitState: PuterCircuitState = {
+  failureTimestamps: [],
+  openUntil: 0,
+  probeInFlight: false,
+};
+
+function resetPuterCircuitState() {
+  puterCircuitState.failureTimestamps = [];
+  puterCircuitState.openUntil = 0;
+  puterCircuitState.probeInFlight = false;
+}
+
+export function resetPuterCircuitBreakerStateForTest() {
+  resetPuterCircuitState();
+}
+
+export function getPuterCircuitBreakerStateForTest(): PuterCircuitBreakerSnapshot {
+  return {
+    failureTimestamps: [...puterCircuitState.failureTimestamps],
+    openUntil: puterCircuitState.openUntil,
+    probeInFlight: puterCircuitState.probeInFlight,
+  };
+}
+
+export function seedPuterCircuitBreakerStateForTest(snapshot: Partial<PuterCircuitBreakerSnapshot>) {
+  puterCircuitState.failureTimestamps = snapshot.failureTimestamps ? [...snapshot.failureTimestamps] : [];
+  puterCircuitState.openUntil = snapshot.openUntil ?? 0;
+  puterCircuitState.probeInFlight = snapshot.probeInFlight ?? false;
 }
 
 export interface AiActionOptions {
@@ -242,6 +299,18 @@ function parsePositiveNumber(value: string | undefined, fallback: number) {
 
 function getPuterTimeoutMs() {
   return parsePositiveNumber(process.env.MIND_PUTER_TIMEOUT_MS || process.env.PUTER_TIMEOUT_MS, 15000);
+}
+
+function getPuterCircuitFailureThreshold() {
+  return parsePositiveNumber(process.env.MIND_PUTER_CIRCUIT_FAILURE_THRESHOLD, DEFAULT_PUTER_CIRCUIT_FAILURE_THRESHOLD);
+}
+
+function getPuterCircuitWindowMs() {
+  return parsePositiveNumber(process.env.MIND_PUTER_CIRCUIT_WINDOW_MS, DEFAULT_PUTER_CIRCUIT_WINDOW_MS);
+}
+
+function getPuterCircuitCooldownMs() {
+  return parsePositiveNumber(process.env.MIND_PUTER_CIRCUIT_COOLDOWN_MS, DEFAULT_PUTER_CIRCUIT_COOLDOWN_MS);
 }
 
 function getPuterModel() {
@@ -492,6 +561,13 @@ function classifyPuterFailure(error: unknown): PuterFailureReason {
   return 'puter_error';
 }
 
+function getPuterErrorClass(error: unknown) {
+  if (error instanceof PuterOperationError) return error.name;
+  if (error instanceof AiOperationContractError) return error.name;
+  if (error instanceof Error) return error.name || error.constructor?.name || 'Error';
+  return typeof error;
+}
+
 function describePuterFailure(error: unknown) {
   if (error instanceof AiOperationContractError) return error.message;
   if (error instanceof Error) return error.message;
@@ -534,11 +610,75 @@ function logPuterFallback(operation: AiOperationName, error: unknown) {
     backend: 'puter',
     nextBackend: 'local_gemma',
     reason: classifyPuterFailure(error),
+    error_class: getPuterErrorClass(error),
     model: meta.model,
     elapsed_ms: meta.elapsedMs,
     timeout_ms: meta.timeoutMs,
     detail: describePuterFailure(error),
   });
+}
+
+function pruneRecentFailures(now: number) {
+  const windowMs = getPuterCircuitWindowMs();
+  puterCircuitState.failureTimestamps = puterCircuitState.failureTimestamps.filter(
+    (timestamp) => now - timestamp <= windowMs,
+  );
+}
+
+function shouldSkipPuterOperation(): PuterCircuitGate {
+  const now = Date.now();
+  if (puterCircuitState.openUntil > 0 && now < puterCircuitState.openUntil) {
+    return {
+      skip: true,
+      reason: 'puter_circuit_open' as const,
+      openUntil: puterCircuitState.openUntil,
+    };
+  }
+
+  if (puterCircuitState.openUntil > 0 && now >= puterCircuitState.openUntil) {
+    if (puterCircuitState.probeInFlight) {
+      return {
+        skip: true,
+        reason: 'puter_circuit_open' as const,
+        openUntil: puterCircuitState.openUntil,
+      };
+    }
+
+    puterCircuitState.probeInFlight = true;
+    return {
+      skip: false,
+    };
+  }
+
+  return {
+    skip: false,
+  };
+}
+
+function recordPuterSuccess() {
+  resetPuterCircuitState();
+}
+
+function recordPuterFailure(now: number, operation: AiOperationName, reason: PuterFailureReason) {
+  pruneRecentFailures(now);
+  puterCircuitState.failureTimestamps.push(now);
+
+  const threshold = getPuterCircuitFailureThreshold();
+  if (puterCircuitState.failureTimestamps.length >= threshold) {
+    puterCircuitState.openUntil = now + getPuterCircuitCooldownMs();
+    puterCircuitState.failureTimestamps = [];
+    puterCircuitState.probeInFlight = false;
+    console.warn('[MIND][AI_FALLBACK] Puter circuit opened', {
+      operation,
+      backend: 'puter',
+      reason,
+      failure_threshold: threshold,
+      cooldown_ms: getPuterCircuitCooldownMs(),
+      open_until: puterCircuitState.openUntil,
+      model: getPuterModel(),
+    });
+    return;
+  }
 }
 
 async function withPuterTimeout<T>(meta: PuterCallMeta, promise: Promise<T>): Promise<T> {
@@ -570,6 +710,19 @@ async function runPuterOperation<T>(
   userPrompt: string,
   parse: (raw: string) => T
 ): Promise<T> {
+  const circuitGate = shouldSkipPuterOperation();
+  if (circuitGate.skip) {
+    const timeoutMs = getPuterTimeoutMs();
+    throw new PuterOperationError(
+      'Puter circuit is open',
+      circuitGate.reason,
+      operation,
+      getPuterModel(),
+      0,
+      timeoutMs,
+    );
+  }
+
   const puter = getPuterClient();
   const options = buildPuterChatOptions(operation);
   const meta: PuterCallMeta = {
@@ -592,7 +745,13 @@ async function runPuterOperation<T>(
       puter.ai.chat(puterInput as any, options, false),
     );
   } catch (error) {
-    if (error instanceof PuterOperationError) throw error;
+    if (error instanceof PuterOperationError) {
+      if (error.reason !== 'puter_circuit_open') {
+        recordPuterFailure(Date.now(), operation, error.reason);
+      }
+      throw error;
+    }
+    recordPuterFailure(Date.now(), operation, classifyPuterFailure(error));
     throw new PuterOperationError(
       error instanceof Error ? error.message : 'Puter request failed',
       classifyPuterFailure(error),
@@ -618,6 +777,7 @@ async function runPuterOperation<T>(
       jsonCandidate: null,
       category: 'empty',
     });
+    recordPuterFailure(Date.now(), operation, 'puter_empty_response');
     throw new PuterOperationError(
       'Empty response from Puter',
       'puter_empty_response',
@@ -635,6 +795,7 @@ async function runPuterOperation<T>(
       jsonCandidate: null,
       category: 'non_json_text',
     });
+    recordPuterFailure(Date.now(), operation, 'puter_contract_invalid');
     throw new PuterOperationError(
       'Puter output did not contain a parseable JSON object',
       'puter_contract_invalid',
@@ -655,6 +816,7 @@ async function runPuterOperation<T>(
       jsonCandidate: shouldNormalizeJson ? jsonCandidate : rawStr,
       category: classifyPuterRawResponse(operation, rawStr, shouldNormalizeJson ? jsonCandidate : rawStr, 'contract_invalid'),
     });
+    recordPuterFailure(Date.now(), operation, classifyPuterFailure(error));
     throw new PuterOperationError(
       error instanceof Error ? error.message : 'Puter output failed contract validation',
       classifyPuterFailure(error),
@@ -672,6 +834,7 @@ async function runPuterOperation<T>(
     jsonCandidate: shouldNormalizeJson ? jsonCandidate : rawStr,
     category: classifyPuterRawResponse(operation, rawStr, shouldNormalizeJson ? jsonCandidate : rawStr, 'contract_valid'),
   });
+  recordPuterSuccess();
   logPuterSuccess(meta);
   return parsed;
 }

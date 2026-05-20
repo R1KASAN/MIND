@@ -6,6 +6,9 @@ import {
   FreePuterClient,
   getPuterClient,
   LocalGemmaClient,
+  getPuterCircuitBreakerStateForTest,
+  resetPuterCircuitBreakerStateForTest,
+  seedPuterCircuitBreakerStateForTest,
 } from '@/lib/ai/client';
 import {
   buildActionUserPrompt,
@@ -40,6 +43,9 @@ const originalPuterTemperature = process.env.MIND_PUTER_TEMPERATURE;
 const originalPuterReasoningEffort = process.env.MIND_PUTER_REASONING_EFFORT;
 const originalPuterTextVerbosity = process.env.MIND_PUTER_TEXT_VERBOSITY;
 const originalPuterDebugRaw = process.env.MIND_PUTER_DEBUG_RAW;
+const originalPuterCircuitFailureThreshold = process.env.MIND_PUTER_CIRCUIT_FAILURE_THRESHOLD;
+const originalPuterCircuitWindowMs = process.env.MIND_PUTER_CIRCUIT_WINDOW_MS;
+const originalPuterCircuitCooldownMs = process.env.MIND_PUTER_CIRCUIT_COOLDOWN_MS;
 const originalWarn = console.warn;
 const originalInfo = console.info;
 
@@ -68,6 +74,10 @@ function restorePuterTestState() {
   restoreEnv('MIND_PUTER_REASONING_EFFORT', originalPuterReasoningEffort);
   restoreEnv('MIND_PUTER_TEXT_VERBOSITY', originalPuterTextVerbosity);
   restoreEnv('MIND_PUTER_DEBUG_RAW', originalPuterDebugRaw);
+  restoreEnv('MIND_PUTER_CIRCUIT_FAILURE_THRESHOLD', originalPuterCircuitFailureThreshold);
+  restoreEnv('MIND_PUTER_CIRCUIT_WINDOW_MS', originalPuterCircuitWindowMs);
+  restoreEnv('MIND_PUTER_CIRCUIT_COOLDOWN_MS', originalPuterCircuitCooldownMs);
+  resetPuterCircuitBreakerStateForTest();
 }
 
 function buildTask() {
@@ -567,7 +577,7 @@ test('FreePuterClient falls back to LocalGemmaClient when Puter fails without EN
   assert.equal(intake.meta.model, 'local_gemma_fixture');
   assert.equal(action.meta.model, 'local_gemma_fixture');
   assert.equal(rescue.meta.model, 'local_gemma_fixture');
-  assert.equal(warnings.length, 3);
+  assert.equal(warnings.length, 4);
   assert.match(warnings.join('\n'), /Puter failed, falling back/);
   assert.match(warnings.join('\n'), /puter_auth_error/);
   assert.doesNotMatch(warnings.join('\n'), /ENOENT|dist\/puter\.cjs/);
@@ -596,6 +606,100 @@ test('FreePuterClient falls back when Puter returns non-JSON output', async () =
   assert.equal(action.meta.model, 'local_gemma_fixture');
   assert.match(warnings.join('\n'), /Puter failed, falling back/);
   assert.match(warnings.join('\n'), /puter_contract_invalid/);
+});
+
+test('FreePuterClient opens a Puter circuit after repeated failures', async () => {
+  process.env.PUTER_API_KEY = 'puter-token';
+  process.env.MIND_PUTER_CIRCUIT_FAILURE_THRESHOLD = '1';
+  process.env.MIND_PUTER_CIRCUIT_WINDOW_MS = '1000';
+  process.env.MIND_PUTER_CIRCUIT_COOLDOWN_MS = '1000';
+  puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
+  puterSdk.ai.chat = (async () => {
+    throw new Error('Puter auth failed');
+  }) as typeof puterSdk.ai.chat;
+
+  const localFallbackIntake = (async () => ({
+    ...intakeFixture(),
+    meta: {
+      ...intakeFixture().meta,
+      model: 'local_gemma_fixture',
+      passType: 'fallback_pass',
+    },
+  })) as typeof LocalGemmaClient.prototype.runIntake;
+  LocalGemmaClient.prototype.runIntake = localFallbackIntake;
+
+  const response = await new FreePuterClient().runIntake(buildTask());
+  const snapshot = getPuterCircuitBreakerStateForTest();
+
+  assert.equal(response.meta.model, 'local_gemma_fixture');
+  assert.equal(snapshot.failureTimestamps.length, 0);
+  assert.ok(snapshot.openUntil > 0);
+});
+
+test('FreePuterClient skips Puter while the circuit is open', async () => {
+  const chatCalls: unknown[][] = [];
+  process.env.PUTER_API_KEY = 'puter-token';
+  seedPuterCircuitBreakerStateForTest({
+    failureTimestamps: [],
+    openUntil: Date.now() + 60_000,
+    probeInFlight: false,
+  });
+  puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
+  puterSdk.ai.chat = (async (...args: unknown[]) => {
+    chatCalls.push(args);
+    return puterMessage(intakeFixture());
+  }) as typeof puterSdk.ai.chat;
+
+  const localFallbackIntake = (async () => ({
+    ...intakeFixture(),
+    meta: {
+      ...intakeFixture().meta,
+      model: 'local_gemma_fixture',
+      passType: 'fallback_pass',
+    },
+  })) as typeof LocalGemmaClient.prototype.runIntake;
+  LocalGemmaClient.prototype.runIntake = localFallbackIntake;
+
+  const client = new FreePuterClient();
+  const response = await client.runIntake(buildTask());
+  const snapshot = getPuterCircuitBreakerStateForTest();
+
+  assert.equal(response.meta.model, 'local_gemma_fixture');
+  assert.equal(chatCalls.length, 0);
+  assert.equal(snapshot.openUntil > Date.now(), true);
+});
+
+test('FreePuterClient allows a Puter probe again after cooldown expires', async () => {
+  const chatCalls: unknown[][] = [];
+  process.env.PUTER_API_KEY = 'puter-token';
+  seedPuterCircuitBreakerStateForTest({
+    failureTimestamps: [],
+    openUntil: Date.now() - 1,
+    probeInFlight: false,
+  });
+  puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
+  puterSdk.ai.chat = (async (...args: unknown[]) => {
+    chatCalls.push(args);
+    return puterMessage(intakeFixture());
+  }) as typeof puterSdk.ai.chat;
+
+  const localFallbackIntake = (async () => ({
+    ...intakeFixture(),
+    meta: {
+      ...intakeFixture().meta,
+      model: 'local_gemma_fixture',
+      passType: 'fallback_pass',
+    },
+  })) as typeof LocalGemmaClient.prototype.runIntake;
+  LocalGemmaClient.prototype.runIntake = localFallbackIntake;
+
+  const response = await new FreePuterClient().runIntake(buildTask());
+  const snapshot = getPuterCircuitBreakerStateForTest();
+
+  assert.equal(response.meta.model, 'puter');
+  assert.equal(chatCalls.length, 1);
+  assert.equal(snapshot.openUntil, 0);
+  assert.equal(snapshot.probeInFlight, false);
 });
 
 test('Puter prompt builders keep contracts while compacting Room context', () => {
