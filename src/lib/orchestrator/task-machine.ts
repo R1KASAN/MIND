@@ -45,7 +45,10 @@ export function buildPayloadFromAction(action: Action): AiSynthesisResponse {
 export function buildBootstrapMicroSteps(action: {
   title: string;
   successSignal?: string;
-}, taskShape?: TaskShape) {
+}, taskShape?: TaskShape, task?: TaskContext) {
+  const grounded = buildGroundedArtifactMicroSteps(action, taskShape, task);
+  if (grounded) return grounded;
+
   if (taskShape?.behaviorIntent === 'personal_friction') {
     return [
       'เช็กก่อนว่าตอนนี้ต้องเติมอะไรที่สุด: กิน พัก หรือเริ่มงานเบา ๆ',
@@ -62,15 +65,212 @@ export function buildBootstrapMicroSteps(action: {
   ];
 }
 
+function normalizeForStepMatch(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[“”"']/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function uniqueAnchors(values: string[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const normalized = normalizeForStepMatch(value);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(value);
+  }
+  return result;
+}
+
+function collectRoomArtifactAnchors(task?: TaskContext, taskShape?: TaskShape, actionTitle?: string) {
+  const text = [
+    task?.sourceText,
+    task?.extractedText,
+    task?.taskFrame?.objective,
+    task?.taskFrame?.stage,
+    task?.taskFrame?.stakeholders?.join(' '),
+    taskShape?.workContext,
+    taskShape?.missingInputs?.join(' '),
+    actionTitle,
+  ].filter(Boolean).join(' ');
+
+  const lower = text.toLowerCase();
+  const anchors: string[] = [];
+
+  const customerMatches = text.match(/\b[A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*){0,2}\s+(?:Corp|Co|Ltd|Inc|LLC|Bank)\b/g) ?? [];
+  anchors.push(...customerMatches);
+
+  const keywordAnchors: Array<[RegExp, string]> = [
+    [/\bprod(?:uction)?\b|โปรดักชัน/u, 'prod'],
+    [/cpu spike/u, 'CPU spike'],
+    [/\brca\b/u, 'RCA'],
+    [/\bincident\b|อินซิเดนต์/u, 'incident'],
+    [/dashboard/u, 'Dashboard'],
+    [/payment\s+api|ระบบจ่ายเงิน/u, 'payment API'],
+    [/\bapi\b/u, 'API'],
+    [/server|เซิร์ฟเวอร์/u, 'server'],
+    [/webhook/u, 'webhook'],
+    [/jira/u, 'Jira'],
+    [/release/u, 'release'],
+    [/timeline|ไทม์ไลน์/u, 'timeline'],
+    [/สเปก|spec/u, 'สเปก'],
+    [/ปุ่ม|button/u, 'ปุ่ม'],
+    [/สไลด์|slide/u, 'สไลด์'],
+    [/แชต|ไลน์|line|chat/u, 'แชต'],
+    [/ลูกค้า|client/u, 'ลูกค้า'],
+  ];
+
+  for (const [pattern, label] of keywordAnchors) {
+    if (pattern.test(lower)) anchors.push(label);
+  }
+
+  return uniqueAnchors(anchors);
+}
+
+function hasRoomWorkAnchors(task?: TaskContext, taskShape?: TaskShape, actionTitle?: string) {
+  if (!task) return false;
+  return collectRoomArtifactAnchors(task, taskShape, actionTitle).length >= 2;
+}
+
+function hasAnchorInStep(step: string, anchors: string[]) {
+  const normalizedStep = normalizeForStepMatch(step);
+  return anchors.some((anchor) => normalizedStep.includes(normalizeForStepMatch(anchor)));
+}
+
+function isResetOnlyStep(step: string) {
+  const normalized = normalizeForStepMatch(step);
+  const resetWords = ['พัก', 'หายใจ', 'กิน', 'ดื่มน้ำ', 'เติมพลัง', 'สมองตื้อ', 'energy', 'reset'];
+  const workWords = ['สรุป', 'ร่าง', 'แยก', 'เช็ก', 'จด', 'ตอบ', 'draft', 'summary', 'checklist', 'status', 'message'];
+  return resetWords.some((word) => normalized.includes(word)) &&
+    !workWords.some((word) => normalized.includes(word));
+}
+
+function isConcreteWorkStep(step: string) {
+  const normalized = normalizeForStepMatch(step);
+  return [
+    'สรุป',
+    'ร่าง',
+    'แยก',
+    'เช็ก',
+    'จด',
+    'ตอบ',
+    'draft',
+    'summary',
+    'status',
+    'checklist',
+    'message',
+  ].some((token) => normalized.includes(token));
+}
+
+function isArtifactStep(step: string) {
+  const normalized = normalizeForStepMatch(step);
+  return [
+    'ร่าง',
+    'ข้อความ',
+    'สรุป',
+    'โน้ต',
+    'note',
+    'status',
+    'checklist',
+    'draft',
+    'message',
+    '3 บรรทัด',
+  ].some((token) => normalized.includes(token));
+}
+
+function echoesActionTitle(step: string, actionTitle?: string) {
+  if (!actionTitle) return false;
+  const normalizedStep = normalizeForStepMatch(step);
+  const normalizedTitle = normalizeForStepMatch(actionTitle);
+  if (!normalizedStep || !normalizedTitle) return false;
+  if (normalizedStep.includes(normalizedTitle)) return true;
+  return normalizedStep.includes('ทำก้าวเล็กชิ้นเดียวของ') ||
+    normalizedStep.includes('ทำก้าวหลักนี้ทันที');
+}
+
+function shouldUseGroundedFallbackSteps(
+  steps: string[] | undefined,
+  action: { title: string; successSignal?: string },
+  taskShape?: TaskShape,
+  task?: TaskContext,
+) {
+  if (!steps || steps.length !== 3) return true;
+  if (!hasRoomWorkAnchors(task, taskShape, action.title)) return false;
+
+  const anchors = collectRoomArtifactAnchors(task, taskShape, action.title);
+  const anchoredCount = steps.filter((step) => hasAnchorInStep(step, anchors)).length;
+  const resetOnlyCount = steps.filter(isResetOnlyStep).length;
+
+  return (
+    !isConcreteWorkStep(steps[0]) ||
+    isResetOnlyStep(steps[0]) ||
+    !isArtifactStep(steps[2]) ||
+    anchoredCount < 2 ||
+    resetOnlyCount > 1 ||
+    steps.some((step) => echoesActionTitle(step, action.title))
+  );
+}
+
+function buildGroundedArtifactMicroSteps(
+  action: { title: string; successSignal?: string },
+  taskShape?: TaskShape,
+  task?: TaskContext,
+) {
+  if (!hasRoomWorkAnchors(task, taskShape, action.title)) return undefined;
+
+  const anchors = collectRoomArtifactAnchors(task, taskShape, action.title);
+  const customerAnchor = anchors.find((anchor) => /corp|co|ltd|inc|llc|bank/i.test(anchor)) ?? 'ลูกค้า';
+  const hasIncident = anchors.some((anchor) => ['prod', 'CPU spike', 'RCA', 'incident', 'server', 'webhook'].includes(anchor));
+  const hasDashboard = anchors.includes('Dashboard');
+  const hasPayment = anchors.includes('payment API');
+  const hasChat = anchors.includes('แชต') || anchors.includes('ลูกค้า');
+
+  if (hasIncident) {
+    return [
+      anchors.includes('CPU spike')
+        ? 'สรุปสถานะ prod/CPU spike เป็น 3 บรรทัด'
+        : 'สรุปสถานะ incident เป็น 3 บรรทัด',
+      hasDashboard && hasPayment
+        ? 'แยก Dashboard กับ payment API ว่าค้างตรงไหน'
+        : 'จดสิ่งที่ตรวจแล้วกับสิ่งที่ยังไม่ชัด',
+      hasChat
+        ? `ร่างข้อความตอบ ${customerAnchor} แบบไม่ commit เวลา`
+        : 'ร่าง status note ที่ไม่ commit เวลา',
+    ];
+  }
+
+  if (hasDashboard || hasPayment || anchors.includes('API')) {
+    return [
+      `แยกงานค้างของ ${customerAnchor} เป็นรายการสั้น`,
+      'จดสถานะล่าสุดของแต่ละรายการ',
+      `ร่างข้อความตอบ ${customerAnchor} แบบไม่ commit เวลา`,
+    ];
+  }
+
+  return [
+    `สรุปสถานะล่าสุดของ ${customerAnchor} เป็น 3 บรรทัด`,
+    'แยกสิ่งที่รู้แล้วกับสิ่งที่ยังขาด',
+    `ร่างข้อความตอบ ${customerAnchor} แบบปลอดภัย`,
+  ];
+}
+
 export function buildPayloadFromAiActionResponse(
   workflowType: WorkflowType,
   response: AiActionResponse,
   blockers: string[],
   taskShape?: TaskShape,
+  task?: TaskContext,
 ): AiSynthesisResponse {
   const aiSteps = response.starterMicroSteps;
-  const useAiSteps = aiSteps && aiSteps.length === 3 && aiSteps.every((s) => s.trim().length > 0);
-  const microSteps = useAiSteps ? [...aiSteps] : buildBootstrapMicroSteps(response.chosenAction, taskShape);
+  const useAiSteps =
+    aiSteps &&
+    aiSteps.length === 3 &&
+    aiSteps.every((s) => s.trim().length > 0) &&
+    !shouldUseGroundedFallbackSteps(aiSteps, response.chosenAction, taskShape, task);
+  const microSteps = useAiSteps ? [...aiSteps] : buildBootstrapMicroSteps(response.chosenAction, taskShape, task);
   const microStepsSource: 'ai' | 'fallback' = useAiSteps ? 'ai' : 'fallback';
 
   return {
@@ -282,7 +482,7 @@ export function buildActionSuccessArtifacts(input: {
 }) {
   const { task, intake, actionResponse, evidenceContext, existingAction, persistedNegotiationMode } = input;
   const workflowType = intake.workflowType;
-  const payload = buildPayloadFromAiActionResponse(workflowType, actionResponse, intake.blockers, intake.taskShape);
+  const payload = buildPayloadFromAiActionResponse(workflowType, actionResponse, intake.blockers, intake.taskShape, task);
   const actionState = buildActionStateFromPayload(workflowType, payload, task.roomId, existingAction);
 
   let constraints = task.constraints

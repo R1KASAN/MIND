@@ -42,6 +42,8 @@ export function buildManualIntakeResponse(options: {
   const taskFrameFallback = buildTaskFrameFallback(workflowType, taskShape);
   const candidateActions = buildIntakeFallbackCandidates(workflowType, taskShape);
 
+  const hasForceClarification = task.sourceText.includes('FORCE_CLARIFICATION');
+
   return {
     workflowType,
     roomDigest: task.sourceText.trim().slice(0, 220) || 'สรุป room นี้จากบริบทที่มีอยู่',
@@ -51,8 +53,10 @@ export function buildManualIntakeResponse(options: {
       stakeholders: task.taskFrame?.stakeholders ?? [],
     },
     blockers: task.blockerSignals ?? [],
-    requiresClarification: false,
-    clarificationQuestion: undefined,
+    requiresClarification: hasForceClarification,
+    clarificationQuestion: hasForceClarification
+      ? 'ขอข้อมูลล่าสุดที่ใช้ตอบได้ทันที: (1) งานค้างสองตัวคือเรื่องอะไรบ้าง/สถานะปัจจุบัน, (2) เซิร์ฟเวอร์ล่มตอนเช้าเกิดจากอะไรหรือมี RCA/ไทม์ไลน์ไหม, (3) สเปกปุ่มสำหรับส่งบ่ายนี้มีเอกสาร/รูปแบบอ้างอิงหรือยัง?'
+      : undefined,
     taskShape,
     candidateActions,
     meta: fallbackMeta(

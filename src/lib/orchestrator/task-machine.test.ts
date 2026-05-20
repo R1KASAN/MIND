@@ -662,3 +662,151 @@ test('buildBootstrapMicroSteps uses neutral copy (P0 change)', () => {
   assert.match(steps[0], /ดูข้อมูลที่คุณมีตอนนี้เกี่ยวกับ/);
   assert.doesNotMatch(steps[0], /เปิดบริบทหรือไฟล์/);
 });
+
+test('buildPayloadFromAiActionResponse grounds ABC Corp mixed overload into work-artifact steps', () => {
+  const task = makeTask({
+    sourceText: [
+      'ABC Corp ทวงงานค้าง 2 ตัวในแชต',
+      'prod ล่ม 9 โมงจาก CPU spike ยังไม่มี RCA',
+      'งานค้างคือ Dashboard mockup กับ payment API',
+      'ผมหิว สมองตื้อ ไม่รู้ควรเริ่มจากอะไร',
+    ].join('\n'),
+    taskFrame: {
+      objective: 'เช็กว่าต้องเติมอะไรก่อน แล้วเลือกก้าวงานที่เล็กที่สุด',
+      stage: 'clarified',
+      stakeholders: ['ABC Corp'],
+    },
+  });
+  const response: AiActionResponse = {
+    chosenAction: {
+      title: 'เช็กว่าต้องเติมอะไรก่อน แล้วเลือกก้าวงานที่เล็กที่สุด',
+      rationale: 'ลดความเสี่ยงก่อนตอบลูกค้า',
+      successSignal: 'มี status ที่ตอบต่อได้',
+    },
+    alternatives: [],
+    whyThisNow: 'ABC Corp รออยู่และ prod ยังไม่ปิด incident',
+    situationSummary: 'ABC Corp, prod, Dashboard และ payment API ยังต้องจัดสถานะ',
+    starterMicroSteps: [
+      'พักหายใจ 2 นาทีแล้วกลับมาเรื่อง ABC Corp',
+      'เปิดแค่หน้าจอเดียวที่เกี่ยวกับ ABC Corp / Dashboard',
+      'ทำก้าวเล็กชิ้นเดียวของ "เช็กว่าต้องเติมอะไรก่อน แล้วเลือกก้าวงานที่เล็กที่สุด" ให้จบก่อน',
+    ],
+    meta: { model: 'mock', usedRoomFiles: [], repairUsed: false },
+  };
+
+  const payload = buildPayloadFromAiActionResponse('client_response', response, [], {
+    deliverableType: 'unknown',
+    immediateNeed: 'resume_execution',
+    missingInputs: [],
+    workContext: 'มีลูกค้า ABC Corp ทวงงานพร้อม incident และผู้ใช้หิว/สมองตื้อ',
+    behaviorIntent: 'personal_friction',
+    confidence: 0.8,
+  }, task);
+  const steps = payload.recommended_action.micro_steps;
+
+  assert.equal(payload.recommended_action.micro_steps_source, 'fallback');
+  assert.match(steps[0], /prod|CPU spike|incident/);
+  assert.doesNotMatch(steps[0], /พักหายใจ|เติมอะไรที่สุด/);
+  assert.match(steps[2], /ร่างข้อความ|status note|สรุป/);
+  assert.match(steps.join(' '), /ABC Corp/);
+});
+
+test('buildPayloadFromAiActionResponse grounds non-ABC customer incident without overfitting', () => {
+  const task = makeTask({
+    sourceText: [
+      'Zenith Bank ถามในแชตเรื่อง release เย็นนี้',
+      'payment webhook timeout จาก provider ภายนอก',
+      'QA รอคำตอบว่า release จะเลื่อนหรือไม่',
+    ].join('\n'),
+    taskFrame: {
+      objective: 'ตอบสถานะ release ให้ปลอดภัย',
+      stage: 'triage',
+      stakeholders: ['Zenith Bank', 'QA'],
+    },
+  });
+  const response: AiActionResponse = {
+    chosenAction: {
+      title: 'ตอบสถานะ release ให้ปลอดภัย',
+      rationale: 'ลดความเสี่ยงจาก incident',
+      successSignal: 'มีข้อความสถานะที่ส่งได้',
+    },
+    alternatives: [],
+    whyThisNow: 'ลูกค้ากับ QA กำลังรอคำตอบ',
+    situationSummary: 'Zenith Bank และ QA รอเรื่อง release/webhook',
+    starterMicroSteps: ['พักก่อน 2 นาที', 'เปิดหน้าจอเดียว', 'ทำก้าวเล็กชิ้นเดียวของ "ตอบสถานะ release ให้ปลอดภัย"'],
+    meta: { model: 'mock', usedRoomFiles: [], repairUsed: false },
+  };
+
+  const payload = buildPayloadFromAiActionResponse('client_response', response, [], {
+    deliverableType: 'reply',
+    immediateNeed: 'send_reply_now',
+    missingInputs: [],
+    workContext: 'Zenith Bank รอสถานะ release และ payment webhook ยัง timeout',
+    behaviorIntent: 'client_delivery',
+    confidence: 0.86,
+  }, task);
+  const steps = payload.recommended_action.micro_steps.join(' ');
+
+  assert.match(steps, /Zenith Bank|webhook|release/);
+  assert.doesNotMatch(steps, /ABC Corp/);
+});
+
+test('buildBootstrapMicroSteps keeps gentle generic fallback for overload-only context', () => {
+  const steps = buildBootstrapMicroSteps(
+    {
+      title: 'เลือกก้าวเล็กที่เริ่มได้',
+      successSignal: 'เริ่มได้หนึ่งก้าว',
+    },
+    {
+      deliverableType: 'unknown',
+      immediateNeed: 'resume_execution',
+      missingInputs: [],
+      workContext: 'หิวและสมองตื้อ ยังไม่มีบริบทงานเฉพาะ',
+      behaviorIntent: 'personal_friction',
+      confidence: 0.7,
+    },
+    makeTask({ sourceText: 'ผมหิวมาก สมองตื้อ ไม่รู้จะเริ่มอะไรดี' }),
+  );
+
+  assert.equal(steps.length, 3);
+  assert.match(steps.join(' '), /กิน|พัก|เติม|พลัง|ก้าวแรก/);
+});
+
+test('buildPayloadFromAiActionResponse rejects title echo starterMicroSteps to grounded fallback', () => {
+  const task = makeTask({
+    sourceText: 'ABC Corp ทวงงานในแชต prod incident ยังไม่มี RCA Dashboard กับ payment API ยังไม่ชัด',
+    taskFrame: {
+      objective: 'ตอบ ABC Corp แบบไม่ commit เวลา',
+      stage: 'triage',
+      stakeholders: ['ABC Corp'],
+    },
+  });
+  const response: AiActionResponse = {
+    chosenAction: {
+      title: 'ตอบ ABC Corp แบบไม่ commit เวลา',
+      rationale: 'ลูกค้ารอคำตอบ',
+      successSignal: 'มีข้อความตอบกลับ',
+    },
+    alternatives: [],
+    whyThisNow: 'ต้องลดความเสี่ยงจาก prod incident',
+    situationSummary: 'ABC Corp รอคำตอบเรื่อง prod incident',
+    starterMicroSteps: [
+      'ทำก้าวเล็กชิ้นเดียวของ "ตอบ ABC Corp แบบไม่ commit เวลา"',
+      'เปิดแค่หน้าจอเดียวที่เกี่ยวกับ ABC Corp',
+      'เช็กผลว่าตอนนี้ตอบ ABC Corp แบบไม่ commit เวลา',
+    ],
+    meta: { model: 'mock', usedRoomFiles: [], repairUsed: false },
+  };
+
+  const payload = buildPayloadFromAiActionResponse('client_response', response, [], {
+    deliverableType: 'reply',
+    immediateNeed: 'send_reply_now',
+    missingInputs: [],
+    workContext: 'ABC Corp รอคำตอบเรื่อง prod incident',
+    behaviorIntent: 'client_delivery',
+    confidence: 0.9,
+  }, task);
+
+  assert.equal(payload.recommended_action.micro_steps_source, 'fallback');
+  assert.doesNotMatch(payload.recommended_action.micro_steps.join(' '), /ทำก้าวเล็กชิ้นเดียวของ/);
+});

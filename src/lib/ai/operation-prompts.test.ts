@@ -5,6 +5,7 @@ import { createTaskContext } from '@/lib/store/idb';
 import type { TaskContext, RescueHistoryItem, PendingInput } from '@/lib/store/idb';
 import {
   ACTION_SYSTEM_PROMPT,
+  PUTER_ACTION_SYSTEM_PROMPT,
   RESCUE_SYSTEM_PROMPT,
   buildActionUserPrompt,
   buildReentryUserPrompt,
@@ -71,6 +72,16 @@ test('operation prompts include support-mode guardrails for personal friction', 
   assert.ok(ACTION_SYSTEM_PROMPT.includes('ห้ามแต่งบริบทลูกค้าหรือไฟล์ขึ้นมาเอง'), 'action prompt must not invent client/file context');
   assert.ok(RESCUE_SYSTEM_PROMPT.includes('mirror คำสำคัญจากบริบทผู้ใช้'), 'rescue prompt should mirror user wording before diagnosis');
   assert.ok(RESCUE_SYSTEM_PROMPT.includes('low_energy หรือ shrink/pause_cleanly'), 'rescue prompt should route personal friction gently');
+});
+
+test('Puter action prompt asks for work-artifact-first starterMicroSteps', () => {
+  assert.ok(PUTER_ACTION_SYSTEM_PROMPT.includes('reset ได้มากสุด 1 ก้าว'), 'Puter prompt should limit reset steps');
+  assert.ok(PUTER_ACTION_SYSTEM_PROMPT.includes('อย่างน้อย 2 ก้าวต้องพูดถึง room/work anchors'), 'Puter prompt should require grounded anchors');
+  assert.ok(PUTER_ACTION_SYSTEM_PROMPT.includes('ก้าวแรกต้องเป็น work artifact'), 'Puter prompt should make step 1 artifact-first');
+  assert.ok(PUTER_ACTION_SYSTEM_PROMPT.includes('ห้าม echo action title/objective'), 'Puter prompt should ban title/objective echo');
+  assert.ok(PUTER_ACTION_SYSTEM_PROMPT.includes('สรุปสถานะ prod/CPU spike เป็น 3 บรรทัด'), 'Puter prompt should include ABC Corp incident example');
+  assert.ok(PUTER_ACTION_SYSTEM_PROMPT.includes('แยก Dashboard กับ payment API ว่าค้างตรงไหน'), 'Puter prompt should include work split example');
+  assert.ok(PUTER_ACTION_SYSTEM_PROMPT.includes('ร่างข้อความตอบ ABC Corp แบบไม่ commit เวลา'), 'Puter prompt should include reply artifact example');
 });
 
 test('ONE_ACTION prompt: two unanswered pendingInputs biases toward one focused question', () => {

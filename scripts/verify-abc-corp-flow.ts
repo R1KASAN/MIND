@@ -144,9 +144,9 @@ async function run() {
     await smallerBtn.waitFor({ state: 'visible' });
     console.log('Alternatives section and "เล็กลง" button are present.');
 
-    const evidenceLink = page.getByText('ดูที่มาของก้าวนี้');
+    const evidenceLink = page.getByText('ดูที่มาและหลักฐานของก้าวนี้');
     await evidenceLink.waitFor({ state: 'visible' });
-    console.log('Evidence link "ดูที่มาของก้าวนี้" is visible.');
+    console.log('Evidence link "ดูที่มาและหลักฐานของก้าวนี้" is visible.');
 
     // Click evidence link to expand and assert it reveals source details
     await evidenceLink.click();
