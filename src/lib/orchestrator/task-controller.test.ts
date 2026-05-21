@@ -456,7 +456,7 @@ test('handleMakeSmaller accepts a richer scaffold when downstream steps become m
   global.fetch = async () => new Response(JSON.stringify({
     planTitle: 'ล็อกของที่ต้องรู้ก่อนทำ proposal',
     steps: [
-      { id: 'step-1', text: 'ขยับอีกนิด: รวบ requirement ที่มีอยู่' },
+      { id: 'step-1', text: 'ขยับอีกนิด: รวบ requirement ที่มีอยู่ของลูกค้า' },
       { id: 'step-2', text: 'แยก requirement ที่ชัดแล้วออกจาก assumption' },
       { id: 'step-3', text: 'ทำ timeline รอบแรกจากส่วนที่ชัด' },
       { id: 'step-4', text: 'เตรียม estimate ช่วงราคาเบื้องต้น' },
@@ -2103,6 +2103,456 @@ test('handleEnterRescue falls back with safe-copy language when rescue fails', a
     assert.equal(latestSession?.uiRoute, 'RESCUE');
     assert.equal(latestSession?.status, 'RESCUE');
     assert.equal(latestSession?.task?.lifecycleState, 'stalled');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('handleMakeSmaller with invalid scaffold stays on Rescue with failed feedback', async () => {
+  const payload = makePayload();
+  const task = makeTask({
+    sourceText: 'ลูกค้าส่ง feedback เรื่องหน้า landing',
+    lifecycleState: 'stalled',
+    currentActionId: 'action-1',
+    lastSynthesis: payload,
+    currentPlan: {
+      actionTitle: payload.recommended_action.title,
+      steps: payload.recommended_action.micro_steps.map((step, index) => ({
+        id: `step-${index + 1}`,
+        text: step,
+      })),
+    },
+  });
+  const session = normalizeSession({
+    lastActive: 100,
+    uiRoute: 'RESCUE',
+    notThisCount: 0,
+    currentActionId: task.currentActionId,
+    currentPayload: payload,
+    task,
+  });
+  const sessionRef = { current: session };
+  let latestSession: AppSession | null = session;
+  let latestFeedback: any = null;
+
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Response(JSON.stringify({
+    planTitle: 'Analyze client feedback',
+    steps: [
+      { id: 'step-1', text: 'Step 1: Check requirements' },
+      { id: 'step-2', text: 'Step 2: Respond to client' },
+    ],
+    shortcutOptions: [],
+    revisedCurrentStepIndex: 0,
+    meta: {
+      model: 'qwen2.5:3b',
+      usedRoomFiles: [],
+      repairUsed: false,
+    },
+  }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  try {
+    const controller = createTaskController({
+      session,
+      sessionRef,
+      currentPayload: payload,
+      currentActionState: makeAction(),
+      clarificationPrompt: '',
+      dumpStartTime: null,
+      aiModel: 'qwen2.5:3b',
+      setSession: (value) => {
+        latestSession = value;
+      },
+      setCurrentPayload: () => undefined,
+      setCurrentActionState: () => undefined,
+      setManualFallbackSuggestedActions: () => undefined,
+      setManualFallbackRetryable: () => undefined,
+      setClarificationPrompt: () => undefined,
+      setCurrentWhyThisNow: () => undefined,
+      setCurrentRescueState: () => undefined,
+      setIsRescueLoading: () => undefined,
+      setIsNegotiatingAction: () => undefined,
+      setIsReentryLoading: () => undefined,
+      isScaffoldRefining: false,
+      setIsScaffoldRefining: () => undefined,
+      setScaffoldRefineFeedback: (value) => {
+        latestFeedback = value;
+      },
+      setDumpStartTime: () => undefined,
+      recordAiOpsEntry: () => undefined,
+      persistSession: async () => undefined,
+      persistActionSave: async () => undefined,
+      persistActionUpdate: async () => undefined,
+    });
+
+    await controller.handleMakeSmaller();
+
+    assert.equal(latestSession?.uiRoute, 'RESCUE');
+    assert.equal(latestFeedback?.reason, 'failed');
+    assert.equal(latestFeedback?.message, SCAFFOLD_REFINE_FAILED_COPY);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('handleMakeSmaller with valid scaffold updates state and navigates once to SCAFFOLD', async () => {
+  const payload = makePayload();
+  const task = makeTask({
+    sourceText: 'ลูกค้าส่ง feedback เรื่องหน้า landing',
+    lifecycleState: 'stalled',
+    currentActionId: 'action-1',
+    lastSynthesis: payload,
+    currentPlan: {
+      actionTitle: payload.recommended_action.title,
+      steps: payload.recommended_action.micro_steps.map((step, index) => ({
+        id: `step-${index + 1}`,
+        text: step,
+      })),
+    },
+  });
+  const session = normalizeSession({
+    lastActive: 100,
+    uiRoute: 'RESCUE',
+    notThisCount: 0,
+    currentActionId: task.currentActionId,
+    currentPayload: payload,
+    task,
+  });
+  const sessionRef = { current: session };
+  let latestSession: AppSession | null = session;
+  let sessionUpdateCount = 0;
+  let currentPayload: AiSynthesisResponse | null = payload;
+
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Response(JSON.stringify({
+    planTitle: 'สรุปและตอบกลับ feedback',
+    steps: [
+      { id: 'step-1', text: 'ขยับอีกนิด: สรุปหัวข้อ feedback จากลูกค้า' },
+      { id: 'step-2', text: 'ขยับอีกนิด: ร่างข้อความตอบกลับลูกค้าที่ชัดเจน' },
+      { id: 'step-3', text: 'ขยับอีกนิด: ส่งข้อความยืนยันกับลูกค้าอีกครั้ง' },
+    ],
+    shortcutOptions: [],
+    revisedCurrentStepIndex: 0,
+    meta: {
+      model: 'qwen2.5:3b',
+      usedRoomFiles: [],
+      repairUsed: false,
+    },
+  }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  try {
+    const controller = createTaskController({
+      session,
+      sessionRef,
+      currentPayload: payload,
+      currentActionState: makeAction(),
+      clarificationPrompt: '',
+      dumpStartTime: null,
+      aiModel: 'qwen2.5:3b',
+      setSession: (value) => {
+        latestSession = value;
+        sessionUpdateCount++;
+      },
+      setCurrentPayload: (value) => {
+        currentPayload = value;
+      },
+      setCurrentActionState: () => undefined,
+      setManualFallbackSuggestedActions: () => undefined,
+      setManualFallbackRetryable: () => undefined,
+      setClarificationPrompt: () => undefined,
+      setCurrentWhyThisNow: () => undefined,
+      setCurrentRescueState: () => undefined,
+      setIsRescueLoading: () => undefined,
+      setIsNegotiatingAction: () => undefined,
+      setIsReentryLoading: () => undefined,
+      isScaffoldRefining: false,
+      setIsScaffoldRefining: () => undefined,
+      setScaffoldRefineFeedback: () => undefined,
+      setDumpStartTime: () => undefined,
+      recordAiOpsEntry: () => undefined,
+      persistSession: async () => undefined,
+      persistActionSave: async () => undefined,
+      persistActionUpdate: async () => undefined,
+    });
+
+    await controller.handleMakeSmaller();
+
+    assert.equal(latestSession?.uiRoute, 'SCAFFOLD');
+    assert.equal(latestSession?.task?.assistantMode, 'scaffold_refinement');
+    assert.equal(sessionUpdateCount, 1);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('handleMakeSmaller rejects English scaffold in a Thai room', async () => {
+  const payload = makePayload();
+  const task = makeTask({
+    sourceText: 'ลูกค้าส่ง feedback เรื่องหน้า landing',
+    lifecycleState: 'stalled',
+    currentActionId: 'action-1',
+    lastSynthesis: payload,
+    currentPlan: {
+      actionTitle: payload.recommended_action.title,
+      steps: payload.recommended_action.micro_steps.map((step, index) => ({
+        id: `step-${index + 1}`,
+        text: step,
+      })),
+    },
+  });
+  const session = normalizeSession({
+    lastActive: 100,
+    uiRoute: 'RESCUE',
+    notThisCount: 0,
+    currentActionId: task.currentActionId,
+    currentPayload: payload,
+    task,
+  });
+  const sessionRef = { current: session };
+  let latestSession: AppSession | null = session;
+  let latestFeedback: any = null;
+
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Response(JSON.stringify({
+    planTitle: 'Prepare feedback summary',
+    steps: [
+      { id: 'step-1', text: 'Step 1: Check landing page feedback' },
+      { id: 'step-2', text: 'Step 2: Draft the response email' },
+    ],
+    shortcutOptions: [],
+    revisedCurrentStepIndex: 0,
+    meta: {
+      model: 'qwen2.5:3b',
+      usedRoomFiles: [],
+      repairUsed: false,
+    },
+  }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  try {
+    const controller = createTaskController({
+      session,
+      sessionRef,
+      currentPayload: payload,
+      currentActionState: makeAction(),
+      clarificationPrompt: '',
+      dumpStartTime: null,
+      aiModel: 'qwen2.5:3b',
+      setSession: (value) => {
+        latestSession = value;
+      },
+      setCurrentPayload: () => undefined,
+      setCurrentActionState: () => undefined,
+      setManualFallbackSuggestedActions: () => undefined,
+      setManualFallbackRetryable: () => undefined,
+      setClarificationPrompt: () => undefined,
+      setCurrentWhyThisNow: () => undefined,
+      setCurrentRescueState: () => undefined,
+      setIsRescueLoading: () => undefined,
+      setIsNegotiatingAction: () => undefined,
+      setIsReentryLoading: () => undefined,
+      isScaffoldRefining: false,
+      setIsScaffoldRefining: () => undefined,
+      setScaffoldRefineFeedback: (value) => {
+        latestFeedback = value;
+      },
+      setDumpStartTime: () => undefined,
+      recordAiOpsEntry: () => undefined,
+      persistSession: async () => undefined,
+      persistActionSave: async () => undefined,
+      persistActionUpdate: async () => undefined,
+    });
+
+    await controller.handleMakeSmaller();
+
+    assert.equal(latestSession?.uiRoute, 'RESCUE');
+    assert.equal(latestFeedback?.reason, 'failed');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('handleMakeSmaller rejects scaffold if it does not contain room anchors', async () => {
+  const payload = makePayload();
+  const task = makeTask({
+    sourceText: 'ลูกค้าส่ง feedback เรื่องหน้า landing',
+    lifecycleState: 'stalled',
+    currentActionId: 'action-1',
+    lastSynthesis: payload,
+    currentPlan: {
+      actionTitle: payload.recommended_action.title,
+      steps: payload.recommended_action.micro_steps.map((step, index) => ({
+        id: `step-${index + 1}`,
+        text: step,
+      })),
+    },
+  });
+  const session = normalizeSession({
+    lastActive: 100,
+    uiRoute: 'RESCUE',
+    notThisCount: 0,
+    currentActionId: task.currentActionId,
+    currentPayload: payload,
+    task,
+  });
+  const sessionRef = { current: session };
+  let latestSession: AppSession | null = session;
+  let latestFeedback: any = null;
+
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Response(JSON.stringify({
+    planTitle: 'เตรียมตัวไปซื้อของกิน',
+    steps: [
+      { id: 'step-1', text: 'ขยับอีกนิด: ตรวจดูเงินในกระเป๋า' },
+      { id: 'step-2', text: 'ขยับอีกนิด: เดินไปตลาดสด' },
+    ],
+    shortcutOptions: [],
+    revisedCurrentStepIndex: 0,
+    meta: {
+      model: 'qwen2.5:3b',
+      usedRoomFiles: [],
+      repairUsed: false,
+    },
+  }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  try {
+    const controller = createTaskController({
+      session,
+      sessionRef,
+      currentPayload: payload,
+      currentActionState: makeAction(),
+      clarificationPrompt: '',
+      dumpStartTime: null,
+      aiModel: 'qwen2.5:3b',
+      setSession: (value) => {
+        latestSession = value;
+      },
+      setCurrentPayload: () => undefined,
+      setCurrentActionState: () => undefined,
+      setManualFallbackSuggestedActions: () => undefined,
+      setManualFallbackRetryable: () => undefined,
+      setClarificationPrompt: () => undefined,
+      setCurrentWhyThisNow: () => undefined,
+      setCurrentRescueState: () => undefined,
+      setIsRescueLoading: () => undefined,
+      setIsNegotiatingAction: () => undefined,
+      setIsReentryLoading: () => undefined,
+      isScaffoldRefining: false,
+      setIsScaffoldRefining: () => undefined,
+      setScaffoldRefineFeedback: (value) => {
+        latestFeedback = value;
+      },
+      setDumpStartTime: () => undefined,
+      recordAiOpsEntry: () => undefined,
+      persistSession: async () => undefined,
+      persistActionSave: async () => undefined,
+      persistActionUpdate: async () => undefined,
+    });
+
+    await controller.handleMakeSmaller();
+
+    assert.equal(latestSession?.uiRoute, 'RESCUE');
+    assert.equal(latestFeedback?.reason, 'failed');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('handleMakeSmaller rejects scaffold if a step echoes action title', async () => {
+  const payload = makePayload();
+  const task = makeTask({
+    sourceText: 'ลูกค้าส่ง feedback เรื่องหน้า landing',
+    lifecycleState: 'stalled',
+    currentActionId: 'action-1',
+    lastSynthesis: payload,
+    currentPlan: {
+      actionTitle: payload.recommended_action.title,
+      steps: payload.recommended_action.micro_steps.map((step, index) => ({
+        id: `step-${index + 1}`,
+        text: step,
+      })),
+    },
+  });
+  const session = normalizeSession({
+    lastActive: 100,
+    uiRoute: 'RESCUE',
+    notThisCount: 0,
+    currentActionId: task.currentActionId,
+    currentPayload: payload,
+    task,
+  });
+  const sessionRef = { current: session };
+  let latestSession: AppSession | null = session;
+  let latestFeedback: any = null;
+
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Response(JSON.stringify({
+    planTitle: 'สรุปและตอบกลับ feedback',
+    steps: [
+      { id: 'step-1', text: 'ขยับอีกนิด: สรุปสถานะงานและขอ clarification ที่ยังไม่ชัด' },
+      { id: 'step-2', text: 'ขยับอีกนิด: ร่างคำตอบเรื่อง landing' },
+    ],
+    shortcutOptions: [],
+    revisedCurrentStepIndex: 0,
+    meta: {
+      model: 'qwen2.5:3b',
+      usedRoomFiles: [],
+      repairUsed: false,
+    },
+  }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  try {
+    const controller = createTaskController({
+      session,
+      sessionRef,
+      currentPayload: payload,
+      currentActionState: makeAction(),
+      clarificationPrompt: '',
+      dumpStartTime: null,
+      aiModel: 'qwen2.5:3b',
+      setSession: (value) => {
+        latestSession = value;
+      },
+      setCurrentPayload: () => undefined,
+      setCurrentActionState: () => undefined,
+      setManualFallbackSuggestedActions: () => undefined,
+      setManualFallbackRetryable: () => undefined,
+      setClarificationPrompt: () => undefined,
+      setCurrentWhyThisNow: () => undefined,
+      setCurrentRescueState: () => undefined,
+      setIsRescueLoading: () => undefined,
+      setIsNegotiatingAction: () => undefined,
+      setIsReentryLoading: () => undefined,
+      isScaffoldRefining: false,
+      setIsScaffoldRefining: () => undefined,
+      setScaffoldRefineFeedback: (value) => {
+        latestFeedback = value;
+      },
+      setDumpStartTime: () => undefined,
+      recordAiOpsEntry: () => undefined,
+      persistSession: async () => undefined,
+      persistActionSave: async () => undefined,
+      persistActionUpdate: async () => undefined,
+    });
+
+    await controller.handleMakeSmaller();
+
+    assert.equal(latestSession?.uiRoute, 'RESCUE');
+    assert.equal(latestFeedback?.reason, 'failed');
   } finally {
     global.fetch = originalFetch;
   }
