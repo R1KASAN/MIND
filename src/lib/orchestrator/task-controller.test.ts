@@ -82,6 +82,47 @@ function makeSession(task: TaskContext, payload: AiSynthesisResponse): AppSessio
   });
 }
 
+function makeRescueResponse(reason: AiRescueResponse['diagnosis']['primaryReason'] = 'too_big'): AiRescueResponse {
+  return {
+    diagnosis: {
+      primaryReason: reason,
+      explanation: reason === 'dependency'
+        ? 'ติดเพราะต้องรอข้อมูลจากคนอื่นก่อนเดินต่อ'
+        : 'ติดเพราะก้าวนี้ยังใหญ่เกินไปเมื่อเทียบกับบริบทตอนนี้',
+    },
+    rescuePlan: {
+      mode: reason === 'dependency' ? 'follow_up' : 'shrink',
+      steps: reason === 'dependency'
+        ? ['ถามคนที่ถือข้อมูลอยู่ให้ตอบหนึ่งจุด', 'รอคำตอบก่อน commit งานถัดไป']
+        : ['ย่อยก้าวนี้ให้เหลือหนึ่งชิ้น', 'ทำชิ้นนั้นให้จบก่อนกลับมาดูส่วนที่เหลือ'],
+    },
+    suggestedMessage: reason === 'dependency' ? 'ขอข้อมูลเพิ่มหนึ่งจุดก่อนนะครับ' : undefined,
+    meta: {
+      model: 'test-rescue',
+      repairUsed: false,
+      usedRoomFiles: [],
+    },
+  };
+}
+
+function waitForCondition(assertion: () => boolean, label: string) {
+  return new Promise<void>((resolve, reject) => {
+    const startedAt = Date.now();
+    const check = () => {
+      if (assertion()) {
+        resolve();
+        return;
+      }
+      if (Date.now() - startedAt > 1000) {
+        reject(new Error(`Timed out waiting for ${label}`));
+        return;
+      }
+      setTimeout(check, 0);
+    };
+    check();
+  });
+}
+
 test('mergeTaskConstraints persists reply-first and patches time/energy constraints', () => {
   const task = makeTask({
     constraints: {
@@ -2103,6 +2144,306 @@ test('handleEnterRescue falls back with safe-copy language when rescue fails', a
     assert.equal(latestSession?.uiRoute, 'RESCUE');
     assert.equal(latestSession?.status, 'RESCUE');
     assert.equal(latestSession?.task?.lifecycleState, 'stalled');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('openDumpWithCurrentContext ignores delayed rescue result after user leaves Rescue', async () => {
+  const payload = makePayload();
+  const task = makeTask({
+    lifecycleState: 'in_scaffold',
+    currentActionId: 'action-1',
+    lastSynthesis: payload,
+  });
+  const session = makeSession(task, payload);
+  const sessionRef = { current: session };
+  let latestSession: AppSession | null = session;
+  let latestRescueState: AiRescueResponse | null = null;
+  const rescueRequests: Array<{ resolve: (response: Response) => void }> = [];
+
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Promise<Response>((resolve) => {
+    rescueRequests.push({ resolve });
+  });
+
+  try {
+    const controller = createTaskController({
+      session,
+      sessionRef,
+      currentPayload: payload,
+      currentActionState: makeAction(),
+      clarificationPrompt: '',
+      dumpStartTime: null,
+      aiModel: 'qwen2.5:3b',
+      setSession: (value) => {
+        latestSession = value;
+      },
+      setCurrentPayload: () => undefined,
+      setCurrentActionState: () => undefined,
+      setManualFallbackSuggestedActions: () => undefined,
+      setManualFallbackRetryable: () => undefined,
+      setClarificationPrompt: () => undefined,
+      setCurrentWhyThisNow: () => undefined,
+      setCurrentRescueState: (value) => {
+        latestRescueState = value;
+      },
+      setIsRescueLoading: () => undefined,
+      setIsNegotiatingAction: () => undefined,
+      setIsReentryLoading: () => undefined,
+      isScaffoldRefining: false,
+      setIsScaffoldRefining: () => undefined,
+      setScaffoldRefineFeedback: () => undefined,
+      setDumpStartTime: () => undefined,
+      recordAiOpsEntry: () => undefined,
+      persistSession: async () => undefined,
+      persistActionSave: async () => undefined,
+      persistActionUpdate: async () => undefined,
+    });
+
+    const rescuePromise = controller.handleEnterRescue();
+    await waitForCondition(() => rescueRequests.length === 1, 'rescue request to start');
+    assert.equal(latestSession?.uiRoute, 'RESCUE');
+
+    await controller.openDumpWithCurrentContext();
+    assert.equal(latestSession?.uiRoute, 'DUMP_ENTRY');
+
+    rescueRequests[0].resolve(new Response(JSON.stringify(makeRescueResponse('too_big')), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    await rescuePromise;
+
+    assert.equal(latestSession?.uiRoute, 'DUMP_ENTRY');
+    assert.equal(latestRescueState, null);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('handleEnterRescue lets the newest rescue request win over an older delayed result', async () => {
+  const payload = makePayload();
+  const task = makeTask({
+    lifecycleState: 'in_scaffold',
+    currentActionId: 'action-1',
+    lastSynthesis: payload,
+  });
+  const session = makeSession(task, payload);
+  const sessionRef = { current: session };
+  let latestSession: AppSession | null = session;
+  let latestRescueState: AiRescueResponse | null = null;
+  const rescueRequests: Array<{ resolve: (response: Response) => void }> = [];
+
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Promise<Response>((resolve) => {
+    rescueRequests.push({ resolve });
+  });
+
+  try {
+    const controller = createTaskController({
+      session,
+      sessionRef,
+      currentPayload: payload,
+      currentActionState: makeAction(),
+      clarificationPrompt: '',
+      dumpStartTime: null,
+      aiModel: 'qwen2.5:3b',
+      setSession: (value) => {
+        latestSession = value;
+      },
+      setCurrentPayload: () => undefined,
+      setCurrentActionState: () => undefined,
+      setManualFallbackSuggestedActions: () => undefined,
+      setManualFallbackRetryable: () => undefined,
+      setClarificationPrompt: () => undefined,
+      setCurrentWhyThisNow: () => undefined,
+      setCurrentRescueState: (value) => {
+        latestRescueState = value;
+      },
+      setIsRescueLoading: () => undefined,
+      setIsNegotiatingAction: () => undefined,
+      setIsReentryLoading: () => undefined,
+      isScaffoldRefining: false,
+      setIsScaffoldRefining: () => undefined,
+      setScaffoldRefineFeedback: () => undefined,
+      setDumpStartTime: () => undefined,
+      recordAiOpsEntry: () => undefined,
+      persistSession: async () => undefined,
+      persistActionSave: async () => undefined,
+      persistActionUpdate: async () => undefined,
+    });
+
+    const firstRescue = controller.handleEnterRescue();
+    await waitForCondition(() => rescueRequests.length === 1, 'first rescue request');
+    const secondRescue = controller.handleEnterRescue();
+    await waitForCondition(() => rescueRequests.length === 2, 'second rescue request');
+
+    rescueRequests[0].resolve(new Response(JSON.stringify(makeRescueResponse('too_big')), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    await firstRescue;
+    assert.equal(latestRescueState, null);
+
+    rescueRequests[1].resolve(new Response(JSON.stringify(makeRescueResponse('dependency')), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    await secondRescue;
+
+    assert.equal(latestSession?.uiRoute, 'RESCUE');
+    const finalRescueState = latestRescueState as AiRescueResponse | null;
+    assert.equal(finalRescueState?.diagnosis.primaryReason, 'dependency');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('handleEnterRescue ignores rescue error after user leaves Rescue', async () => {
+  const payload = makePayload();
+  const task = makeTask({
+    lifecycleState: 'in_scaffold',
+    currentActionId: 'action-1',
+    lastSynthesis: payload,
+  });
+  const session = makeSession(task, payload);
+  const sessionRef = { current: session };
+  let latestSession: AppSession | null = session;
+  let latestRescueState: AiRescueResponse | null = null;
+  const rescueRequests: Array<{ resolve: (response: Response) => void }> = [];
+  const originalMaxAttempts = process.env.MIND_RESCUE_RETRY_MAX_ATTEMPTS;
+
+  const originalFetch = global.fetch;
+  process.env.MIND_RESCUE_RETRY_MAX_ATTEMPTS = '1';
+  global.fetch = async () => new Promise<Response>((resolve) => {
+    rescueRequests.push({ resolve });
+  });
+
+  try {
+    const controller = createTaskController({
+      session,
+      sessionRef,
+      currentPayload: payload,
+      currentActionState: makeAction(),
+      clarificationPrompt: '',
+      dumpStartTime: null,
+      aiModel: 'qwen2.5:3b',
+      setSession: (value) => {
+        latestSession = value;
+      },
+      setCurrentPayload: () => undefined,
+      setCurrentActionState: () => undefined,
+      setManualFallbackSuggestedActions: () => undefined,
+      setManualFallbackRetryable: () => undefined,
+      setClarificationPrompt: () => undefined,
+      setCurrentWhyThisNow: () => undefined,
+      setCurrentRescueState: (value) => {
+        latestRescueState = value;
+      },
+      setIsRescueLoading: () => undefined,
+      setIsNegotiatingAction: () => undefined,
+      setIsReentryLoading: () => undefined,
+      isScaffoldRefining: false,
+      setIsScaffoldRefining: () => undefined,
+      setScaffoldRefineFeedback: () => undefined,
+      setDumpStartTime: () => undefined,
+      recordAiOpsEntry: () => undefined,
+      persistSession: async () => undefined,
+      persistActionSave: async () => undefined,
+      persistActionUpdate: async () => undefined,
+    });
+
+    const rescuePromise = controller.handleEnterRescue();
+    await waitForCondition(() => rescueRequests.length === 1, 'rescue error request');
+    await controller.openDumpWithCurrentContext();
+
+    rescueRequests[0].resolve(new Response(JSON.stringify({
+      ok: false,
+      error: {
+        reason: 'unknown',
+        message: 'AI rescue ไม่สำเร็จ (500)',
+        retryable: true,
+      },
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    await rescuePromise;
+
+    assert.equal(latestSession?.uiRoute, 'DUMP_ENTRY');
+    assert.equal(latestRescueState, null);
+  } finally {
+    global.fetch = originalFetch;
+    if (originalMaxAttempts === undefined) delete process.env.MIND_RESCUE_RETRY_MAX_ATTEMPTS;
+    else process.env.MIND_RESCUE_RETRY_MAX_ATTEMPTS = originalMaxAttempts;
+  }
+});
+
+test('handleEnterRescue ignores AbortError after user leaves Rescue', async () => {
+  const payload = makePayload();
+  const task = makeTask({
+    lifecycleState: 'in_scaffold',
+    currentActionId: 'action-1',
+    lastSynthesis: payload,
+  });
+  const session = makeSession(task, payload);
+  const sessionRef = { current: session };
+  let latestSession: AppSession | null = session;
+  let latestRescueState: AiRescueResponse | null = null;
+  let fetchStarted = false;
+
+  const originalFetch = global.fetch;
+  global.fetch = async (_input, init) => new Promise<Response>((_resolve, reject) => {
+    fetchStarted = true;
+    const signal = typeof init === 'object' && init && 'signal' in init
+      ? init.signal as AbortSignal | undefined
+      : undefined;
+    signal?.addEventListener('abort', () => {
+      reject(new DOMException('Request aborted', 'AbortError'));
+    }, { once: true });
+  });
+
+  try {
+    const controller = createTaskController({
+      session,
+      sessionRef,
+      currentPayload: payload,
+      currentActionState: makeAction(),
+      clarificationPrompt: '',
+      dumpStartTime: null,
+      aiModel: 'qwen2.5:3b',
+      setSession: (value) => {
+        latestSession = value;
+      },
+      setCurrentPayload: () => undefined,
+      setCurrentActionState: () => undefined,
+      setManualFallbackSuggestedActions: () => undefined,
+      setManualFallbackRetryable: () => undefined,
+      setClarificationPrompt: () => undefined,
+      setCurrentWhyThisNow: () => undefined,
+      setCurrentRescueState: (value) => {
+        latestRescueState = value;
+      },
+      setIsRescueLoading: () => undefined,
+      setIsNegotiatingAction: () => undefined,
+      setIsReentryLoading: () => undefined,
+      isScaffoldRefining: false,
+      setIsScaffoldRefining: () => undefined,
+      setScaffoldRefineFeedback: () => undefined,
+      setDumpStartTime: () => undefined,
+      recordAiOpsEntry: () => undefined,
+      persistSession: async () => undefined,
+      persistActionSave: async () => undefined,
+      persistActionUpdate: async () => undefined,
+    });
+
+    const rescuePromise = controller.handleEnterRescue();
+    await waitForCondition(() => fetchStarted, 'abortable rescue request');
+    await controller.openDumpWithCurrentContext();
+    await rescuePromise;
+
+    assert.equal(latestSession?.uiRoute, 'DUMP_ENTRY');
+    assert.equal(latestRescueState, null);
   } finally {
     global.fetch = originalFetch;
   }

@@ -176,9 +176,24 @@ async function parseOperationResponse<T>(
   return parsed.data;
 }
 
-function waitForBackoff(delayMs: number) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, delayMs);
+function waitForBackoff(delayMs: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Rescue request aborted', 'AbortError'));
+      return;
+    }
+
+    const timeoutId = globalThis.setTimeout(() => {
+      signal?.removeEventListener('abort', handleAbort);
+      resolve();
+    }, delayMs);
+
+    function handleAbort() {
+      globalThis.clearTimeout(timeoutId);
+      reject(new DOMException('Rescue request aborted', 'AbortError'));
+    }
+
+    signal?.addEventListener('abort', handleAbort, { once: true });
   });
 }
 
@@ -505,7 +520,7 @@ export async function requestScaffold(
   return scaffold;
 }
 
-export async function requestRescue(task: TaskContext, action: Action | null, currentStepIndex: number): Promise<AiRescueResponse> {
+export async function requestRescue(task: TaskContext, action: Action | null, currentStepIndex: number, options?: { signal?: AbortSignal }): Promise<AiRescueResponse> {
   const { maxAttempts } = getRescueRetryConfig();
   let retryAttempted = false;
   let retryCount = 0;
@@ -535,6 +550,7 @@ export async function requestRescue(task: TaskContext, action: Action | null, cu
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body,
+        signal: options?.signal,
       });
 
       const parsed = await parseOperationResponse(
@@ -630,7 +646,7 @@ export async function requestRescue(task: TaskContext, action: Action | null, cu
           willRetry: true,
           retryBackoffMs,
         });
-        await waitForBackoff(retryBackoffMs);
+        await waitForBackoff(retryBackoffMs, options?.signal);
         continue;
       }
 

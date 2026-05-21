@@ -192,11 +192,22 @@ export function createTaskController(bindings: TaskControllerBindings) {
   const persistActionSave = bindings.persistActionSave ?? saveAction;
   const persistActionUpdate = bindings.persistActionUpdate ?? updateAction;
   let isDumpHandling = false;
+  let rescueGeneration = 0;
+  let rescueAbortController: AbortController | null = null;
 
   const clearScaffoldRefineState = (preserveFeedback = false) => {
     bindings.setIsScaffoldRefining(false);
     if (!preserveFeedback) {
       bindings.setScaffoldRefineFeedback(null);
+    }
+  };
+
+  /** Bump rescue generation and abort in-flight request so stale results are discarded. */
+  const invalidateRescue = () => {
+    rescueGeneration += 1;
+    if (rescueAbortController) {
+      try { rescueAbortController.abort(); } catch { /* user navigated away */ }
+      rescueAbortController = null;
     }
   };
 
@@ -949,8 +960,18 @@ export function createTaskController(bindings: TaskControllerBindings) {
       retrieval_enabled: false,
     }));
 
+    // Invalidate any previous in-flight rescue before starting a new one
+    invalidateRescue();
+    const thisGeneration = rescueGeneration;
+    const abortController = new AbortController();
+    rescueAbortController = abortController;
+
     try {
-      const rescue = await requestRescue(nextTask, bindings.currentActionState, currentTask.currentStepIndex);
+      const rescue = await requestRescue(nextTask, bindings.currentActionState, currentTask.currentStepIndex, { signal: abortController.signal });
+      // Guard: discard stale result if user navigated away or a newer rescue started
+      if (thisGeneration !== rescueGeneration) return;
+      const currentBase = getBaseSession();
+      if (currentBase && currentBase.uiRoute !== 'RESCUE') return;
       recordSuccess('rescue', rescue);
       bindings.setCurrentRescueState(rescue);
       const rescuedTask: TaskContext = {
@@ -967,6 +988,13 @@ export function createTaskController(bindings: TaskControllerBindings) {
       };
       await updateStatus('RESCUE', {}, rescuedTask);
     } catch (error) {
+      // If aborted (user navigated away), silently discard
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      if (abortController.signal.aborted) return;
+      // Guard: discard stale error if generation changed
+      if (thisGeneration !== rescueGeneration) return;
+      const currentBase = getBaseSession();
+      if (currentBase && currentBase.uiRoute !== 'RESCUE') return;
       if (error instanceof SynthesisFailure) {
         recordFailure(error);
       }
@@ -1012,7 +1040,11 @@ export function createTaskController(bindings: TaskControllerBindings) {
         await updateStatus('RESCUE', {}, rescueFallbackTask);
       }
     } finally {
-      bindings.setIsRescueLoading(false);
+      // Only clear loading if this is still the active rescue request
+      if (thisGeneration === rescueGeneration) {
+        bindings.setIsRescueLoading(false);
+        rescueAbortController = null;
+      }
     }
   };
 
@@ -1282,6 +1314,8 @@ export function createTaskController(bindings: TaskControllerBindings) {
     bindings.setCurrentPayload(null);
     bindings.setClarificationPrompt('');
     bindings.setCurrentWhyThisNow('');
+    // Invalidate in-flight rescue before clearing state — prevents stale result from routing back
+    invalidateRescue();
     bindings.setCurrentRescueState(null);
     bindings.setIsRescueLoading(false);
     bindings.setIsNegotiatingAction(false);
