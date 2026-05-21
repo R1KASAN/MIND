@@ -85,7 +85,7 @@ function uniqueAnchors(values: string[]) {
   return result;
 }
 
-function collectRoomArtifactAnchors(task?: TaskContext, taskShape?: TaskShape, actionTitle?: string) {
+export function collectRoomArtifactAnchors(task?: TaskContext, taskShape?: TaskShape, actionTitle?: string) {
   const text = [
     task?.sourceText,
     task?.extractedText,
@@ -135,7 +135,7 @@ function hasRoomWorkAnchors(task?: TaskContext, taskShape?: TaskShape, actionTit
   return collectRoomArtifactAnchors(task, taskShape, actionTitle).length >= 2;
 }
 
-function hasAnchorInStep(step: string, anchors: string[]) {
+export function hasAnchorInStep(step: string, anchors: string[]) {
   const normalizedStep = normalizeForStepMatch(step);
   return anchors.some((anchor) => normalizedStep.includes(normalizeForStepMatch(anchor)));
 }
@@ -181,7 +181,7 @@ function isArtifactStep(step: string) {
   ].some((token) => normalized.includes(token));
 }
 
-function echoesActionTitle(step: string, actionTitle?: string) {
+export function echoesActionTitle(step: string, actionTitle?: string) {
   if (!actionTitle) return false;
   const normalizedStep = normalizeForStepMatch(step);
   const normalizedTitle = normalizeForStepMatch(actionTitle);

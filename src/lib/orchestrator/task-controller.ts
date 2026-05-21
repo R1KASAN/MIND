@@ -11,6 +11,7 @@ import type {
   AiActionResponse,
   AiIntakeResponse,
   AiRescueResponse,
+  AiScaffoldResponse,
 } from '@/lib/ai/operations';
 import {
   buildAiOpsFailureEntry,
@@ -45,11 +46,15 @@ import {
   rememberWorkflow,
   resolveWorkflowType,
   routeFromResumeTarget,
+  collectRoomArtifactAnchors,
+  hasAnchorInStep,
+  echoesActionTitle,
 } from '@/lib/orchestrator/task-machine';
 import { synthesizeLocally } from '@/lib/ai/local-synthesis';
 import type { AnalyticsEventProperties } from '@/lib/analytics/local-analytics';
 import type { ActionEvidenceContext } from '@/lib/orchestrator/evidence-context';
 import type { IcpTag } from '@/lib/business/monetization';
+import type { TaskShape } from '@/lib/ai/task-shape';
 import {
   buildScaffoldRefineFeedback,
   inferScaffoldRefineFallback,
@@ -157,6 +162,28 @@ export function mergeTaskConstraints(
   }
 
   return { nextTask, persistedNegotiationMode };
+}
+
+function validateScaffold(
+  scaffold: AiScaffoldResponse,
+  task: TaskContext,
+  payload: AiSynthesisResponse,
+  action: Action,
+): boolean {
+  const hasThai = (text: string) => /[\u0E00-\u0E7F]/.test(text);
+  if (hasThai(task.sourceText)) {
+    if (!hasThai(scaffold.planTitle) || !scaffold.steps.every((s) => hasThai(s.text))) {
+      return false;
+    }
+  }
+  const anchors = collectRoomArtifactAnchors(task, payload.task_shape, action.title);
+  if (anchors.length > 0) {
+    const hasAnyAnchor = scaffold.steps.some((s) => hasAnchorInStep(s.text, anchors));
+    if (!hasAnyAnchor) return false;
+  }
+  const echoesTitle = scaffold.steps.some((s) => echoesActionTitle(s.text, action.title));
+  if (echoesTitle) return false;
+  return true;
 }
 
 export function createTaskController(bindings: TaskControllerBindings) {
@@ -763,16 +790,23 @@ export function createTaskController(bindings: TaskControllerBindings) {
       const initialMeta = refined.scaffold.meta;
       let structuralRetryMeta: typeof refined.scaffold.meta | undefined;
 
-      if (refined.refineResult !== 'success') {
+      let isValid = validateScaffold(refined.scaffold, taskForScaffold, currentPayload, currentAction);
+
+      if (refined.refineResult !== 'success' || !isValid) {
         refined = await buildRefinedArtifacts('structural_retry')
           .then((result) => {
             structuralRetryMeta = result.scaffold.meta;
             return result;
           })
           .catch(() => refined);
+        isValid = validateScaffold(refined.scaffold, taskForScaffold, currentPayload, currentAction);
       }
 
-      if (refined.refineResult !== 'success') {
+      if (refined.refineResult !== 'success' || !isValid) {
+        if (!isValid) {
+          setScaffoldRefineFeedback(buildScaffoldRefineFeedback('failed'));
+          return;
+        }
         const currentVisibleStep = previousVisibleSteps[0] ?? currentAction.microSteps[taskForScaffold.currentStepIndex] ?? currentAction.title;
         const fallback = inferScaffoldRefineFallback(taskForScaffold.blockerSignals, currentVisibleStep);
         const feedback = buildScaffoldRefineFeedback('no_change', {
