@@ -10,6 +10,12 @@ MIND should demonstrate one strong product story:
 
 > Paste client/project chaos into one room, get one next move, see why MIND suggested it, recover if the step is wrong, and come back to the same room without feeling reset.
 
+Week 3 quality review uses [Week 3 Quality Rubric: Core Room Loop](week3-quality-rubric.md) for manual replay of:
+
+```text
+Brain Dump -> Clarification -> ONE_ACTION -> Evidence -> Rescue -> Reentry
+```
+
 The prototype is done when these demo-critical flows work in the browser without a blocking defect:
 
 - fresh paste-text intake -> `ONE_ACTION`
