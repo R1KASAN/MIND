@@ -782,6 +782,43 @@ test('FreePuterClient skips Puter while the circuit is open', async () => {
   assert.equal(snapshot.openUntil > Date.now(), true);
 });
 
+test('FreePuterClient logs a dev hint when puter_circuit_open repeats', async () => {
+  const warnings: string[] = [];
+  process.env.PUTER_API_KEY = 'puter-token';
+  seedPuterCircuitBreakerStateForTest({
+    failureTimestamps: [],
+    openUntil: Date.now() + 60_000,
+    probeInFlight: false,
+  }, 'rescue');
+  puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
+  puterSdk.ai.chat = (async () => {
+    throw new Error('Puter should be skipped while circuit is open');
+  }) as any;
+  console.warn = ((...args: unknown[]) => {
+    warnings.push(stringifyLogArgs(args));
+  }) as typeof console.warn;
+  LocalGemmaClient.prototype.runRescue = (async () => ({
+    ...rescueFixture(),
+    meta: {
+      ...rescueFixture().meta,
+      model: 'local_gemma_fixture',
+      passType: 'fallback_pass',
+    },
+  })) as typeof LocalGemmaClient.prototype.runRescue;
+
+  const client = new FreePuterClient();
+  await client.runRescue(buildTask());
+  await client.runRescue(buildTask());
+
+  const joined = warnings.join('\n');
+  assert.match(joined, /Puter circuit dev hint/);
+  assert.match(joined, /Puter circuit is in-memory; restart dev server to clear old state/);
+  assert.match(joined, /"operation":"rescue"/);
+  assert.match(joined, /"reason":"puter_circuit_open"/);
+  assert.match(joined, /"failure_count":0/);
+  assert.match(joined, /"open_until":\d+/);
+});
+
 test('FreePuterClient allows a Puter probe again after cooldown expires', async () => {
   const chatCalls: unknown[][] = [];
   process.env.PUTER_API_KEY = 'puter-token';

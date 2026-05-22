@@ -76,6 +76,7 @@ class PuterOperationError extends Error {
     public elapsedMs: number,
     public timeoutMs: number,
     public cause?: unknown,
+    public openUntil?: number,
   ) {
     super(message);
     this.name = 'PuterOperationError';
@@ -109,6 +110,7 @@ const DEFAULT_PUTER_CIRCUIT_WINDOW_MS = 60_000;
 const DEFAULT_PUTER_CIRCUIT_COOLDOWN_MS = 300_000;
 const PUTER_OPERATION_NAMES: AiOperationName[] = ['intake', 'action', 'rescue'];
 const DEFAULT_PUTER_CIRCUIT_TEST_OPERATION: AiOperationName = 'intake';
+const PUTER_CIRCUIT_OPEN_HINT_THRESHOLD = 2;
 
 function createPuterCircuitState(): PuterCircuitState {
   return {
@@ -124,6 +126,12 @@ const puterCircuitStates: Record<AiOperationName, PuterCircuitState> = {
   rescue: createPuterCircuitState(),
 };
 
+const puterCircuitOpenFallbackCounts: Record<AiOperationName, number> = {
+  intake: 0,
+  action: 0,
+  rescue: 0,
+};
+
 function getPuterCircuitState(operation: AiOperationName) {
   return puterCircuitStates[operation];
 }
@@ -135,6 +143,7 @@ function resetPuterCircuitState(operation?: AiOperationName) {
     state.failureTimestamps = [];
     state.openUntil = 0;
     state.probeInFlight = false;
+    puterCircuitOpenFallbackCounts[operationName] = 0;
   }
 }
 
@@ -604,6 +613,7 @@ function readPuterFailureMeta(operation: AiOperationName, error: unknown) {
       model: error.model,
       elapsedMs: error.elapsedMs,
       timeoutMs: error.timeoutMs,
+      openUntil: error.openUntil,
     };
   }
 
@@ -628,17 +638,33 @@ function logPuterSuccess(meta: PuterCallMeta) {
 
 function logPuterFallback(operation: AiOperationName, error: unknown) {
   const meta = readPuterFailureMeta(operation, error);
+  const reason = classifyPuterFailure(error);
   console.warn('[MIND][AI_FALLBACK] Puter failed, falling back', {
     operation: meta.operation,
     backend: 'puter',
     nextBackend: 'local_gemma',
-    reason: classifyPuterFailure(error),
+    reason,
     error_class: getPuterErrorClass(error),
     model: meta.model,
     elapsed_ms: meta.elapsedMs,
     timeout_ms: meta.timeoutMs,
     detail: describePuterFailure(error),
   });
+
+  if (reason === 'puter_circuit_open') {
+    const state = getPuterCircuitState(meta.operation);
+    puterCircuitOpenFallbackCounts[meta.operation] += 1;
+    if (puterCircuitOpenFallbackCounts[meta.operation] === PUTER_CIRCUIT_OPEN_HINT_THRESHOLD) {
+      console.warn('[MIND][AI_FALLBACK] Puter circuit dev hint', {
+        operation: meta.operation,
+        backend: 'puter',
+        reason,
+        failure_count: state.failureTimestamps.length,
+        open_until: meta.openUntil ?? state.openUntil,
+        hint: 'Puter circuit is in-memory; restart dev server to clear old state.',
+      });
+    }
+  }
 }
 
 function pruneRecentFailures(operation: AiOperationName, now: number) {
@@ -695,7 +721,7 @@ function recordPuterFailure(now: number, operation: AiOperationName, reason: Put
     state.openUntil = now + getPuterCircuitCooldownMs();
     state.failureTimestamps = [];
     state.probeInFlight = false;
-    console.warn('[MIND][AI_FALLBACK] Puter circuit opened', {
+    console.warn('[MIND][AI_FALLBACK] Puter circuit_state_change', {
       operation,
       backend: 'puter',
       reason,
@@ -748,6 +774,8 @@ async function runPuterOperation<T>(
       getPuterModel(),
       0,
       timeoutMs,
+      undefined,
+      circuitGate.openUntil,
     );
   }
 
