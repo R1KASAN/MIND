@@ -577,7 +577,7 @@ test('FreePuterClient falls back to LocalGemmaClient when Puter fails without EN
   assert.equal(intake.meta.model, 'local_gemma_fixture');
   assert.equal(action.meta.model, 'local_gemma_fixture');
   assert.equal(rescue.meta.model, 'local_gemma_fixture');
-  assert.equal(warnings.length, 4);
+  assert.equal(warnings.length, 3);
   assert.match(warnings.join('\n'), /Puter failed, falling back/);
   assert.match(warnings.join('\n'), /puter_auth_error/);
   assert.doesNotMatch(warnings.join('\n'), /ENOENT|dist\/puter\.cjs/);
@@ -634,6 +634,119 @@ test('FreePuterClient opens a Puter circuit after repeated failures', async () =
   assert.equal(response.meta.model, 'local_gemma_fixture');
   assert.equal(snapshot.failureTimestamps.length, 0);
   assert.ok(snapshot.openUntil > 0);
+});
+
+test('FreePuterClient opens only the rescue circuit after rescue failures', async () => {
+  process.env.PUTER_API_KEY = 'puter-token';
+  process.env.MIND_PUTER_CIRCUIT_FAILURE_THRESHOLD = '1';
+  process.env.MIND_PUTER_CIRCUIT_WINDOW_MS = '1000';
+  process.env.MIND_PUTER_CIRCUIT_COOLDOWN_MS = '1000';
+  puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
+  puterSdk.ai.chat = (async () => {
+    throw new Error('Puter rescue failed');
+  }) as any;
+  LocalGemmaClient.prototype.runRescue = (async () => ({
+    ...rescueFixture(),
+    meta: {
+      ...rescueFixture().meta,
+      model: 'local_gemma_fixture',
+      passType: 'fallback_pass',
+    },
+  })) as typeof LocalGemmaClient.prototype.runRescue;
+
+  const response = await new FreePuterClient().runRescue(buildTask());
+  const rescueSnapshot = getPuterCircuitBreakerStateForTest('rescue');
+  const intakeSnapshot = getPuterCircuitBreakerStateForTest('intake');
+  const actionSnapshot = getPuterCircuitBreakerStateForTest('action');
+
+  assert.equal(response.meta.model, 'local_gemma_fixture');
+  assert.ok(rescueSnapshot.openUntil > 0);
+  assert.equal(intakeSnapshot.openUntil, 0);
+  assert.equal(actionSnapshot.openUntil, 0);
+});
+
+test('FreePuterClient still attempts intake and action while rescue circuit is open', async () => {
+  const chatCalls: unknown[][] = [];
+  process.env.PUTER_API_KEY = 'puter-token';
+  seedPuterCircuitBreakerStateForTest({
+    failureTimestamps: [],
+    openUntil: Date.now() + 60_000,
+    probeInFlight: false,
+  }, 'rescue');
+  puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
+  puterSdk.ai.chat = (async (...args: unknown[]) => {
+    chatCalls.push(args);
+    return puterMessage(chatCalls.length === 1 ? intakeFixture() : actionFixture());
+  }) as any;
+  LocalGemmaClient.prototype.runIntake = (async () => {
+    throw new Error('Local Gemma intake fallback should not run');
+  }) as typeof LocalGemmaClient.prototype.runIntake;
+  LocalGemmaClient.prototype.runAction = (async () => {
+    throw new Error('Local Gemma action fallback should not run');
+  }) as typeof LocalGemmaClient.prototype.runAction;
+
+  const client = new FreePuterClient();
+  const intake = await client.runIntake(buildTask());
+  const action = await client.runAction(buildTask());
+  const rescueSnapshot = getPuterCircuitBreakerStateForTest('rescue');
+
+  assert.equal(intake.meta.model, 'puter');
+  assert.equal(action.meta.model, 'puter');
+  assert.equal(chatCalls.length, 2);
+  assert.equal(rescueSnapshot.openUntil > Date.now(), true);
+});
+
+test('FreePuterClient intake failure does not open the action circuit', async () => {
+  let chatCallCount = 0;
+  process.env.PUTER_API_KEY = 'puter-token';
+  process.env.MIND_PUTER_CIRCUIT_FAILURE_THRESHOLD = '1';
+  process.env.MIND_PUTER_CIRCUIT_WINDOW_MS = '1000';
+  process.env.MIND_PUTER_CIRCUIT_COOLDOWN_MS = '1000';
+  puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
+  puterSdk.ai.chat = (async () => {
+    chatCallCount += 1;
+    if (chatCallCount === 1) throw new Error('Puter intake failed');
+    return puterMessage(actionFixture());
+  }) as any;
+  LocalGemmaClient.prototype.runIntake = (async () => ({
+    ...intakeFixture(),
+    meta: {
+      ...intakeFixture().meta,
+      model: 'local_gemma_fixture',
+      passType: 'fallback_pass',
+    },
+  })) as typeof LocalGemmaClient.prototype.runIntake;
+  LocalGemmaClient.prototype.runAction = (async () => {
+    throw new Error('Local Gemma action fallback should not run');
+  }) as typeof LocalGemmaClient.prototype.runAction;
+
+  const client = new FreePuterClient();
+  const intake = await client.runIntake(buildTask());
+  const action = await client.runAction(buildTask());
+
+  assert.equal(intake.meta.model, 'local_gemma_fixture');
+  assert.equal(action.meta.model, 'puter');
+  assert.equal(chatCallCount, 2);
+  assert.ok(getPuterCircuitBreakerStateForTest('intake').openUntil > 0);
+  assert.equal(getPuterCircuitBreakerStateForTest('action').openUntil, 0);
+});
+
+test('Puter circuit test reset without operation clears all operation states', () => {
+  seedPuterCircuitBreakerStateForTest({
+    failureTimestamps: [Date.now()],
+    openUntil: Date.now() + 60_000,
+    probeInFlight: true,
+  }, 'intake');
+  seedPuterCircuitBreakerStateForTest({
+    failureTimestamps: [Date.now()],
+    openUntil: Date.now() + 60_000,
+    probeInFlight: true,
+  }, 'rescue');
+
+  resetPuterCircuitBreakerStateForTest();
+
+  assert.equal(getPuterCircuitBreakerStateForTest('intake').openUntil, 0);
+  assert.equal(getPuterCircuitBreakerStateForTest('rescue').openUntil, 0);
 });
 
 test('FreePuterClient skips Puter while the circuit is open', async () => {
@@ -753,4 +866,104 @@ test('Puter prompt builders keep contracts while compacting Room context', () =>
   assert.match(puterActionPrompt, /จัด scope จาก note ลูกค้า/);
   assert.match(puterActionPrompt, /evidenceSummary/);
   assert.match(puterActionPrompt, /evidence จากไฟล์ที่ยาวมาก/);
+});
+
+// ---------------------------------------------------------------------------
+// Rescue JSON normalization — Puter extraction path (Mini 1)
+// ---------------------------------------------------------------------------
+
+test('FreePuterClient.runRescue parses raw rescue JSON without fallback', async () => {
+  process.env.PUTER_API_KEY = 'puter-token';
+  puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
+  puterSdk.ai.chat = (async () => puterMessage(rescueFixture())) as any;
+  LocalGemmaClient.prototype.runRescue = (async () => {
+    throw new Error('Local Gemma fallback should not run');
+  }) as typeof LocalGemmaClient.prototype.runRescue;
+
+  const rescue = await new FreePuterClient().runRescue(buildTask());
+
+  assert.equal(rescue.diagnosis.primaryReason, 'too_big');
+  assert.equal(rescue.rescuePlan.mode, 'shrink');
+  assert.equal(rescue.meta.model, 'puter');
+  assert.equal(rescue.meta.passType, 'primary_pass');
+});
+
+test('FreePuterClient.runRescue extracts fenced rescue JSON without fallback', async () => {
+  process.env.PUTER_API_KEY = 'puter-token';
+  puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
+  puterSdk.ai.chat = (async () =>
+    puterMessage(`\`\`\`json\n${JSON.stringify(rescueFixture())}\n\`\`\``)) as any;
+  LocalGemmaClient.prototype.runRescue = (async () => {
+    throw new Error('Local Gemma fallback should not run');
+  }) as typeof LocalGemmaClient.prototype.runRescue;
+
+  const rescue = await new FreePuterClient().runRescue(buildTask());
+
+  assert.equal(rescue.diagnosis.primaryReason, 'too_big');
+  assert.equal(rescue.rescuePlan.mode, 'shrink');
+  assert.equal(rescue.meta.model, 'puter');
+});
+
+test('FreePuterClient.runRescue extracts rescue JSON embedded in prose without fallback', async () => {
+  process.env.PUTER_API_KEY = 'puter-token';
+  puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
+  puterSdk.ai.chat = (async () =>
+    puterMessage(`นี่คือผลการวินิจฉัย:\n${JSON.stringify(rescueFixture())}\nจบแล้ว`)) as any;
+  LocalGemmaClient.prototype.runRescue = (async () => {
+    throw new Error('Local Gemma fallback should not run');
+  }) as typeof LocalGemmaClient.prototype.runRescue;
+
+  const rescue = await new FreePuterClient().runRescue(buildTask());
+
+  assert.equal(rescue.diagnosis.primaryReason, 'too_big');
+  assert.equal(rescue.rescuePlan.mode, 'shrink');
+  assert.equal(rescue.meta.model, 'puter');
+});
+
+test('FreePuterClient.runRescue parses rescue JSON with extra unknown fields', async () => {
+  process.env.PUTER_API_KEY = 'puter-token';
+  puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
+  const fixtureWithExtras = {
+    ...rescueFixture(),
+    unknownField: 'extra-data-should-be-ignored',
+    diagnosis: {
+      ...rescueFixture().diagnosis,
+      extraDiagnosisField: 'ignored',
+    },
+  };
+  puterSdk.ai.chat = (async () => puterMessage(fixtureWithExtras)) as any;
+  LocalGemmaClient.prototype.runRescue = (async () => {
+    throw new Error('Local Gemma fallback should not run');
+  }) as typeof LocalGemmaClient.prototype.runRescue;
+
+  const rescue = await new FreePuterClient().runRescue(buildTask());
+
+  assert.equal(rescue.diagnosis.primaryReason, 'too_big');
+  assert.equal(rescue.rescuePlan.mode, 'shrink');
+  assert.equal(rescue.meta.model, 'puter');
+});
+
+test('FreePuterClient.runRescue falls back safely when Puter returns invalid rescue JSON', async () => {
+  const warnings: string[] = [];
+  process.env.PUTER_API_KEY = 'puter-token';
+  puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
+  // Malformed JSON inside fences — extractPuterJsonObject returns null → puter_contract_invalid
+  puterSdk.ai.chat = (async () => puterMessage('```json\n{\n```')) as any;
+  console.warn = ((...args: unknown[]) => {
+    warnings.push(args.map((arg) => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' '));
+  }) as typeof console.warn;
+  LocalGemmaClient.prototype.runRescue = (async () => ({
+    ...rescueFixture(),
+    meta: {
+      ...rescueFixture().meta,
+      model: 'local_gemma_fixture',
+      passType: 'fallback_pass',
+    },
+  })) as typeof LocalGemmaClient.prototype.runRescue;
+
+  const rescue = await new FreePuterClient().runRescue(buildTask());
+
+  assert.equal(rescue.meta.model, 'local_gemma_fixture');
+  assert.match(warnings.join('\n'), /Puter failed, falling back/);
+  assert.match(warnings.join('\n'), /puter_contract_invalid/);
 });

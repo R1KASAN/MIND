@@ -107,35 +107,58 @@ type PuterCircuitGate =
 const DEFAULT_PUTER_CIRCUIT_FAILURE_THRESHOLD = 3;
 const DEFAULT_PUTER_CIRCUIT_WINDOW_MS = 60_000;
 const DEFAULT_PUTER_CIRCUIT_COOLDOWN_MS = 300_000;
+const PUTER_OPERATION_NAMES: AiOperationName[] = ['intake', 'action', 'rescue'];
+const DEFAULT_PUTER_CIRCUIT_TEST_OPERATION: AiOperationName = 'intake';
 
-const puterCircuitState: PuterCircuitState = {
-  failureTimestamps: [],
-  openUntil: 0,
-  probeInFlight: false,
-};
-
-function resetPuterCircuitState() {
-  puterCircuitState.failureTimestamps = [];
-  puterCircuitState.openUntil = 0;
-  puterCircuitState.probeInFlight = false;
-}
-
-export function resetPuterCircuitBreakerStateForTest() {
-  resetPuterCircuitState();
-}
-
-export function getPuterCircuitBreakerStateForTest(): PuterCircuitBreakerSnapshot {
+function createPuterCircuitState(): PuterCircuitState {
   return {
-    failureTimestamps: [...puterCircuitState.failureTimestamps],
-    openUntil: puterCircuitState.openUntil,
-    probeInFlight: puterCircuitState.probeInFlight,
+    failureTimestamps: [],
+    openUntil: 0,
+    probeInFlight: false,
   };
 }
 
-export function seedPuterCircuitBreakerStateForTest(snapshot: Partial<PuterCircuitBreakerSnapshot>) {
-  puterCircuitState.failureTimestamps = snapshot.failureTimestamps ? [...snapshot.failureTimestamps] : [];
-  puterCircuitState.openUntil = snapshot.openUntil ?? 0;
-  puterCircuitState.probeInFlight = snapshot.probeInFlight ?? false;
+const puterCircuitStates: Record<AiOperationName, PuterCircuitState> = {
+  intake: createPuterCircuitState(),
+  action: createPuterCircuitState(),
+  rescue: createPuterCircuitState(),
+};
+
+function getPuterCircuitState(operation: AiOperationName) {
+  return puterCircuitStates[operation];
+}
+
+function resetPuterCircuitState(operation?: AiOperationName) {
+  const operations = operation ? [operation] : PUTER_OPERATION_NAMES;
+  for (const operationName of operations) {
+    const state = getPuterCircuitState(operationName);
+    state.failureTimestamps = [];
+    state.openUntil = 0;
+    state.probeInFlight = false;
+  }
+}
+
+export function resetPuterCircuitBreakerStateForTest(operation?: AiOperationName) {
+  resetPuterCircuitState(operation);
+}
+
+export function getPuterCircuitBreakerStateForTest(operation: AiOperationName = DEFAULT_PUTER_CIRCUIT_TEST_OPERATION): PuterCircuitBreakerSnapshot {
+  const state = getPuterCircuitState(operation);
+  return {
+    failureTimestamps: [...state.failureTimestamps],
+    openUntil: state.openUntil,
+    probeInFlight: state.probeInFlight,
+  };
+}
+
+export function seedPuterCircuitBreakerStateForTest(
+  snapshot: Partial<PuterCircuitBreakerSnapshot>,
+  operation: AiOperationName = DEFAULT_PUTER_CIRCUIT_TEST_OPERATION,
+) {
+  const state = getPuterCircuitState(operation);
+  state.failureTimestamps = snapshot.failureTimestamps ? [...snapshot.failureTimestamps] : [];
+  state.openUntil = snapshot.openUntil ?? 0;
+  state.probeInFlight = snapshot.probeInFlight ?? false;
 }
 
 export interface AiActionOptions {
@@ -618,33 +641,35 @@ function logPuterFallback(operation: AiOperationName, error: unknown) {
   });
 }
 
-function pruneRecentFailures(now: number) {
+function pruneRecentFailures(operation: AiOperationName, now: number) {
   const windowMs = getPuterCircuitWindowMs();
-  puterCircuitState.failureTimestamps = puterCircuitState.failureTimestamps.filter(
+  const state = getPuterCircuitState(operation);
+  state.failureTimestamps = state.failureTimestamps.filter(
     (timestamp) => now - timestamp <= windowMs,
   );
 }
 
-function shouldSkipPuterOperation(): PuterCircuitGate {
+function shouldSkipPuterOperation(operation: AiOperationName): PuterCircuitGate {
   const now = Date.now();
-  if (puterCircuitState.openUntil > 0 && now < puterCircuitState.openUntil) {
+  const state = getPuterCircuitState(operation);
+  if (state.openUntil > 0 && now < state.openUntil) {
     return {
       skip: true,
       reason: 'puter_circuit_open' as const,
-      openUntil: puterCircuitState.openUntil,
+      openUntil: state.openUntil,
     };
   }
 
-  if (puterCircuitState.openUntil > 0 && now >= puterCircuitState.openUntil) {
-    if (puterCircuitState.probeInFlight) {
+  if (state.openUntil > 0 && now >= state.openUntil) {
+    if (state.probeInFlight) {
       return {
         skip: true,
         reason: 'puter_circuit_open' as const,
-        openUntil: puterCircuitState.openUntil,
+        openUntil: state.openUntil,
       };
     }
 
-    puterCircuitState.probeInFlight = true;
+    state.probeInFlight = true;
     return {
       skip: false,
     };
@@ -655,26 +680,29 @@ function shouldSkipPuterOperation(): PuterCircuitGate {
   };
 }
 
-function recordPuterSuccess() {
-  resetPuterCircuitState();
+function recordPuterSuccess(operation: AiOperationName) {
+  resetPuterCircuitState(operation);
 }
 
 function recordPuterFailure(now: number, operation: AiOperationName, reason: PuterFailureReason) {
-  pruneRecentFailures(now);
-  puterCircuitState.failureTimestamps.push(now);
+  pruneRecentFailures(operation, now);
+  const state = getPuterCircuitState(operation);
+  state.failureTimestamps.push(now);
 
   const threshold = getPuterCircuitFailureThreshold();
-  if (puterCircuitState.failureTimestamps.length >= threshold) {
-    puterCircuitState.openUntil = now + getPuterCircuitCooldownMs();
-    puterCircuitState.failureTimestamps = [];
-    puterCircuitState.probeInFlight = false;
+  const failureCount = state.failureTimestamps.length;
+  if (failureCount >= threshold) {
+    state.openUntil = now + getPuterCircuitCooldownMs();
+    state.failureTimestamps = [];
+    state.probeInFlight = false;
     console.warn('[MIND][AI_FALLBACK] Puter circuit opened', {
       operation,
       backend: 'puter',
       reason,
+      failure_count: failureCount,
       failure_threshold: threshold,
       cooldown_ms: getPuterCircuitCooldownMs(),
-      open_until: puterCircuitState.openUntil,
+      open_until: state.openUntil,
       model: getPuterModel(),
     });
     return;
@@ -710,7 +738,7 @@ async function runPuterOperation<T>(
   userPrompt: string,
   parse: (raw: string) => T
 ): Promise<T> {
-  const circuitGate = shouldSkipPuterOperation();
+  const circuitGate = shouldSkipPuterOperation(operation);
   if (circuitGate.skip) {
     const timeoutMs = getPuterTimeoutMs();
     throw new PuterOperationError(
@@ -764,7 +792,7 @@ async function runPuterOperation<T>(
   }
 
   const rawStr = extractPuterResponseText(response);
-  const shouldNormalizeJson = operation === 'intake' || operation === 'action';
+  const shouldNormalizeJson = operation === 'intake' || operation === 'action' || operation === 'rescue';
   const extractedJsonCandidate = shouldNormalizeJson ? extractPuterJsonObject(rawStr) : rawStr;
   const jsonCandidate = shouldNormalizeJson
     ? normalizePuterJsonForOperation(operation, extractedJsonCandidate)
@@ -834,7 +862,7 @@ async function runPuterOperation<T>(
     jsonCandidate: shouldNormalizeJson ? jsonCandidate : rawStr,
     category: classifyPuterRawResponse(operation, rawStr, shouldNormalizeJson ? jsonCandidate : rawStr, 'contract_valid'),
   });
-  recordPuterSuccess();
+  recordPuterSuccess(operation);
   logPuterSuccess(meta);
   return parsed;
 }
