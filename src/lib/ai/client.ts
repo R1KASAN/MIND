@@ -79,9 +79,9 @@ type GroqFailureReason =
   | 'groq_error';
 
 type GroqCallMeta = {
-  operation: 'action';
+  operation: 'action' | 'rescue';
   provider: 'groq';
-  circuitKey: 'groq:action';
+  circuitKey: 'groq:action' | 'groq:rescue';
   model: string;
   timeoutMs: number;
   startedAt: number;
@@ -170,6 +170,9 @@ const puterCircuitOpenFallbackCounts: Record<AiOperationName, number> = {
 const groqActionCircuitState = createPuterCircuitState();
 let groqActionCircuitOpenFallbackCount = 0;
 
+const groqRescueCircuitState = createPuterCircuitState();
+let groqRescueCircuitOpenFallbackCount = 0;
+
 function getPuterCircuitState(operation: AiOperationName) {
   return puterCircuitStates[operation];
 }
@@ -220,6 +223,21 @@ export function getGroqActionCircuitBreakerStateForTest(): PuterCircuitBreakerSn
     failureTimestamps: [...groqActionCircuitState.failureTimestamps],
     openUntil: groqActionCircuitState.openUntil,
     probeInFlight: groqActionCircuitState.probeInFlight,
+  };
+}
+
+export function resetGroqRescueCircuitBreakerStateForTest() {
+  groqRescueCircuitState.failureTimestamps = [];
+  groqRescueCircuitState.openUntil = 0;
+  groqRescueCircuitState.probeInFlight = false;
+  groqRescueCircuitOpenFallbackCount = 0;
+}
+
+export function getGroqRescueCircuitBreakerStateForTest(): PuterCircuitBreakerSnapshot {
+  return {
+    failureTimestamps: [...groqRescueCircuitState.failureTimestamps],
+    openUntil: groqRescueCircuitState.openUntil,
+    probeInFlight: groqRescueCircuitState.probeInFlight,
   };
 }
 
@@ -424,6 +442,22 @@ function getGroqActionTimeoutMs() {
 
 function getGroqActionMaxTokens() {
   return getPuterMaxTokens('action');
+}
+
+function isGroqRescuePrimaryEnabled() {
+  return process.env.MIND_RESCUE_PRIMARY?.trim().toLowerCase() === 'groq' && Boolean(process.env.GROQ_API_KEY?.trim());
+}
+
+function getGroqRescueModel() {
+  return process.env.GROQ_RESCUE_MODEL?.trim() || 'llama-3.3-70b-versatile';
+}
+
+function getGroqRescueTimeoutMs() {
+  return parsePositiveNumber(process.env.GROQ_RESCUE_TIMEOUT_MS, 8000);
+}
+
+function getGroqRescueMaxTokens() {
+  return getPuterMaxTokens('rescue');
 }
 
 function getPuterMaxTokens(operation: AiOperationName) {
@@ -887,6 +921,77 @@ function recordGroqActionFailure(now: number, reason: GroqFailureReason) {
   }
 }
 
+function pruneRecentGroqRescueFailures(now: number) {
+  const windowMs = getPuterCircuitWindowMs();
+  groqRescueCircuitState.failureTimestamps = groqRescueCircuitState.failureTimestamps.filter(
+    (timestamp) => now - timestamp <= windowMs,
+  );
+}
+
+function shouldSkipGroqRescue() {
+  const now = Date.now();
+  if (groqRescueCircuitState.openUntil > 0 && now < groqRescueCircuitState.openUntil) {
+    return {
+      skip: true,
+      openUntil: groqRescueCircuitState.openUntil,
+    };
+  }
+
+  if (groqRescueCircuitState.openUntil > 0 && now >= groqRescueCircuitState.openUntil) {
+    if (groqRescueCircuitState.probeInFlight) {
+      return {
+        skip: true,
+        openUntil: groqRescueCircuitState.openUntil,
+      };
+    }
+
+    groqRescueCircuitState.probeInFlight = true;
+    return { skip: false };
+  }
+
+  return { skip: false };
+}
+
+function recordGroqRescueSuccess() {
+  groqRescueCircuitState.failureTimestamps = [];
+  groqRescueCircuitState.openUntil = 0;
+  groqRescueCircuitState.probeInFlight = false;
+  groqRescueCircuitOpenFallbackCount = 0;
+}
+
+function openGroqRescueCircuit(now: number, reason: GroqFailureReason, failureCount: number) {
+  groqRescueCircuitState.openUntil = now + getPuterCircuitCooldownMs();
+  groqRescueCircuitState.failureTimestamps = [];
+  groqRescueCircuitState.probeInFlight = false;
+  console.warn('[MIND][AI_FALLBACK] Groq circuit_state_change', {
+    operation: 'rescue',
+    provider: 'groq',
+    reason,
+    circuit_key: 'groq:rescue',
+    failure_count: failureCount,
+    failure_threshold: getPuterCircuitFailureThreshold(),
+    cooldown_ms: getPuterCircuitCooldownMs(),
+    open_until: groqRescueCircuitState.openUntil,
+    model: getGroqRescueModel(),
+  });
+}
+
+function recordGroqRescueFailure(now: number, reason: GroqFailureReason) {
+  pruneRecentGroqRescueFailures(now);
+
+  if (reason === 'groq_quota_error') {
+    openGroqRescueCircuit(now, reason, 1);
+    return;
+  }
+
+  groqRescueCircuitState.failureTimestamps.push(now);
+  const failureCount = groqRescueCircuitState.failureTimestamps.length;
+  const threshold = getPuterCircuitFailureThreshold();
+  if (failureCount >= threshold) {
+    openGroqRescueCircuit(now, reason, failureCount);
+  }
+}
+
 function classifyGroqHttpFailure(status: number, bodyPreview: string): GroqFailureReason {
   const lower = bodyPreview.toLowerCase();
   if (status === 401 || status === 403) return 'groq_auth_error';
@@ -931,9 +1036,16 @@ function logGroqProvider(input: {
   });
 }
 
-function logGroqFallback(error: unknown) {
-  const meta: GroqCallMeta = error instanceof GroqOperationError
-    ? error.meta
+function logGroqFallback(operation: 'action' | 'rescue', error: unknown) {
+  const defaultMeta: GroqCallMeta = operation === 'rescue'
+    ? {
+        operation: 'rescue',
+        provider: 'groq',
+        circuitKey: 'groq:rescue',
+        model: getGroqRescueModel(),
+        timeoutMs: getGroqRescueTimeoutMs(),
+        startedAt: Date.now(),
+      }
     : {
         operation: 'action',
         provider: 'groq',
@@ -942,10 +1054,15 @@ function logGroqFallback(error: unknown) {
         timeoutMs: getGroqActionTimeoutMs(),
         startedAt: Date.now(),
       };
+
+  const meta: GroqCallMeta = error instanceof GroqOperationError
+    ? error.meta
+    : defaultMeta;
+
   const reason = classifyGroqFailure(error);
   const elapsed = error instanceof GroqOperationError ? error.elapsedMs : elapsedMs(meta.startedAt);
   console.warn('[MIND][AI_FALLBACK] Groq failed, falling back', {
-    operation: 'action',
+    operation: meta.operation,
     provider: 'groq',
     nextBackend: 'puter',
     reason,
@@ -957,17 +1074,32 @@ function logGroqFallback(error: unknown) {
   });
 
   if (reason === 'groq_circuit_open') {
-    groqActionCircuitOpenFallbackCount += 1;
-    if (groqActionCircuitOpenFallbackCount === PUTER_CIRCUIT_OPEN_HINT_THRESHOLD) {
-      console.warn('[MIND][AI_FALLBACK] Groq circuit dev hint', {
-        operation: 'action',
-        provider: 'groq',
-        reason,
-        circuit_key: meta.circuitKey,
-        failure_count: groqActionCircuitState.failureTimestamps.length,
-        open_until: error instanceof GroqOperationError ? error.openUntil : groqActionCircuitState.openUntil,
-        hint: 'Groq circuit is in-memory; restart dev server to clear old state.',
-      });
+    if (meta.operation === 'rescue') {
+      groqRescueCircuitOpenFallbackCount += 1;
+      if (groqRescueCircuitOpenFallbackCount === PUTER_CIRCUIT_OPEN_HINT_THRESHOLD) {
+        console.warn('[MIND][AI_FALLBACK] Groq circuit dev hint', {
+          operation: 'rescue',
+          provider: 'groq',
+          reason,
+          circuit_key: meta.circuitKey,
+          failure_count: groqRescueCircuitState.failureTimestamps.length,
+          open_until: error instanceof GroqOperationError ? error.openUntil : groqRescueCircuitState.openUntil,
+          hint: 'Groq circuit is in-memory; restart dev server to clear old state.',
+        });
+      }
+    } else {
+      groqActionCircuitOpenFallbackCount += 1;
+      if (groqActionCircuitOpenFallbackCount === PUTER_CIRCUIT_OPEN_HINT_THRESHOLD) {
+        console.warn('[MIND][AI_FALLBACK] Groq circuit dev hint', {
+          operation: 'action',
+          provider: 'groq',
+          reason,
+          circuit_key: meta.circuitKey,
+          failure_count: groqActionCircuitState.failureTimestamps.length,
+          open_until: error instanceof GroqOperationError ? error.openUntil : groqActionCircuitState.openUntil,
+          hint: 'Groq circuit is in-memory; restart dev server to clear old state.',
+        });
+      }
     }
   }
 }
@@ -1305,6 +1437,179 @@ async function runGroqActionOperation<T>(
   return parsed;
 }
 
+async function runGroqRescueOperation<T>(
+  systemPrompt: string,
+  userPrompt: string,
+  parse: (raw: string) => T,
+): Promise<T> {
+  const circuitGate = shouldSkipGroqRescue();
+  const meta: GroqCallMeta = {
+    operation: 'rescue',
+    provider: 'groq',
+    circuitKey: 'groq:rescue',
+    model: getGroqRescueModel(),
+    timeoutMs: getGroqRescueTimeoutMs(),
+    startedAt: Date.now(),
+  };
+
+  if (circuitGate.skip) {
+    throw new GroqOperationError(
+      'Groq rescue circuit is open',
+      'groq_circuit_open',
+      meta,
+      0,
+      undefined,
+      undefined,
+      circuitGate.openUntil,
+    );
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), meta.timeoutMs);
+
+  let rawStr = '';
+  try {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${getGroqApiKey()}`,
+      },
+      body: JSON.stringify({
+        model: meta.model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        temperature: 0,
+        max_tokens: getGroqRescueMaxTokens(),
+        stream: false,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const safeBodyPreview = (await response.text().catch(() => '')).slice(0, 220);
+      const reason = classifyGroqHttpFailure(response.status, safeBodyPreview);
+      recordGroqRescueFailure(Date.now(), reason);
+      throw new GroqOperationError(
+        `Groq rescue request failed with HTTP ${response.status}`,
+        reason,
+        meta,
+        elapsedMs(meta.startedAt),
+        response.status,
+      );
+    }
+
+    const payload = await response.json().catch(() => null) as any;
+    rawStr = payload?.choices?.[0]?.message?.content ?? payload?.choices?.[0]?.text ?? '';
+    rawStr = typeof rawStr === 'string' ? rawStr.trim() : extractPuterResponseText(rawStr);
+  } catch (error) {
+    if (error instanceof GroqOperationError) {
+      logGroqProvider({
+        meta,
+        success: false,
+        reason: error.reason,
+        elapsedMs: error.elapsedMs,
+        status: error.status,
+        openUntil: error.openUntil,
+      });
+      throw error;
+    }
+
+    const reason = classifyGroqFailure(error);
+    recordGroqRescueFailure(Date.now(), reason);
+    const groqError = new GroqOperationError(
+      reason === 'groq_timeout'
+        ? `Groq rescue timed out after ${meta.timeoutMs}ms`
+        : error instanceof Error
+          ? error.message
+          : 'Groq rescue request failed',
+      reason,
+      meta,
+      elapsedMs(meta.startedAt),
+      undefined,
+      error,
+    );
+    logGroqProvider({
+      meta,
+      success: false,
+      reason,
+      elapsedMs: groqError.elapsedMs,
+    });
+    throw groqError;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  if (!rawStr) {
+    recordGroqRescueFailure(Date.now(), 'groq_empty_response');
+    const error = new GroqOperationError(
+      'Empty response from Groq',
+      'groq_empty_response',
+      meta,
+      elapsedMs(meta.startedAt),
+    );
+    logGroqProvider({
+      meta,
+      success: false,
+      reason: error.reason,
+      elapsedMs: error.elapsedMs,
+    });
+    throw error;
+  }
+
+  const jsonCandidate = extractPuterJsonObject(rawStr);
+  if (!jsonCandidate) {
+    recordGroqRescueFailure(Date.now(), 'groq_contract_invalid');
+    const error = new GroqOperationError(
+      'Groq output did not contain a parseable JSON object',
+      'groq_contract_invalid',
+      meta,
+      elapsedMs(meta.startedAt),
+    );
+    logGroqProvider({
+      meta,
+      success: false,
+      reason: error.reason,
+      elapsedMs: error.elapsedMs,
+    });
+    throw error;
+  }
+
+  let parsed: T;
+  try {
+    parsed = parse(jsonCandidate);
+  } catch (error) {
+    const reason = classifyGroqFailure(error);
+    recordGroqRescueFailure(Date.now(), reason);
+    const groqError = new GroqOperationError(
+      error instanceof Error ? error.message : 'Groq output failed contract validation',
+      reason,
+      meta,
+      elapsedMs(meta.startedAt),
+      undefined,
+      error,
+    );
+    logGroqProvider({
+      meta,
+      success: false,
+      reason,
+      elapsedMs: groqError.elapsedMs,
+    });
+    throw groqError;
+  }
+
+  (parsed as any).meta = { ...(parsed as any).meta, model: 'groq', passType: 'primary_pass' };
+  recordGroqRescueSuccess();
+  logGroqProvider({
+    meta,
+    success: true,
+    elapsedMs: elapsedMs(meta.startedAt),
+  });
+  return parsed;
+}
+
 export class FreePuterClient implements AiClient {
   constructor(private options: { maskExternalContext?: boolean } = {}) {}
 
@@ -1380,7 +1685,7 @@ export class FreePuterClient implements AiClient {
           parseAction,
         );
       } catch (err) {
-        logGroqFallback(err);
+        logGroqFallback('action', err);
       }
     }
 
@@ -1398,27 +1703,42 @@ export class FreePuterClient implements AiClient {
   }
 
   async runRescue(task: TaskContext, options?: AiRescueOptions): Promise<AiRescueResponse> {
-    try {
-      const { action, currentStepIndex = 0 } = options ?? {};
-      const puterTask = this.externalTask(task);
-      const fallbackReason = inferRescueFallbackReason(puterTask);
-      const fallbackActionTitle = action?.title ?? puterTask.currentPlan?.actionTitle ?? puterTask.taskFrame?.objective;
-      const fallbackCurrentStep =
-        action?.microSteps[currentStepIndex] ??
-        action?.microSteps[0] ??
-        puterTask.currentPlan?.steps[currentStepIndex]?.text ??
-        puterTask.currentPlan?.steps[0]?.text ??
-        fallbackActionTitle;
+    const { action, currentStepIndex = 0 } = options ?? {};
+    const puterTask = this.externalTask(task);
+    const fallbackReason = inferRescueFallbackReason(puterTask);
+    const fallbackActionTitle = action?.title ?? puterTask.currentPlan?.actionTitle ?? puterTask.taskFrame?.objective;
+    const fallbackCurrentStep =
+      action?.microSteps[currentStepIndex] ??
+      action?.microSteps[0] ??
+      puterTask.currentPlan?.steps[currentStepIndex]?.text ??
+      puterTask.currentPlan?.steps[0]?.text ??
+      fallbackActionTitle;
+    const systemPrompt = PUTER_RESCUE_SYSTEM_PROMPT;
+    const userPrompt = buildPuterRescueUserPrompt(puterTask, action ?? null, currentStepIndex);
+    const parseRescue = (raw: string) => parseAiRescueResponse(raw, {
+      fallbackReason,
+      fallbackActionTitle,
+      fallbackCurrentStep,
+    });
 
+    if (isGroqRescuePrimaryEnabled()) {
+      try {
+        return await runGroqRescueOperation(
+          systemPrompt,
+          userPrompt,
+          parseRescue,
+        );
+      } catch (err) {
+        logGroqFallback('rescue', err);
+      }
+    }
+
+    try {
       return await runPuterOperation(
         'rescue',
-        PUTER_RESCUE_SYSTEM_PROMPT,
-        buildPuterRescueUserPrompt(puterTask, action ?? null, currentStepIndex),
-        (raw) => parseAiRescueResponse(raw, {
-          fallbackReason,
-          fallbackActionTitle,
-          fallbackCurrentStep,
-        })
+        systemPrompt,
+        userPrompt,
+        parseRescue,
       );
     } catch (err) {
       logPuterFallback('rescue', err);
