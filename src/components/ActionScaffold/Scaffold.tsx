@@ -294,10 +294,10 @@ export function Scaffold({
             disabled={refineLoading}
             onClick={() => { trackEvent('scaffold_completed'); onComplete(); }}
           >
-            ใช้ก้าวย่อยนี้ต่อ
+            ทำก้าวนี้เสร็จแล้ว
           </button>
           <div className="scaffold-secondary-actions-group">
-            <button disabled={refineLoading} onClick={onRescue}>ฉันติดขัด / แบ่งให้เล็กลง</button>
+            <button disabled={refineLoading} onClick={onRescue}>ฉันติดขัด / ช่วยวินิจฉัยจุดที่ติดขัดอยู่</button>
             <button disabled={refineLoading} onClick={onBackToInput}>กลับไปแก้บริบท</button>
           </div>
           <details className="supporting-panel" style={{ width: '100%', maxWidth: '44rem' }}>
@@ -451,9 +451,9 @@ export function Scaffold({
           disabled={refineLoading}
           onClick={() => { trackEvent('scaffold_completed'); onComplete(); }}
         >
-          ใช้ก้าวย่อยนี้ต่อ
+          ทำก้าวนี้เสร็จแล้ว
         </button>
-        <button disabled={refineLoading} onClick={onRescue}>ฉันติดขัด / แบ่งให้เล็กลง</button>
+        <button disabled={refineLoading} onClick={onRescue}>ฉันติดขัด / ช่วยวินิจฉัยจุดที่ติดขัดอยู่</button>
         <button disabled={refineLoading} onClick={onBackToInput}>กลับไปแก้บริบท</button>
       </div>
     </div>

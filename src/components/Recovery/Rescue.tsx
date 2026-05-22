@@ -173,13 +173,13 @@ export function Rescue({
               แบ่งก้าวนี้ให้เล็กลง
             </button>
             <button disabled={refineLoading} onClick={onBackToStep}>
-              ใช้ก้าวนี้ต่อ
+              ทำก้าวนี้เสร็จแล้ว
             </button>
           </>
         ) : (
           <>
             <button className="primary" disabled={refineLoading} onClick={onBackToStep}>
-              ใช้ก้าวนี้ต่อ
+              ทำก้าวนี้เสร็จแล้ว
             </button>
             <button disabled={refineLoading} onClick={onMakeSmaller}>
               แบ่งก้าวนี้ให้เล็กลง
