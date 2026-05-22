@@ -6,7 +6,9 @@ import {
   FreePuterClient,
   getPuterClient,
   LocalGemmaClient,
+  getGroqActionCircuitBreakerStateForTest,
   getPuterCircuitBreakerStateForTest,
+  resetGroqActionCircuitBreakerStateForTest,
   resetPuterCircuitBreakerStateForTest,
   seedPuterCircuitBreakerStateForTest,
 } from '@/lib/ai/client';
@@ -46,8 +48,13 @@ const originalPuterDebugRaw = process.env.MIND_PUTER_DEBUG_RAW;
 const originalPuterCircuitFailureThreshold = process.env.MIND_PUTER_CIRCUIT_FAILURE_THRESHOLD;
 const originalPuterCircuitWindowMs = process.env.MIND_PUTER_CIRCUIT_WINDOW_MS;
 const originalPuterCircuitCooldownMs = process.env.MIND_PUTER_CIRCUIT_COOLDOWN_MS;
+const originalMindActionPrimary = process.env.MIND_ACTION_PRIMARY;
+const originalGroqApiKey = process.env.GROQ_API_KEY;
+const originalGroqModel = process.env.GROQ_MODEL;
+const originalGroqActionTimeoutMs = process.env.GROQ_ACTION_TIMEOUT_MS;
 const originalWarn = console.warn;
 const originalInfo = console.info;
+const originalFetch = globalThis.fetch;
 
 function restoreEnv(key: string, value: string | undefined) {
   if (value === undefined) delete process.env[key];
@@ -62,6 +69,7 @@ function restorePuterTestState() {
   LocalGemmaClient.prototype.runRescue = originalRunRescue;
   console.warn = originalWarn;
   console.info = originalInfo;
+  globalThis.fetch = originalFetch;
   restoreEnv('PUTER_API_KEY', originalPuterApiKey);
   restoreEnv('MIND_PUTER_TIMEOUT_MS', originalPuterTimeoutMs);
   restoreEnv('PUTER_TIMEOUT_MS', originalLegacyPuterTimeoutMs);
@@ -77,7 +85,12 @@ function restorePuterTestState() {
   restoreEnv('MIND_PUTER_CIRCUIT_FAILURE_THRESHOLD', originalPuterCircuitFailureThreshold);
   restoreEnv('MIND_PUTER_CIRCUIT_WINDOW_MS', originalPuterCircuitWindowMs);
   restoreEnv('MIND_PUTER_CIRCUIT_COOLDOWN_MS', originalPuterCircuitCooldownMs);
+  restoreEnv('MIND_ACTION_PRIMARY', originalMindActionPrimary);
+  restoreEnv('GROQ_API_KEY', originalGroqApiKey);
+  restoreEnv('GROQ_MODEL', originalGroqModel);
+  restoreEnv('GROQ_ACTION_TIMEOUT_MS', originalGroqActionTimeoutMs);
   resetPuterCircuitBreakerStateForTest();
+  resetGroqActionCircuitBreakerStateForTest();
 }
 
 function buildTask() {
@@ -88,6 +101,22 @@ function buildTask() {
 
 function puterMessage(content: unknown) {
   return { message: { content: typeof content === 'string' ? content : JSON.stringify(content) } };
+}
+
+function groqResponse(content: unknown, init?: ResponseInit) {
+  return new Response(JSON.stringify({
+    choices: [
+      {
+        message: {
+          content: typeof content === 'string' ? content : JSON.stringify(content),
+        },
+      },
+    ],
+  }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+    ...init,
+  });
 }
 
 function stringifyLogArgs(args: unknown[]) {
@@ -244,6 +273,216 @@ test('FreePuterClient.runAction calls Puter first and parses a successful action
   assert.equal(response.whyThisNow.includes('ก้าวเดียว'), true);
   assert.equal(response.meta.model, 'puter');
   assert.equal(response.meta.passType, 'primary_pass');
+});
+
+test('FreePuterClient.runAction uses Groq before Puter when action primary is enabled', async () => {
+  const fetchCalls: unknown[][] = [];
+  const puterCalls: unknown[][] = [];
+  process.env.PUTER_API_KEY = 'puter-token';
+  process.env.MIND_ACTION_PRIMARY = 'groq';
+  process.env.GROQ_API_KEY = 'groq-token';
+  process.env.GROQ_MODEL = 'llama-3.3-70b-versatile';
+  puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
+  puterSdk.ai.chat = (async (...args: unknown[]) => {
+    puterCalls.push(args);
+    return puterMessage(actionFixture());
+  }) as any;
+  globalThis.fetch = (async (...args: unknown[]) => {
+    fetchCalls.push(args);
+    return groqResponse(actionFixture());
+  }) as typeof fetch;
+
+  const response = await new FreePuterClient().runAction(buildTask());
+
+  assert.equal(response.meta.model, 'groq');
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(puterCalls.length, 0);
+  const [url, init] = fetchCalls[0] ?? [];
+  assert.equal(url, 'https://api.groq.com/openai/v1/chat/completions');
+  assert.equal((init as RequestInit).method, 'POST');
+  assert.match(String(JSON.stringify((init as RequestInit).body)), /llama-3\.3-70b-versatile/);
+});
+
+test('FreePuterClient.runAction keeps existing Puter order when Groq env is missing', async () => {
+  const fetchCalls: unknown[][] = [];
+  const puterCalls: unknown[][] = [];
+  process.env.PUTER_API_KEY = 'puter-token';
+  process.env.MIND_ACTION_PRIMARY = 'groq';
+  delete process.env.GROQ_API_KEY;
+  puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
+  puterSdk.ai.chat = (async (...args: unknown[]) => {
+    puterCalls.push(args);
+    return puterMessage(actionFixture());
+  }) as any;
+  globalThis.fetch = (async (...args: unknown[]) => {
+    fetchCalls.push(args);
+    return groqResponse(actionFixture());
+  }) as typeof fetch;
+
+  const response = await new FreePuterClient().runAction(buildTask());
+
+  assert.equal(response.meta.model, 'puter');
+  assert.equal(fetchCalls.length, 0);
+  assert.equal(puterCalls.length, 1);
+});
+
+test('FreePuterClient keeps intake and rescue on Puter even when Groq action primary is enabled', async () => {
+  const fetchCalls: unknown[][] = [];
+  const puterCalls: unknown[][] = [];
+  process.env.PUTER_API_KEY = 'puter-token';
+  process.env.MIND_ACTION_PRIMARY = 'groq';
+  process.env.GROQ_API_KEY = 'groq-token';
+  puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
+  puterSdk.ai.chat = (async (...args: unknown[]) => {
+    puterCalls.push(args);
+    return puterMessage(puterCalls.length === 1 ? intakeFixture() : rescueFixture());
+  }) as any;
+  globalThis.fetch = (async (...args: unknown[]) => {
+    fetchCalls.push(args);
+    return groqResponse(actionFixture());
+  }) as typeof fetch;
+
+  const client = new FreePuterClient();
+  const intake = await client.runIntake(buildTask());
+  const rescue = await client.runRescue(buildTask());
+
+  assert.equal(intake.meta.model, 'puter');
+  assert.equal(rescue.meta.model, 'puter');
+  assert.equal(fetchCalls.length, 0);
+  assert.equal(puterCalls.length, 2);
+});
+
+test('FreePuterClient.runAction falls back from invalid Groq JSON to Puter', async () => {
+  const fetchCalls: unknown[][] = [];
+  const puterCalls: unknown[][] = [];
+  process.env.PUTER_API_KEY = 'puter-token';
+  process.env.MIND_ACTION_PRIMARY = 'groq';
+  process.env.GROQ_API_KEY = 'groq-token';
+  puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
+  puterSdk.ai.chat = (async (...args: unknown[]) => {
+    puterCalls.push(args);
+    return puterMessage(actionFixture());
+  }) as any;
+  globalThis.fetch = (async (...args: unknown[]) => {
+    fetchCalls.push(args);
+    return groqResponse('not-json');
+  }) as typeof fetch;
+
+  const response = await new FreePuterClient().runAction(buildTask());
+
+  assert.equal(response.meta.model, 'puter');
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(puterCalls.length, 1);
+});
+
+test('FreePuterClient.runAction falls back from Groq timeout to Puter', async () => {
+  const fetchCalls: unknown[][] = [];
+  const puterCalls: unknown[][] = [];
+  process.env.PUTER_API_KEY = 'puter-token';
+  process.env.MIND_ACTION_PRIMARY = 'groq';
+  process.env.GROQ_API_KEY = 'groq-token';
+  process.env.GROQ_ACTION_TIMEOUT_MS = '1';
+  puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
+  puterSdk.ai.chat = (async (...args: unknown[]) => {
+    puterCalls.push(args);
+    return puterMessage(actionFixture());
+  }) as any;
+  globalThis.fetch = ((...args: unknown[]) => {
+    fetchCalls.push(args);
+    const init = args[1] as RequestInit | undefined;
+    return new Promise<Response>((_, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        const error = new Error('aborted');
+        error.name = 'AbortError';
+        reject(error);
+      });
+    });
+  }) as typeof fetch;
+
+  const response = await new FreePuterClient().runAction(buildTask());
+
+  assert.equal(response.meta.model, 'puter');
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(puterCalls.length, 1);
+});
+
+test('FreePuterClient.runAction falls back from Groq 5xx to Puter', async () => {
+  const puterCalls: unknown[][] = [];
+  process.env.PUTER_API_KEY = 'puter-token';
+  process.env.MIND_ACTION_PRIMARY = 'groq';
+  process.env.GROQ_API_KEY = 'groq-token';
+  puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
+  puterSdk.ai.chat = (async (...args: unknown[]) => {
+    puterCalls.push(args);
+    return puterMessage(actionFixture());
+  }) as any;
+  globalThis.fetch = (async () => new Response('temporary unavailable', { status: 503 })) as typeof fetch;
+
+  const response = await new FreePuterClient().runAction(buildTask());
+
+  assert.equal(response.meta.model, 'puter');
+  assert.equal(puterCalls.length, 1);
+});
+
+test('FreePuterClient.runAction opens only groq:action circuit on Groq 429 and still attempts Puter', async () => {
+  const fetchCalls: unknown[][] = [];
+  const puterCalls: unknown[][] = [];
+  process.env.PUTER_API_KEY = 'puter-token';
+  process.env.MIND_ACTION_PRIMARY = 'groq';
+  process.env.GROQ_API_KEY = 'groq-token';
+  process.env.MIND_PUTER_CIRCUIT_COOLDOWN_MS = '60000';
+  puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
+  puterSdk.ai.chat = (async (...args: unknown[]) => {
+    puterCalls.push(args);
+    return puterMessage(actionFixture());
+  }) as any;
+  globalThis.fetch = (async (...args: unknown[]) => {
+    fetchCalls.push(args);
+    return new Response('quota exceeded', { status: 429 });
+  }) as typeof fetch;
+
+  const first = await new FreePuterClient().runAction(buildTask());
+  const groqCircuit = getGroqActionCircuitBreakerStateForTest();
+  const puterActionCircuit = getPuterCircuitBreakerStateForTest('action');
+  const second = await new FreePuterClient().runAction(buildTask());
+
+  assert.equal(first.meta.model, 'puter');
+  assert.equal(second.meta.model, 'puter');
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(puterCalls.length, 2);
+  assert.ok(groqCircuit.openUntil > Date.now());
+  assert.equal(puterActionCircuit.openUntil, 0);
+});
+
+test('FreePuterClient.runAction falls through Groq and Puter to Local Gemma without reordering fallback', async () => {
+  const fetchCalls: unknown[][] = [];
+  const puterCalls: unknown[][] = [];
+  process.env.PUTER_API_KEY = 'puter-token';
+  process.env.MIND_ACTION_PRIMARY = 'groq';
+  process.env.GROQ_API_KEY = 'groq-token';
+  puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
+  puterSdk.ai.chat = (async (...args: unknown[]) => {
+    puterCalls.push(args);
+    throw new Error('Puter action failed');
+  }) as any;
+  globalThis.fetch = (async (...args: unknown[]) => {
+    fetchCalls.push(args);
+    return groqResponse('not-json');
+  }) as typeof fetch;
+  LocalGemmaClient.prototype.runAction = (async () => ({
+    ...actionFixture(),
+    meta: {
+      ...actionFixture().meta,
+      model: 'local_gemma_fixture',
+      passType: 'fallback_pass',
+    },
+  })) as typeof LocalGemmaClient.prototype.runAction;
+
+  const response = await new FreePuterClient().runAction(buildTask());
+
+  assert.equal(response.meta.model, 'local_gemma_fixture');
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(puterCalls.length, 1);
 });
 
 test('FreePuterClient.runRescue calls Puter first and parses a successful rescue response', async () => {
