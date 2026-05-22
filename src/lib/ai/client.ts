@@ -441,7 +441,10 @@ function getGroqActionTimeoutMs() {
 }
 
 function getGroqActionMaxTokens() {
-  return getPuterMaxTokens('action');
+  return parsePositiveNumber(
+    process.env.MIND_GROQ_ACTION_MAX_TOKENS || process.env.GROQ_ACTION_MAX_TOKENS,
+    getPuterMaxTokens('action')
+  );
 }
 
 function isGroqRescuePrimaryEnabled() {
@@ -457,7 +460,10 @@ function getGroqRescueTimeoutMs() {
 }
 
 function getGroqRescueMaxTokens() {
-  return getPuterMaxTokens('rescue');
+  return parsePositiveNumber(
+    process.env.MIND_GROQ_RESCUE_MAX_TOKENS || process.env.GROQ_RESCUE_MAX_TOKENS,
+    600
+  );
 }
 
 function getPuterMaxTokens(operation: AiOperationName) {

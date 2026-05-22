@@ -1457,11 +1457,10 @@ test('Groq rescue circuit isolation: rescue open does not block action, and acti
     return puterMessage(rescueFixture());
   }) as any;
 
-  // Mock fetch to return 429 for rescue but success for action
   globalThis.fetch = (async (url, init) => {
     fetchCalls.push([url, init]);
     const body = init?.body ? JSON.parse(init.body as string) : {};
-    if (body.max_tokens === 180) {
+    if (body.max_tokens === 600 || body.messages?.[0]?.content?.includes('diagnose')) {
       // rescue call
       return new Response('quota exceeded', { status: 429 });
     }
