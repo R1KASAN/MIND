@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import type { AiRescueResponse } from '../ai/operations';
 import type { AiSynthesisResponse } from '../ai/schema';
@@ -104,6 +105,15 @@ function makeRescueResponse(reason: AiRescueResponse['diagnosis']['primaryReason
     },
   };
 }
+
+test('Rescue UI exposes only recovery actions, not completion', () => {
+  const source = readFileSync(new URL('../../components/Recovery/Rescue.tsx', import.meta.url), 'utf8');
+
+  assert.match(source, /แบ่งก้าวนี้ให้เล็กลงแล้วนำไปใช้/);
+  assert.match(source, /กลับไปแก้บริบทให้ตรงเคส/);
+  assert.match(source, /พักงานนี้ไว้ก่อน เดี๋ยวกลับมาทำต่อ/);
+  assert.doesNotMatch(source, /ทำก้าวนี้เสร็จแล้ว/);
+});
 
 function waitForCondition(assertion: () => boolean, label: string) {
   return new Promise<void>((resolve, reject) => {
@@ -2537,6 +2547,88 @@ test('handleMakeSmaller with invalid scaffold stays on Rescue with failed feedba
   } finally {
     global.fetch = originalFetch;
   }
+});
+
+test('handleWalkAwayFromRescue returns to Brain Dump reentry card and preserves active rescue state', async () => {
+  const payload = makePayload();
+  const task = makeTask({
+    roomId: 'room-rescue-pause',
+    lifecycleState: 'stalled',
+    assistantMode: 'rescue_diagnosis',
+    currentActionId: 'action-1',
+    currentStepIndex: 1,
+    lastSynthesis: payload,
+    currentPlan: {
+      actionTitle: payload.recommended_action.title,
+      steps: payload.recommended_action.micro_steps.map((step, index) => ({
+        id: `step-${index + 1}`,
+        text: step,
+      })),
+    },
+    rescueHistory: [{ reason: 'too_big', mode: 'shrink', createdAt: 10 }],
+  });
+  const session = normalizeSession({
+    lastActive: 100,
+    uiRoute: 'RESCUE',
+    notThisCount: 0,
+    currentActionId: task.currentActionId,
+    currentPayload: payload,
+    task,
+  });
+  const sessionRef = { current: session };
+  let latestSession: AppSession | null = session;
+  let latestRescueState: AiRescueResponse | null = makeRescueResponse('too_big');
+  let rescueLoading = true;
+
+  const controller = createTaskController({
+    session,
+    sessionRef,
+    currentPayload: payload,
+    currentActionState: makeAction(),
+    clarificationPrompt: '',
+    dumpStartTime: null,
+    aiModel: 'qwen2.5:3b',
+    setSession: (value) => {
+      latestSession = value;
+    },
+    setCurrentPayload: () => undefined,
+    setCurrentActionState: () => undefined,
+    setManualFallbackSuggestedActions: () => undefined,
+    setManualFallbackRetryable: () => undefined,
+    setClarificationPrompt: () => undefined,
+    setCurrentWhyThisNow: () => undefined,
+    setCurrentRescueState: (value) => {
+      latestRescueState = value;
+    },
+    setIsRescueLoading: (value) => {
+      rescueLoading = value;
+    },
+    setIsNegotiatingAction: () => undefined,
+    setIsReentryLoading: () => undefined,
+    isScaffoldRefining: false,
+    setIsScaffoldRefining: () => undefined,
+    setScaffoldRefineFeedback: () => undefined,
+    setDumpStartTime: () => undefined,
+    recordAiOpsEntry: () => undefined,
+    persistSession: async () => undefined,
+    persistActionSave: async () => undefined,
+    persistActionUpdate: async () => undefined,
+  });
+
+  await controller.handleWalkAwayFromRescue();
+
+  assert.equal(latestSession?.uiRoute, 'DUMP_ENTRY');
+  assert.equal(latestSession?.currentActionId, 'action-1');
+  assert.deepEqual(latestSession?.currentPayload, payload);
+  assert.equal(latestSession?.task?.lifecycleState, 'dumped');
+  assert.equal(latestSession?.task?.assistantMode, 'reentry_brief');
+  assert.equal(latestSession?.task?.currentActionId, 'action-1');
+  assert.equal(latestSession?.task?.currentStepIndex, 1);
+  assert.equal(latestSession?.task?.rescueHistory.length, 1);
+  assert.equal(latestSession?.task?.reentryBrief?.topActions[0]?.resumeTarget, 'SCAFFOLD');
+  assert.equal(latestSession?.task?.reentryBrief?.topActions[0]?.title, payload.recommended_action.title);
+  assert.equal(latestRescueState?.diagnosis.primaryReason, 'too_big');
+  assert.equal(rescueLoading, false);
 });
 
 test('handleMakeSmaller with valid scaffold updates state and navigates once to SCAFFOLD', async () => {

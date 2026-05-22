@@ -13,7 +13,6 @@ interface Props {
   refineLoading?: boolean;
   refineFeedback?: ScaffoldRefineFeedback | null;
   onMakeSmaller: () => void;
-  onBackToStep: () => void;
   onBackToInput: () => void;
   onWalkAway: () => void;
   focusMode?: boolean;
@@ -67,7 +66,6 @@ export function Rescue({
   refineLoading = false,
   refineFeedback,
   onMakeSmaller,
-  onBackToStep,
   onBackToInput,
   onWalkAway,
   focusMode = true,
@@ -78,7 +76,7 @@ export function Rescue({
         <div>
           <h2 style={{ fontSize: '1.35rem', fontWeight: 650 }}>ลองเลือกดูว่า “ติด” เพราะอะไร</h2>
           <p style={{ color: 'var(--text-secondary)', marginTop: '0.35rem' }}>
-            ถ้าก้าวนี้ยังใช้ได้ ให้ใช้ต่อได้เลย ถ้าใหญ่ไปให้แบ่งย่อย หรือถ้าบริบทไม่ตรงให้กลับไปแก้ข้อมูลเดิม
+            ถ้าก้าวนี้ใหญ่ไปให้แบ่งย่อย ถ้าบริบทไม่ตรงให้กลับไปแก้ข้อมูลเดิม หรือพักไว้แล้วกลับมาต่อในห้องนี้
           </p>
         </div>
       ) : (
@@ -168,23 +166,13 @@ export function Rescue({
           </div>
         )}
         {rescueState ? (
-          <>
-            <button className="primary" disabled={refineLoading} onClick={onMakeSmaller}>
-              แบ่งก้าวนี้ให้เล็กลง
-            </button>
-            <button disabled={refineLoading} onClick={onBackToStep}>
-              ทำก้าวนี้เสร็จแล้ว
-            </button>
-          </>
+          <button className="primary" disabled={refineLoading} onClick={onMakeSmaller}>
+            แบ่งก้าวนี้ให้เล็กลงแล้วนำไปใช้
+          </button>
         ) : (
-          <>
-            <button className="primary" disabled={refineLoading} onClick={onBackToStep}>
-              ทำก้าวนี้เสร็จแล้ว
-            </button>
-            <button disabled={refineLoading} onClick={onMakeSmaller}>
-              แบ่งก้าวนี้ให้เล็กลง
-            </button>
-          </>
+          <button className="primary" disabled={refineLoading} onClick={onMakeSmaller}>
+            แบ่งก้าวนี้ให้เล็กลงแล้วนำไปใช้
+          </button>
         )}
         <button disabled={refineLoading} onClick={onBackToInput}>
           กลับไปแก้บริบทให้ตรงเคส

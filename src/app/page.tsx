@@ -1844,7 +1844,6 @@ export default function StateMachinePage() {
             refineLoading={isScaffoldRefining}
             refineFeedback={scaffoldRefineFeedback}
             onMakeSmaller={aiActionsBlocked ? blockAiAction : controller.handleMakeSmaller}
-            onBackToStep={aiActionsBlocked ? blockAiAction : async () => controller.resumeTaskFromRoute('SCAFFOLD')}
             onBackToInput={readOnlyMemory ? blockAiAction : handleEditCurrentContext}
             onWalkAway={readOnlyMemory ? blockAiAction : controller.handleWalkAwayFromRescue}
             focusMode={isFocusMode}

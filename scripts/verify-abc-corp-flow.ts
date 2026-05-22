@@ -230,9 +230,9 @@ async function run() {
     console.log('Recovery steps: no banned phrases found.');
 
     // Verify recovery action buttons exist
-    const makeSmallerBtn = page.getByRole('button', { name: 'แบ่งก้าวนี้ให้เล็กลง' });
+    const makeSmallerBtn = page.getByRole('button', { name: 'แบ่งก้าวนี้ให้เล็กลงแล้วนำไปใช้' });
     await makeSmallerBtn.waitFor({ state: 'visible' });
-    console.log('Recovery button "แบ่งก้าวนี้ให้เล็กลง" is visible.');
+    console.log('Recovery button "แบ่งก้าวนี้ให้เล็กลงแล้วนำไปใช้" is visible.');
 
     // Take screenshot of Rescue screen
     await page.screenshot({ path: `${SCREENSHOT_DIR}/rescue.png` });

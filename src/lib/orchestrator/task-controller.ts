@@ -1720,19 +1720,55 @@ export function createTaskController(bindings: TaskControllerBindings) {
   };
 
   const handleWalkAwayFromRescue = async () => {
-    bindings.setCurrentRescueState(null);
+    const base = getBaseSession();
+    if (!base) return;
+    const currentTask = getSessionTask(base);
+    const actionTitle =
+      currentTask.currentPlan?.actionTitle ||
+      bindings.currentPayload?.recommended_action.title ||
+      bindings.currentActionState?.title ||
+      'กลับไปเปิดบริบทล่าสุดของงานนี้';
+    const actionRationale =
+      bindings.currentPayload?.recommended_action.rationale ||
+      bindings.currentActionState?.rationale ||
+      'MIND เก็บก้าวล่าสุดไว้ให้กลับมาทำต่อจากจุดเดิม';
+    const summary =
+      bindings.currentPayload?.situation_summary ||
+      currentTask.lastSynthesis?.situation_summary ||
+      currentTask.sourceText.replace(/\s+/g, ' ').trim().slice(0, 180) ||
+      'MIND เก็บบริบทล่าสุดของห้องนี้ไว้แล้ว';
+    const roomId = currentTask.roomId ?? base.roomId ?? 'active-room';
+    const pausedTask: TaskContext = {
+      ...currentTask,
+      lifecycleState: 'dumped',
+      assistantMode: 'reentry_brief',
+      reentryBrief: currentTask.reentryBrief ?? {
+        summary,
+        topActions: [
+          {
+            roomId,
+            title: actionTitle,
+            rationale: actionRationale,
+            resumeTarget: 'SCAFFOLD',
+            impact: 'high',
+            effort: 'low',
+          },
+        ],
+        ignoredNoise: [],
+        createdAt: Date.now(),
+      },
+    };
+
+    invalidateRescue();
     bindings.setIsRescueLoading(false);
-    bindings.setCurrentWhyThisNow('');
     bindings.setIsNegotiatingAction(false);
     bindings.setIsReentryLoading(false);
     clearScaffoldRefineState();
     await updateStatus('DUMP_ENTRY', {
-      currentActionId: null,
-      currentPayload: undefined,
-      activeDumpContext: undefined,
+      currentActionId: base.currentActionId,
+      currentPayload: base.currentPayload,
       lastFailureReason: undefined,
-      suppressReentryIntercept: true,
-    }, null);
+    }, pausedTask);
   };
 
   const handleOneActionAdjustmentTouched = async () => {
