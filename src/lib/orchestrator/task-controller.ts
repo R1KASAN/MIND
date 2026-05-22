@@ -103,6 +103,7 @@ export interface TaskControllerBindings {
   setManualFallbackRetryable: Setter<boolean>;
   setClarificationPrompt: Setter<string>;
   setCurrentWhyThisNow: Setter<string>;
+  currentRescueState?: AiRescueResponse | null;
   setCurrentRescueState: Setter<AiRescueResponse | null>;
   setIsRescueLoading: Setter<boolean>;
   setIsNegotiatingAction: Setter<boolean>;
@@ -171,21 +172,70 @@ function validateScaffold(
   payload: AiSynthesisResponse,
   action: Action,
 ): boolean {
+  return diagnoseScaffoldValidation(scaffold, task, payload, action).valid;
+}
+
+function diagnoseScaffoldValidation(
+  scaffold: AiScaffoldResponse,
+  task: TaskContext,
+  payload: AiSynthesisResponse,
+  action: Action,
+): {
+  valid: boolean;
+  reason: 'valid' | 'thai_check' | 'concrete_anchor_missing' | 'title_echo';
+  anchors: string[];
+  concreteAnchors: string[];
+} {
   const hasThai = (text: string) => /[\u0E00-\u0E7F]/.test(text);
-  if (hasThai(task.sourceText)) {
-    if (!hasThai(scaffold.planTitle) || !scaffold.steps.every((s) => hasThai(s.text))) {
-      return false;
-    }
-  }
   const anchors = collectRoomArtifactAnchors(task, payload.task_shape, action.title);
   const concreteAnchors = anchors.filter((anchor) => !isGenericRoomAnchor(anchor));
+
+  if (hasThai(task.sourceText)) {
+    if (!hasThai(scaffold.planTitle) || !scaffold.steps.every((s) => hasThai(s.text))) {
+      return { valid: false, reason: 'thai_check', anchors, concreteAnchors };
+    }
+  }
   if (concreteAnchors.length > 0) {
     const hasAnyAnchor = scaffold.steps.some((s) => hasAnchorInStep(s.text, concreteAnchors));
-    if (!hasAnyAnchor) return false;
+    if (!hasAnyAnchor) return { valid: false, reason: 'concrete_anchor_missing', anchors, concreteAnchors };
   }
   const echoesTitle = scaffold.steps.some((s) => echoesActionTitle(s.text, action.title));
-  if (echoesTitle) return false;
-  return true;
+  if (echoesTitle) return { valid: false, reason: 'title_echo', anchors, concreteAnchors };
+  return { valid: true, reason: 'valid', anchors, concreteAnchors };
+}
+
+function shouldDebugScaffold() {
+  return typeof process !== 'undefined' && process.env.MIND_DEBUG_SCAFFOLD === '1';
+}
+
+function logScaffoldDiagnostics(details: {
+  stage: 'primary' | 'structural_retry' | 'final';
+  scaffold: AiScaffoldResponse;
+  validation: ReturnType<typeof diagnoseScaffoldValidation>;
+  refineResult: ReturnType<typeof classifyScaffoldRefineResult>;
+  previousVisibleSteps: string[];
+  nextVisibleSteps: string[];
+  rescueState: AiRescueResponse | null;
+}) {
+  if (!shouldDebugScaffold()) return;
+  console.warn('[MIND][scaffold_debug]', {
+    stage: details.stage,
+    planTitle: details.scaffold.planTitle,
+    steps: details.scaffold.steps.map((step) => step.text),
+    refineResult: details.refineResult,
+    validateScaffold: {
+      valid: details.validation.valid,
+      reason: details.validation.reason,
+      anchors: details.validation.anchors,
+      concreteAnchors: details.validation.concreteAnchors,
+    },
+    previousVisibleSteps: details.previousVisibleSteps,
+    nextVisibleSteps: details.nextVisibleSteps,
+    rescueStateExists: Boolean(details.rescueState),
+    rescuePrimaryReason: details.rescueState?.diagnosis.primaryReason,
+    rescueModel: details.rescueState?.meta.model,
+    rescueModelIsManual: details.rescueState?.meta.model?.startsWith('manual_rescue') ?? false,
+  });
 }
 
 export function createTaskController(bindings: TaskControllerBindings) {
@@ -795,6 +845,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
         return {
           scaffold,
           ...artifacts,
+          nextVisibleSteps,
           refineResult: classifyScaffoldRefineResult(previousVisibleSteps, nextVisibleSteps),
         };
       };
@@ -803,7 +854,17 @@ export function createTaskController(bindings: TaskControllerBindings) {
       const initialMeta = refined.scaffold.meta;
       let structuralRetryMeta: typeof refined.scaffold.meta | undefined;
 
-      let isValid = validateScaffold(refined.scaffold, taskForScaffold, currentPayload, currentAction);
+      let validation = diagnoseScaffoldValidation(refined.scaffold, taskForScaffold, currentPayload, currentAction);
+      let isValid = validation.valid;
+      logScaffoldDiagnostics({
+        stage: 'primary',
+        scaffold: refined.scaffold,
+        validation,
+        refineResult: refined.refineResult,
+        previousVisibleSteps,
+        nextVisibleSteps: refined.nextVisibleSteps,
+        rescueState: bindings.currentRescueState ?? null,
+      });
 
       if (refined.refineResult !== 'success' || !isValid) {
         refined = await buildRefinedArtifacts('structural_retry')
@@ -812,10 +873,29 @@ export function createTaskController(bindings: TaskControllerBindings) {
             return result;
           })
           .catch(() => refined);
-        isValid = validateScaffold(refined.scaffold, taskForScaffold, currentPayload, currentAction);
+        validation = diagnoseScaffoldValidation(refined.scaffold, taskForScaffold, currentPayload, currentAction);
+        isValid = validation.valid;
+        logScaffoldDiagnostics({
+          stage: 'structural_retry',
+          scaffold: refined.scaffold,
+          validation,
+          refineResult: refined.refineResult,
+          previousVisibleSteps,
+          nextVisibleSteps: refined.nextVisibleSteps,
+          rescueState: bindings.currentRescueState ?? null,
+        });
       }
 
       if (refined.refineResult !== 'success' || !isValid) {
+        logScaffoldDiagnostics({
+          stage: 'final',
+          scaffold: refined.scaffold,
+          validation,
+          refineResult: refined.refineResult,
+          previousVisibleSteps,
+          nextVisibleSteps: refined.nextVisibleSteps,
+          rescueState: bindings.currentRescueState ?? null,
+        });
         if (!isValid) {
           setScaffoldRefineFeedback(buildScaffoldRefineFeedback('failed'));
           return;

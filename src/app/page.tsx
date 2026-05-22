@@ -623,6 +623,7 @@ export default function StateMachinePage() {
     setManualFallbackRetryable,
     setClarificationPrompt,
     setCurrentWhyThisNow,
+    currentRescueState,
     setCurrentRescueState,
     setIsRescueLoading,
     setIsNegotiatingAction,
