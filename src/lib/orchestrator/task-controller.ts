@@ -49,6 +49,7 @@ import {
   collectRoomArtifactAnchors,
   hasAnchorInStep,
   echoesActionTitle,
+  isGenericRoomAnchor,
 } from '@/lib/orchestrator/task-machine';
 import { synthesizeLocally } from '@/lib/ai/local-synthesis';
 import type { AnalyticsEventProperties } from '@/lib/analytics/local-analytics';
@@ -177,8 +178,9 @@ function validateScaffold(
     }
   }
   const anchors = collectRoomArtifactAnchors(task, payload.task_shape, action.title);
-  if (anchors.length > 0) {
-    const hasAnyAnchor = scaffold.steps.some((s) => hasAnchorInStep(s.text, anchors));
+  const concreteAnchors = anchors.filter((anchor) => !isGenericRoomAnchor(anchor));
+  if (concreteAnchors.length > 0) {
+    const hasAnyAnchor = scaffold.steps.some((s) => hasAnchorInStep(s.text, concreteAnchors));
     if (!hasAnyAnchor) return false;
   }
   const echoesTitle = scaffold.steps.some((s) => echoesActionTitle(s.text, action.title));

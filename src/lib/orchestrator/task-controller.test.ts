@@ -2816,7 +2816,7 @@ test('handleMakeSmaller rejects English scaffold in a Thai room', async () => {
 test('handleMakeSmaller rejects scaffold if it does not contain room anchors', async () => {
   const payload = makePayload();
   const task = makeTask({
-    sourceText: 'ลูกค้าส่ง feedback เรื่องหน้า landing',
+    sourceText: 'ABC Corp ถามเรื่อง Dashboard และ payment API ที่ยังค้างอยู่',
     lifecycleState: 'stalled',
     currentActionId: 'action-1',
     lastSynthesis: payload,
@@ -2897,6 +2897,101 @@ test('handleMakeSmaller rejects scaffold if it does not contain room anchors', a
 
     assert.equal(latestSession?.uiRoute, 'RESCUE');
     assert.equal(latestFeedback?.reason, 'failed');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('handleMakeSmaller accepts Thai non-echoing scaffold when room anchors are generic only', async () => {
+  const payload = makePayload();
+  const task = makeTask({
+    sourceText: 'ลูกค้าส่ง feedback เรื่องหน้า landing',
+    lifecycleState: 'stalled',
+    currentActionId: 'action-1',
+    lastSynthesis: payload,
+    currentPlan: {
+      actionTitle: payload.recommended_action.title,
+      steps: payload.recommended_action.micro_steps.map((step, index) => ({
+        id: `step-${index + 1}`,
+        text: step,
+      })),
+    },
+  });
+  const session = normalizeSession({
+    lastActive: 100,
+    uiRoute: 'RESCUE',
+    notThisCount: 0,
+    currentActionId: task.currentActionId,
+    currentPayload: payload,
+    task,
+  });
+  const sessionRef = { current: session };
+  let latestSession: AppSession | null = session;
+  let currentPayload: AiSynthesisResponse | null = payload;
+  let latestFeedback: any = null;
+
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Response(JSON.stringify({
+    planTitle: 'แยก feedback ให้เป็นข้อเล็กลง',
+    steps: [
+      { id: 'step-1', text: 'ขยับอีกนิด: อ่าน feedback แล้วจดประเด็นหลักหนึ่งข้อ' },
+      { id: 'step-2', text: 'ขยับอีกนิด: แยกส่วนที่ต้องตอบกับส่วนที่ต้องถามเพิ่ม' },
+      { id: 'step-3', text: 'ขยับอีกนิด: ร่างคำตอบสั้น ๆ จากประเด็นแรก' },
+    ],
+    shortcutOptions: [],
+    revisedCurrentStepIndex: 0,
+    meta: {
+      model: 'qwen2.5:3b',
+      usedRoomFiles: [],
+      repairUsed: false,
+    },
+  }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  try {
+    const controller = createTaskController({
+      session,
+      sessionRef,
+      currentPayload: payload,
+      currentActionState: makeAction(),
+      clarificationPrompt: '',
+      dumpStartTime: null,
+      aiModel: 'qwen2.5:3b',
+      setSession: (value) => {
+        latestSession = value;
+      },
+      setCurrentPayload: (value) => {
+        currentPayload = value;
+      },
+      setCurrentActionState: () => undefined,
+      setManualFallbackSuggestedActions: () => undefined,
+      setManualFallbackRetryable: () => undefined,
+      setClarificationPrompt: () => undefined,
+      setCurrentWhyThisNow: () => undefined,
+      setCurrentRescueState: () => undefined,
+      setIsRescueLoading: () => undefined,
+      setIsNegotiatingAction: () => undefined,
+      setIsReentryLoading: () => undefined,
+      isScaffoldRefining: false,
+      setIsScaffoldRefining: () => undefined,
+      setScaffoldRefineFeedback: (value) => {
+        latestFeedback = value;
+      },
+      setDumpStartTime: () => undefined,
+      recordAiOpsEntry: () => undefined,
+      persistSession: async () => undefined,
+      persistActionSave: async () => undefined,
+      persistActionUpdate: async () => undefined,
+    });
+
+    await controller.handleMakeSmaller();
+
+    assert.equal(latestSession?.uiRoute, 'SCAFFOLD');
+    assert.equal(latestSession?.task?.assistantMode, 'scaffold_refinement');
+    assert.equal(currentPayload?.recommended_action.micro_steps[0], 'ขยับอีกนิด: อ่าน feedback แล้วจดประเด็นหลักหนึ่งข้อ');
+    assert.equal(latestFeedback, null);
   } finally {
     global.fetch = originalFetch;
   }

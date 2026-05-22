@@ -140,7 +140,7 @@ export function collectRoomArtifactAnchors(task?: TaskContext, taskShape?: TaskS
   return uniqueAnchors(anchors);
 }
 
-function isGenericRoomAnchor(anchor: string) {
+export function isGenericRoomAnchor(anchor: string) {
   return /^(?:ลูกค้า|client|งาน|task)$/iu.test(normalizeForStepMatch(anchor));
 }
 
