@@ -2,13 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createTaskContext } from '@/lib/store/idb';
-import type { TaskContext, RescueHistoryItem, PendingInput } from '@/lib/store/idb';
+import type { Action, TaskContext, RescueHistoryItem, PendingInput } from '@/lib/store/idb';
 import {
   ACTION_SYSTEM_PROMPT,
   PUTER_ACTION_SYSTEM_PROMPT,
   RESCUE_SYSTEM_PROMPT,
+  SCAFFOLD_SYSTEM_PROMPT,
   buildActionUserPrompt,
   buildReentryUserPrompt,
+  buildScaffoldUserPrompt,
 } from '@/lib/ai/operation-prompts';
 
 function makeTask(overrides: Partial<TaskContext> = {}): TaskContext {
@@ -82,6 +84,47 @@ test('Puter action prompt asks for work-artifact-first starterMicroSteps', () =>
   assert.ok(PUTER_ACTION_SYSTEM_PROMPT.includes('สรุปสถานะ prod/CPU spike เป็น 3 บรรทัด'), 'Puter prompt should include ABC Corp incident example');
   assert.ok(PUTER_ACTION_SYSTEM_PROMPT.includes('แยก Dashboard กับ payment API ว่าค้างตรงไหน'), 'Puter prompt should include work split example');
   assert.ok(PUTER_ACTION_SYSTEM_PROMPT.includes('ร่างข้อความตอบ ABC Corp แบบไม่ commit เวลา'), 'Puter prompt should include reply artifact example');
+});
+
+test('scaffold prompt forces Thai output when room context is Thai', () => {
+  const task = makeTask({
+    workflowType: 'client_resume',
+    sourceText: [
+      'ลูกค้าขอ proposal ระบบ AI ร้านค้าส่ง',
+      'ยังไม่ชัดเรื่อง scope, estimate, timeline',
+      'ผมไม่รู้จะเริ่มย่อยก้าวนี้ยังไง',
+    ].join('\n'),
+    taskShape: {
+      deliverableType: 'proposal',
+      immediateNeed: 'define_scope',
+      missingInputs: ['scope', 'estimate', 'timeline'],
+      workContext: 'proposal ระบบ AI ร้านค้าส่ง',
+      confidence: 0.82,
+    },
+  });
+  const action: Action = {
+    id: 'action-1',
+    createdAt: 1,
+    title: 'ทำ proposal รอบแรก',
+    rationale: 'ต้องล็อก scope ก่อนตอบ timeline',
+    microSteps: [
+      'รวบ requirement ที่มีอยู่',
+      'แยก scope ที่ชัดกับที่ยังต้องถาม',
+      'ร่าง timeline และ estimate เบื้องต้น',
+    ],
+    isPinned: false,
+    state: 'IN_PROGRESS' as const,
+    workflowType: 'client_resume',
+  };
+
+  const prompt = buildScaffoldUserPrompt(task, action, 1);
+
+  assert.ok(SCAFFOLD_SYSTEM_PROMPT.includes('planTitle และ steps ทุกข้อ ต้องเป็นประโยคภาษาไทย'), 'system prompt must force Thai scaffold text for Thai context');
+  assert.ok(SCAFFOLD_SYSTEM_PROMPT.includes('"Define Scope"'), 'system prompt must explicitly ban English headings');
+  assert.ok(SCAFFOLD_SYSTEM_PROMPT.includes('proposal, scope, estimate, timeline'), 'system prompt should allow English domain terms only inside Thai sentences');
+  assert.ok(prompt.includes('languageInstruction: Thai context detected'), 'user prompt should expose detected Thai context');
+  assert.ok(prompt.includes('Return Thai planTitle and Thai steps only'), 'user prompt should require Thai title and steps');
+  assert.ok(prompt.includes('Do not return English headings like "Define Scope"'), 'user prompt should forbid English scaffold headings');
 });
 
 test('ONE_ACTION prompt: two unanswered pendingInputs biases toward one focused question', () => {

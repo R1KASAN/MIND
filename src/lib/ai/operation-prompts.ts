@@ -9,6 +9,10 @@ function truncateText(value: string | undefined, maxChars: number) {
   return `${trimmed.slice(0, maxChars)}…`;
 }
 
+function hasThaiText(value: string | undefined | null) {
+  return Boolean(value && /[\u0E00-\u0E7F]/.test(value));
+}
+
 function describeFiles(task: TaskContext) {
   const sourceFiles = task.sourceFiles ?? [];
   if (sourceFiles.length === 0) return 'ไม่มีไฟล์แนบ';
@@ -470,6 +474,9 @@ export const SCAFFOLD_SYSTEM_PROMPT = `
 - planTitle ต้องเป็นชื่อแผนสั้น ๆ ที่สอดคล้องกับ action ปัจจุบัน
 - steps ต้องมี 3-5 รายการ
 - คืน steps ที่เป็นการลงมือทำได้จริง
+- ถ้า source/context/current step มีภาษาไทย: planTitle และ steps ทุกข้อ ต้องเป็นประโยคภาษาไทย
+- ห้ามใช้หัวข้อภาษาอังกฤษล้วน เช่น "Define Scope", "Break Down Task", "Draft Message"
+- คำ domain อังกฤษเช่น proposal, scope, estimate, timeline, API, Dashboard, payment ใช้ได้เฉพาะเป็นคำศัพท์ในประโยคไทยเท่านั้น
 - ถ้าโจทย์คือ "make it smaller" ให้ย่อย current step โดยไม่เปลี่ยนเป้าหมายงาน
 - ห้ามแค่เติม prefix, รีไรต์คำเดิม, หรือเปลี่ยนถ้อยคำเล็กน้อยแล้วถือว่าย่อยแล้ว
 - อย่างน้อยหนึ่ง visible step ต้องแตกออกเป็นงานย่อยใหม่ที่เริ่มทำได้ทันที
@@ -702,6 +709,16 @@ export function buildScaffoldUserPrompt(
   const currentStep = action.microSteps[currentStepIndex] ?? action.microSteps[0] ?? action.title;
   const latestRescue = task.rescueHistory[task.rescueHistory.length - 1];
   const currentPlanSteps = task.currentPlan?.steps.map((step) => step.text) ?? action.microSteps;
+  const thaiContextDetected = [
+    task.sourceText,
+    task.extractedText,
+    describePendingInputs(task),
+    action.title,
+    action.rationale,
+    currentStep,
+    ...action.microSteps,
+    ...currentPlanSteps,
+  ].some(hasThaiText);
   const structuralRetryGuidance = strategy === 'structural_retry'
     ? [
         'retryMode: structural_retry',
@@ -718,6 +735,9 @@ export function buildScaffoldUserPrompt(
     `extractedText: ${truncateText(task.extractedText, 500)}`,
     `pendingInputs: ${truncateText(describePendingInputs(task), 220)}`,
     latestRescue ? `latestRescue: ${latestRescue.reason} -> ${latestRescue.mode}` : 'latestRescue: ไม่มี',
+    thaiContextDetected
+      ? 'languageInstruction: Thai context detected. Return Thai planTitle and Thai steps only. English domain terms such as proposal/scope/estimate/timeline/API are allowed only inside Thai sentences. Do not return English headings like "Define Scope".'
+      : 'languageInstruction: match the primary language of the source/context/current step.',
     '',
     'currentAction:',
     describeAction(action),
