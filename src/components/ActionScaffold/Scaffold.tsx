@@ -297,11 +297,8 @@ export function Scaffold({
             ใช้ก้าวย่อยนี้ต่อ
           </button>
           <div className="scaffold-secondary-actions-group">
-            <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
-              <button style={{ flex: '1 1 calc(50% - 0.25rem)' }} disabled={refineLoading} onClick={onMakeSmaller}>แบ่งก้าวนี้ให้เล็กลง</button>
-              <button style={{ flex: '1 1 calc(50% - 0.25rem)' }} disabled={refineLoading} onClick={onBackToInput}>กลับไปแก้บริบท</button>
-            </div>
-            <button disabled={refineLoading} onClick={onRescue}>ฉันติดขัด / ช่วยวินิจฉัยจุดที่บล็อกอยู่</button>
+            <button disabled={refineLoading} onClick={onRescue}>ฉันติดขัด / แบ่งให้เล็กลง</button>
+            <button disabled={refineLoading} onClick={onBackToInput}>กลับไปแก้บริบท</button>
           </div>
           <details className="supporting-panel" style={{ width: '100%', maxWidth: '44rem' }}>
             <summary
@@ -456,11 +453,8 @@ export function Scaffold({
         >
           ใช้ก้าวย่อยนี้ต่อ
         </button>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-          <button style={{ flex: '1 1 calc(50% - 0.25rem)' }} disabled={refineLoading} onClick={onMakeSmaller}>แบ่งก้าวนี้ให้เล็กลง</button>
-          <button style={{ flex: '1 1 calc(50% - 0.25rem)' }} disabled={refineLoading} onClick={onBackToInput}>กลับไปแก้บริบท</button>
-        </div>
-        <button disabled={refineLoading} onClick={onRescue}>ฉันติดขัด / ช่วยวินิจฉัยจุดที่บล็อกอยู่</button>
+        <button disabled={refineLoading} onClick={onRescue}>ฉันติดขัด / แบ่งให้เล็กลง</button>
+        <button disabled={refineLoading} onClick={onBackToInput}>กลับไปแก้บริบท</button>
       </div>
     </div>
   );

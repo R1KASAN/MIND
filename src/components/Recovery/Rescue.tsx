@@ -167,12 +167,25 @@ export function Rescue({
             </div>
           </div>
         )}
-        <button className="primary" disabled={refineLoading} onClick={onBackToStep}>
-          ใช้ก้าวนี้ต่อ
-        </button>
-        <button disabled={refineLoading} onClick={onMakeSmaller}>
-          แบ่งก้าวนี้ให้เล็กลง
-        </button>
+        {rescueState ? (
+          <>
+            <button className="primary" disabled={refineLoading} onClick={onMakeSmaller}>
+              แบ่งก้าวนี้ให้เล็กลง
+            </button>
+            <button disabled={refineLoading} onClick={onBackToStep}>
+              ใช้ก้าวนี้ต่อ
+            </button>
+          </>
+        ) : (
+          <>
+            <button className="primary" disabled={refineLoading} onClick={onBackToStep}>
+              ใช้ก้าวนี้ต่อ
+            </button>
+            <button disabled={refineLoading} onClick={onMakeSmaller}>
+              แบ่งก้าวนี้ให้เล็กลง
+            </button>
+          </>
+        )}
         <button disabled={refineLoading} onClick={onBackToInput}>
           กลับไปแก้บริบทให้ตรงเคส
         </button>
