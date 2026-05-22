@@ -419,9 +419,13 @@ OUTPUT ONLY JSON.
 - ใช้ภาษาหลักเดียวกับ sourceText ของผู้ใช้
 - แต่ละก้าวต้องผูกกับบริบทจริง เช่น ชื่อคน ชื่อบริษัท ข้อมูลเฉพาะจาก brain dump
 - ถ้าเป็นเคสผสม overload + ลูกค้า/incident/work: reset ได้มากสุด 1 ก้าว และห้ามเป็นก้าวแรกแบบเดี่ยว ๆ
-- อย่างน้อย 2 ก้าวต้องพูดถึง room/work anchors เช่น ลูกค้า, incident, prod, Dashboard, payment API, deadline, chat
+- อย่างน้อย 2 ก้าวต้องพูดถึง room/work anchors ที่เฉพาะเจาะจง เช่น proposal, ระบบ AI ร้านค้าส่ง, scope, estimate, timeline, QA, release, payment webhook, provider timeout, Jira, prod, Dashboard, payment API
+- ห้ามใช้แค่คำกว้าง ๆ เช่น "ลูกค้า", "client", "งาน" ถ้ามี anchor ที่เฉพาะกว่าใน room
 - ก้าวแรกต้องเป็น work artifact ที่เล็กที่สุด เช่น สรุปสถานะ, แยกรายการค้าง, ร่างข้อความ, ทำ checklist
 - ห้าม echo action title/objective เช่น "ทำก้าวเล็กชิ้นเดียวของ <title>"
+- ดี: "สรุป scope ระบบ AI ร้านค้าส่ง เป็น 3 bullet"
+- ดี: "แยก estimate/timeline ที่มีแล้วกับยังขาด"
+- ดี: "ร่าง update ผู้จัดการแบบยังไม่ยืนยัน release"
 - ดี: "ตอบ ABC Corp ว่าขออัปเดตใน 20 นาที"
 - ดี: "เช็ก CPU spike ช่วง 9 โมงก่อน"
 - ดี: "สรุปสถานะ prod/CPU spike เป็น 3 บรรทัด"

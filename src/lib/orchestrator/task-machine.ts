@@ -92,6 +92,7 @@ export function collectRoomArtifactAnchors(task?: TaskContext, taskShape?: TaskS
     task?.taskFrame?.objective,
     task?.taskFrame?.stage,
     task?.taskFrame?.stakeholders?.join(' '),
+    task?.pendingInputs?.map((input) => input.answer).join(' '),
     taskShape?.workContext,
     taskShape?.missingInputs?.join(' '),
     actionTitle,
@@ -104,18 +105,27 @@ export function collectRoomArtifactAnchors(task?: TaskContext, taskShape?: TaskS
   anchors.push(...customerMatches);
 
   const keywordAnchors: Array<[RegExp, string]> = [
+    [/proposal/u, 'proposal'],
+    [/ระบบ\s*ai.*ร้านค้าส่ง|ร้านค้าส่ง.*ระบบ\s*ai|ร้านค้าส่ง/u, 'ระบบ AI ร้านค้าส่ง'],
+    [/scope|ขอบเขต/u, 'scope'],
+    [/estimate|ประเมินราคา|ราคา/u, 'estimate'],
     [/\bprod(?:uction)?\b|โปรดักชัน/u, 'prod'],
     [/cpu spike/u, 'CPU spike'],
     [/\brca\b/u, 'RCA'],
     [/\bincident\b|อินซิเดนต์/u, 'incident'],
     [/dashboard/u, 'Dashboard'],
+    [/payment\s+webhook/u, 'payment webhook'],
     [/payment\s+api|ระบบจ่ายเงิน/u, 'payment API'],
+    [/provider\s+timeout/u, 'provider timeout'],
     [/\bapi\b/u, 'API'],
     [/server|เซิร์ฟเวอร์/u, 'server'],
     [/webhook/u, 'webhook'],
+    [/\bqa\b/u, 'QA'],
     [/jira/u, 'Jira'],
     [/release/u, 'release'],
     [/timeline|ไทม์ไลน์/u, 'timeline'],
+    [/รายงานสรุปรายสัปดาห์|รายงานสรุป/u, 'รายงานสรุปรายสัปดาห์'],
+    [/ตรวจสเปกเว็บใหม่|สเปกเว็บใหม่/u, 'ตรวจสเปกเว็บใหม่'],
     [/สเปก|spec/u, 'สเปก'],
     [/ปุ่ม|button/u, 'ปุ่ม'],
     [/สไลด์|slide/u, 'สไลด์'],
@@ -128,6 +138,14 @@ export function collectRoomArtifactAnchors(task?: TaskContext, taskShape?: TaskS
   }
 
   return uniqueAnchors(anchors);
+}
+
+function isGenericRoomAnchor(anchor: string) {
+  return /^(?:ลูกค้า|client|งาน|task)$/iu.test(normalizeForStepMatch(anchor));
+}
+
+function concreteRoomAnchors(anchors: string[]) {
+  return anchors.filter((anchor) => !isGenericRoomAnchor(anchor));
 }
 
 function hasRoomWorkAnchors(task?: TaskContext, taskShape?: TaskShape, actionTitle?: string) {
@@ -181,6 +199,19 @@ function isArtifactStep(step: string) {
   ].some((token) => normalized.includes(token));
 }
 
+function isGenericStarterTemplateStep(step: string) {
+  const normalized = normalizeForStepMatch(step);
+  return [
+    'สรุปสถานะล่าสุดของ ลูกค้า',
+    'สรุปสถานะล่าสุดของ client',
+    'แยกสิ่งที่รู้แล้วกับสิ่งที่ยังขาด',
+    'ร่างข้อความตอบ ลูกค้า แบบปลอดภัย',
+    'ร่างข้อความตอบ client แบบปลอดภัย',
+    'เปิดแค่หน้าจอเดียว',
+    'เลือกงานก้าวแรกที่เล็กพอทำได้',
+  ].some((pattern) => normalized.includes(pattern));
+}
+
 export function echoesActionTitle(step: string, actionTitle?: string) {
   if (!actionTitle) return false;
   const normalizedStep = normalizeForStepMatch(step);
@@ -201,16 +232,21 @@ function shouldUseGroundedFallbackSteps(
   if (!hasRoomWorkAnchors(task, taskShape, action.title)) return false;
 
   const anchors = collectRoomArtifactAnchors(task, taskShape, action.title);
+  const concreteAnchors = concreteRoomAnchors(anchors);
   const anchoredCount = steps.filter((step) => hasAnchorInStep(step, anchors)).length;
   const resetOnlyCount = steps.filter(isResetOnlyStep).length;
+  const genericCustomerOnlyCount = concreteAnchors.length > 0
+    ? steps.filter((step) => /ลูกค้า|client/iu.test(step) && !hasAnchorInStep(step, concreteAnchors)).length
+    : 0;
 
   return (
     !isConcreteWorkStep(steps[0]) ||
     isResetOnlyStep(steps[0]) ||
     !isArtifactStep(steps[2]) ||
     anchoredCount < 2 ||
+    genericCustomerOnlyCount >= 2 ||
     resetOnlyCount > 1 ||
-    steps.some((step) => echoesActionTitle(step, action.title))
+    steps.some((step) => echoesActionTitle(step, action.title) || isGenericStarterTemplateStep(step))
   );
 }
 
@@ -222,11 +258,37 @@ function buildGroundedArtifactMicroSteps(
   if (!hasRoomWorkAnchors(task, taskShape, action.title)) return undefined;
 
   const anchors = collectRoomArtifactAnchors(task, taskShape, action.title);
+  const concreteAnchors = concreteRoomAnchors(anchors);
   const customerAnchor = anchors.find((anchor) => /corp|co|ltd|inc|llc|bank/i.test(anchor)) ?? 'ลูกค้า';
   const hasIncident = anchors.some((anchor) => ['prod', 'CPU spike', 'RCA', 'incident', 'server', 'webhook'].includes(anchor));
   const hasDashboard = anchors.includes('Dashboard');
   const hasPayment = anchors.includes('payment API');
   const hasChat = anchors.includes('แชต') || anchors.includes('ลูกค้า');
+  const hasProposal = taskShape?.deliverableType === 'proposal' ||
+    anchors.includes('proposal') ||
+    anchors.includes('ระบบ AI ร้านค้าส่ง') ||
+    (anchors.includes('scope') && (anchors.includes('estimate') || anchors.includes('timeline')));
+  const hasRelease = anchors.some((anchor) => ['QA', 'release', 'payment webhook', 'provider timeout', 'Jira'].includes(anchor));
+  const hasMixedOverloadWork = taskShape?.behaviorIntent === 'personal_friction' &&
+    anchors.some((anchor) => ['รายงานสรุปรายสัปดาห์', 'ตรวจสเปกเว็บใหม่'].includes(anchor));
+
+  if (hasRelease) {
+    return [
+      anchors.includes('payment webhook') || anchors.includes('provider timeout')
+        ? 'สรุป payment webhook/provider timeout เป็น 3 บรรทัด'
+        : 'สรุปสถานะ release/QA เป็น 3 บรรทัด',
+      'แยก QA/release/Jira ที่ตรวจแล้วกับยังไม่ชัด',
+      'ร่าง update ผู้จัดการแบบยังไม่ยืนยัน release',
+    ];
+  }
+
+  if (hasMixedOverloadWork) {
+    return [
+      'ทำ checklist รายงานสรุปรายสัปดาห์กับสเปกเว็บ',
+      'แยกงานที่เริ่มได้ใน 10 นาทีแรก',
+      'จด checkpoint ว่าจะเริ่มรายงานหรือสเปกเว็บ',
+    ];
+  }
 
   if (hasIncident) {
     return [
@@ -242,11 +304,31 @@ function buildGroundedArtifactMicroSteps(
     ];
   }
 
+  if (hasProposal) {
+    const proposalSubject = anchors.includes('ระบบ AI ร้านค้าส่ง') ? 'ระบบ AI ร้านค้าส่ง' : 'proposal';
+    return [
+      `สรุป scope ${proposalSubject} เป็น 3 bullet`,
+      'แยก estimate/timeline ที่มีแล้วกับยังขาด',
+      'ร่างคำถามกลับเรื่อง proposal ก่อนประเมินราคา',
+    ];
+  }
+
   if (hasDashboard || hasPayment || anchors.includes('API')) {
     return [
       `แยกงานค้างของ ${customerAnchor} เป็นรายการสั้น`,
       'จดสถานะล่าสุดของแต่ละรายการ',
       `ร่างข้อความตอบ ${customerAnchor} แบบไม่ commit เวลา`,
+    ];
+  }
+
+  if (concreteAnchors.length > 0) {
+    const primary = concreteAnchors[0];
+    const secondary = concreteAnchors.find((anchor) => normalizeForStepMatch(anchor) !== normalizeForStepMatch(primary));
+    const anchorLabel = secondary ? `${primary}/${secondary}` : primary;
+    return [
+      `สรุป ${anchorLabel} เป็น 3 บรรทัด`,
+      `แยกข้อมูลที่รู้แล้วกับที่ยังขาดของ ${primary}`,
+      `ร่าง note ถัดไปเกี่ยวกับ ${anchorLabel}`,
     ];
   }
 

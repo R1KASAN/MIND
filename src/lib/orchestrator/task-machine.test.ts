@@ -715,6 +715,56 @@ test('buildPayloadFromAiActionResponse grounds ABC Corp mixed overload into work
   assert.match(steps.join(' '), /ABC Corp/);
 });
 
+test('buildPayloadFromAiActionResponse uses clarification anchors for grounded fallback steps', () => {
+  const task = makeTask({
+    sourceText: [
+      'ABC Corp ทวงงานค้าง 2 ตัวในแชต',
+      'โปรดักชันล่มตั้งแต่เช้า แต่ยังไม่รู้สถานะล่าสุด',
+      'ผมหิวและตื้อ ไม่รู้เริ่มตรงไหน',
+    ].join('\n'),
+    pendingInputs: [
+      {
+        kind: 'clarification',
+        prompt: 'งานค้างคืออะไร',
+        answer: 'Dashboard เหลือ KPI/table และ payment API ยังไม่ deploy ต้องเช็ก response กับ backend',
+        createdAt: 1,
+      },
+    ],
+    taskFrame: {
+      objective: 'เลือกก้าวตอบ ABC Corp ให้ปลอดภัย',
+      stage: 'clarified',
+      stakeholders: ['ABC Corp'],
+    },
+  });
+  const response: AiActionResponse = {
+    chosenAction: {
+      title: 'ร่างข้อความอัปเดต ABC Corp',
+      rationale: 'ต้องตอบแบบไม่ commit เวลา',
+      successSignal: 'มีข้อความตอบกลับ',
+    },
+    alternatives: [],
+    whyThisNow: 'ABC Corp รอในแชต',
+    situationSummary: 'ABC Corp รอคำตอบหลัง prod ล่ม',
+    starterMicroSteps: ['พักก่อน 2 นาที', 'เปิดหน้าจอเดียว', 'ทำก้าวเล็กชิ้นเดียวของ "ร่างข้อความอัปเดต ABC Corp"'],
+    meta: { model: 'mock', usedRoomFiles: [], repairUsed: false },
+  };
+
+  const payload = buildPayloadFromAiActionResponse('client_response', response, [], {
+    deliverableType: 'estimate',
+    immediateNeed: 'resume_execution',
+    missingInputs: ['ขอบเขต/รายการหัวข้อสำหรับพรีเซนต์', 'กรอบเวลาที่ต้อง estimate'],
+    workContext: 'ABC Corp รอคำตอบและ prod ยังไม่ชัด',
+    behaviorIntent: 'personal_friction',
+    confidence: 0.76,
+  }, task);
+  const steps = payload.recommended_action.micro_steps.join(' ');
+
+  assert.equal(payload.recommended_action.micro_steps_source, 'fallback');
+  assert.match(steps, /Dashboard/);
+  assert.match(steps, /payment API/);
+  assert.doesNotMatch(steps, /scope proposal|estimate\/timeline/);
+});
+
 test('buildPayloadFromAiActionResponse grounds non-ABC customer incident without overfitting', () => {
   const task = makeTask({
     sourceText: [
@@ -753,6 +803,115 @@ test('buildPayloadFromAiActionResponse grounds non-ABC customer incident without
 
   assert.match(steps, /Zenith Bank|webhook|release/);
   assert.doesNotMatch(steps, /ABC Corp/);
+});
+
+test('buildPayloadFromAiActionResponse grounds proposal room to proposal-specific artifacts', () => {
+  const task = makeTask({
+    workflowType: 'client_response',
+    sourceText: 'ช่วยทำ proposal ระบบ AI ในร้านค้าส่ง ข้อมูล scope กระจัดกระจาย ยังไม่มี estimate หรือ timeline',
+    taskFrame: {
+      objective: 'เริ่ม proposal โดยไม่เดา scope เกินจริง',
+      stage: 'define_scope',
+      stakeholders: ['client'],
+    },
+  });
+  const response: AiActionResponse = {
+    chosenAction: {
+      title: 'รวบ scope proposal ก่อน estimate',
+      rationale: 'ต้องล็อกข้อมูลก่อนประเมินราคา',
+      successSignal: 'มี scope และคำถามที่ต้องถามกลับ',
+    },
+    alternatives: [],
+    whyThisNow: 'proposal ยังขาด scope estimate timeline',
+    situationSummary: 'ลูกค้าขอ proposal ระบบ AI ร้านค้าส่งแต่ scope ยังไม่ชัด',
+    starterMicroSteps: [
+      'สรุปสถานะล่าสุดของ ลูกค้า เป็น 3 บรรทัด',
+      'แยกสิ่งที่รู้แล้วกับสิ่งที่ยังขาด',
+      'ร่างข้อความตอบ ลูกค้า แบบปลอดภัย',
+    ],
+    meta: { model: 'mock', usedRoomFiles: [], repairUsed: false },
+  };
+
+  const payload = buildPayloadFromAiActionResponse('client_response', response, [], {
+    deliverableType: 'proposal',
+    immediateNeed: 'define_scope',
+    missingInputs: ['scope', 'estimate', 'timeline'],
+    workContext: 'proposal ระบบ AI ร้านค้าส่งยังขาด scope estimate และ timeline',
+    behaviorIntent: 'client_delivery',
+    confidence: 0.86,
+  }, task);
+  const steps = payload.recommended_action.micro_steps.join(' ');
+
+  assert.equal(payload.recommended_action.micro_steps_source, 'fallback');
+  assert.match(steps, /proposal|scope|estimate|timeline|ระบบ AI ร้านค้าส่ง/);
+  assert.doesNotMatch(steps, /สรุปสถานะล่าสุดของ ลูกค้า|ร่างข้อความตอบ ลูกค้า/);
+});
+
+test('buildPayloadFromAiActionResponse grounds release room to QA/webhook/Jira artifacts', () => {
+  const task = makeTask({
+    sourceText: 'QA รอคำตอบว่าจะเลื่อน release ไหม payment webhook fail เพราะ provider timeout ผู้จัดการขอ update ใน 30 นาที ยังไม่กล้าเปิด Jira',
+    taskFrame: {
+      objective: 'ตอบสถานะ release โดยไม่ยืนยันเกินจริง',
+      stage: 'triage',
+      stakeholders: ['QA', 'ผู้จัดการ'],
+    },
+  });
+  const response: AiActionResponse = {
+    chosenAction: {
+      title: 'ตอบสถานะ release โดยไม่ยืนยันเกินจริง',
+      rationale: 'ต้องกันความเสี่ยงจาก webhook และ Jira',
+      successSignal: 'มี update ที่ส่งผู้จัดการได้',
+    },
+    alternatives: [],
+    whyThisNow: 'QA และผู้จัดการรอ update',
+    situationSummary: 'release ติด payment webhook/provider timeout และ Jira ยังไม่เปิด',
+    starterMicroSteps: [
+      'สรุปสถานะล่าสุดของ ลูกค้า เป็น 3 บรรทัด',
+      'แยกสิ่งที่รู้แล้วกับสิ่งที่ยังขาด',
+      'ร่างข้อความตอบ ลูกค้า แบบปลอดภัย',
+    ],
+    meta: { model: 'mock', usedRoomFiles: [], repairUsed: false },
+  };
+
+  const payload = buildPayloadFromAiActionResponse('client_response', response, [], {
+    deliverableType: 'reply',
+    immediateNeed: 'send_reply_now',
+    missingInputs: [],
+    workContext: 'QA รอ release และ payment webhook fail จาก provider timeout ต้องเช็ก Jira',
+    behaviorIntent: 'client_delivery',
+    confidence: 0.9,
+  }, task);
+  const steps = payload.recommended_action.micro_steps.join(' ');
+
+  assert.equal(payload.recommended_action.micro_steps_source, 'fallback');
+  assert.match(steps, /QA|release|payment webhook|provider timeout|Jira/);
+  assert.match(steps, /ร่าง update/);
+  assert.doesNotMatch(steps, /ลูกค้า แบบปลอดภัย/);
+});
+
+test('buildBootstrapMicroSteps grounds mixed overload work into artifacts', () => {
+  const steps = buildBootstrapMicroSteps(
+    {
+      title: 'เลือกก้าวเล็กที่สุดก่อน',
+      successSignal: 'มี checkpoint งานแรก',
+    },
+    {
+      deliverableType: 'unknown',
+      immediateNeed: 'resume_execution',
+      missingInputs: [],
+      workContext: 'หิวและเหนื่อย แต่มีรายงานสรุปรายสัปดาห์กับตรวจสเปกเว็บใหม่ค้างอยู่',
+      behaviorIntent: 'personal_friction',
+      confidence: 0.8,
+    },
+    makeTask({
+      sourceText: 'หิวมาก เหนื่อย งานเยอะ ทั้งรายงานสรุปรายสัปดาห์ ทั้งตรวจสเปกเว็บใหม่',
+    }),
+  );
+
+  assert.equal(steps.length, 3);
+  assert.match(steps.join(' '), /รายงานสรุปรายสัปดาห์|สเปกเว็บ/);
+  assert.match(steps.join(' '), /checklist|checkpoint|แยก/);
+  assert.doesNotMatch(steps[0], /กิน|พัก|เติมพลัง/);
 });
 
 test('buildBootstrapMicroSteps keeps gentle generic fallback for overload-only context', () => {
@@ -813,4 +972,44 @@ test('buildPayloadFromAiActionResponse rejects title echo starterMicroSteps to g
 
   assert.equal(payload.recommended_action.micro_steps_source, 'fallback');
   assert.doesNotMatch(payload.recommended_action.micro_steps.join(' '), /ทำก้าวเล็กชิ้นเดียวของ/);
+});
+
+test('buildPayloadFromAiActionResponse rejects customer-only generic fallback when stronger anchors exist', () => {
+  const task = makeTask({
+    sourceText: 'proposal ระบบ AI ร้านค้าส่ง ยังขาด scope estimate timeline',
+    taskFrame: {
+      objective: 'เริ่ม proposal',
+      stage: 'define_scope',
+      stakeholders: ['client'],
+    },
+  });
+  const response: AiActionResponse = {
+    chosenAction: {
+      title: 'เริ่ม proposal',
+      rationale: 'ต้องล็อก scope',
+      successSignal: 'มี scope checklist',
+    },
+    alternatives: [],
+    whyThisNow: 'proposal ยังไม่ชัด',
+    situationSummary: 'proposal ระบบ AI ร้านค้าส่งยังขาด scope estimate timeline',
+    starterMicroSteps: [
+      'สรุปสถานะล่าสุดของ ลูกค้า เป็น 3 บรรทัด',
+      'แยกสิ่งที่รู้แล้วกับสิ่งที่ยังขาด',
+      'ร่างข้อความตอบ ลูกค้า แบบปลอดภัย',
+    ],
+    meta: { model: 'mock', usedRoomFiles: [], repairUsed: false },
+  };
+
+  const payload = buildPayloadFromAiActionResponse('client_response', response, [], {
+    deliverableType: 'proposal',
+    immediateNeed: 'define_scope',
+    missingInputs: ['scope', 'estimate', 'timeline'],
+    workContext: 'proposal ระบบ AI ร้านค้าส่ง',
+    behaviorIntent: 'client_delivery',
+    confidence: 0.86,
+  }, task);
+
+  assert.equal(payload.recommended_action.micro_steps_source, 'fallback');
+  assert.doesNotMatch(payload.recommended_action.micro_steps.join(' '), /สรุปสถานะล่าสุดของ ลูกค้า|ร่างข้อความตอบ ลูกค้า/);
+  assert.match(payload.recommended_action.micro_steps.join(' '), /proposal|scope|estimate|timeline|ระบบ AI ร้านค้าส่ง/);
 });
