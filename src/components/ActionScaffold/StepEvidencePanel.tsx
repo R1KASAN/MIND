@@ -186,7 +186,9 @@ export function StepEvidencePanel({ step }: Props) {
             {selectedEvidence && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                 <span className="supporting-label" style={{ marginBottom: 0 }}>
-                  {sourceKindLabel} · {formatEvidenceSourceLabel(selectedEvidence.label)}
+                  {sourceKindLabel === formatEvidenceSourceLabel(selectedEvidence.label)
+                    ? sourceKindLabel
+                    : `${sourceKindLabel} · ${formatEvidenceSourceLabel(selectedEvidence.label)}`}
                 </span>
                 <p className="supporting-summary" style={{ margin: 0 }}>
                   {selectedEvidence.excerpt || 'ยังไม่มี excerpt สั้น ๆ จาก source นี้'}
