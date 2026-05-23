@@ -354,7 +354,7 @@ export class LocalGemmaClient implements AiClient {
       overallBudgetMs: Number(process.env.AI_OVERALL_TIMEOUT_RESCUE_MS || 18000) || 18000,
     }, retryContext);
 
-    return runAiOperation({
+    const response = await runAiOperation({
       operationName: 'rescue',
       systemPrompt: RESCUE_SYSTEM_PROMPT,
       repairPrompt: AI_OPERATION_REPAIR_PROMPT,
@@ -372,7 +372,14 @@ export class LocalGemmaClient implements AiClient {
       repairTimeoutMs: rescueBudget.repairTimeoutMs,
       fallbackTimeoutMs: rescueBudget.fallbackTimeoutMs,
       overallBudgetMs: rescueBudget.overallBudgetMs,
+      limitToPrimaryModel: true,
     });
+    return {
+      ...response,
+      source: 'ai',
+      aiProvider: 'local_gemma',
+      aiAnalysisUsed: true,
+    };
   }
 }
 
@@ -417,7 +424,7 @@ function getPuterCircuitCooldownMs() {
 }
 
 function getPuterModel() {
-  return process.env.MIND_PUTER_MODEL?.trim() || 'gpt-5.4-nano';
+  return process.env.MIND_PUTER_MODEL?.trim() || 'google/gemini-2.5-flash-lite';
 }
 
 function getPuterCircuitKey(operation: AiOperationName) {
@@ -452,7 +459,7 @@ function isGroqRescuePrimaryEnabled() {
 }
 
 function getGroqRescueModel() {
-  return process.env.GROQ_RESCUE_MODEL?.trim() || 'llama-3.3-70b-versatile';
+  return process.env.GROQ_RESCUE_MODEL?.trim() || 'llama-3.1-8b-instant';
 }
 
 function getGroqRescueTimeoutMs() {
@@ -471,7 +478,7 @@ function getPuterMaxTokens(operation: AiOperationName) {
   const fallbackByOperation: Record<AiOperationName, number> = {
     intake: 1200,
     action: 1000,
-    rescue: 180,
+    rescue: 650,
   };
   return parsePositiveNumber(specific || process.env.MIND_PUTER_MAX_TOKENS, fallbackByOperation[operation]);
 }
@@ -504,6 +511,10 @@ function extractBalancedJsonObject(input: string) {
 
   for (let index = 0; index < input.length; index += 1) {
     const char = input[index];
+
+    if (depth === 0 && char !== '{') {
+      continue;
+    }
 
     if (escaped) {
       escaped = false;
@@ -1607,6 +1618,9 @@ async function runGroqRescueOperation<T>(
   }
 
   (parsed as any).meta = { ...(parsed as any).meta, model: 'groq', passType: 'primary_pass' };
+  (parsed as any).source = 'ai';
+  (parsed as any).aiProvider = 'groq';
+  (parsed as any).aiAnalysisUsed = true;
   recordGroqRescueSuccess();
   logGroqProvider({
     meta,
@@ -1740,12 +1754,18 @@ export class FreePuterClient implements AiClient {
     }
 
     try {
-      return await runPuterOperation(
+      const response = await runPuterOperation(
         'rescue',
         systemPrompt,
         userPrompt,
         parseRescue,
       );
+      return {
+        ...response,
+        source: 'ai',
+        aiProvider: 'puter',
+        aiAnalysisUsed: true,
+      };
     } catch (err) {
       logPuterFallback('rescue', err);
       return new LocalGemmaClient().runRescue(task, options);

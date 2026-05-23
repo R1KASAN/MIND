@@ -145,7 +145,7 @@ function assertPuterOptions(
     assert.equal(typeof messages, 'string');
   }
   assert.equal(testMode, false);
-  assert.equal((options as any).model, 'gpt-5.4-nano');
+  assert.equal((options as any).model, 'google/gemini-2.5-flash-lite');
   assert.equal((options as any).max_tokens, expectedMaxTokens);
   assert.equal((options as any).temperature, 0);
   assert.equal((options as any).reasoning_effort, 'minimal');
@@ -505,11 +505,14 @@ test('FreePuterClient.runRescue calls Puter first and parses a successful rescue
 
   const response = await new FreePuterClient().runRescue(buildTask());
 
-  assertPuterOptions(chatCalls, 'rescue', 180);
+  assertPuterOptions(chatCalls, 'rescue', 650);
   assert.equal(response.diagnosis.primaryReason, 'too_big');
   assert.equal(response.rescuePlan.mode, 'shrink');
   assert.equal(response.meta.model, 'puter');
   assert.equal(response.meta.passType, 'primary_pass');
+  assert.equal(response.source, 'ai');
+  assert.equal(response.aiProvider, 'puter');
+  assert.equal(response.aiAnalysisUsed, true);
 });
 
 test('FreePuterClient logs Puter success latency and contract status', async () => {
@@ -527,7 +530,7 @@ test('FreePuterClient logs Puter success latency and contract status', async () 
   assert.match(joined, /Puter returned contract-valid JSON/);
   assert.match(joined, /"operation":"intake"/);
   assert.match(joined, /"backend":"puter"/);
-  assert.match(joined, /"model":"gpt-5.4-nano"/);
+  assert.match(joined, /"model":"google\/gemini-2\.5-flash-lite"/);
   assert.match(joined, /"elapsed_ms":\d+/);
   assert.match(joined, /"timeout_ms":15000/);
   assert.match(joined, /"contract":"valid"/);
@@ -1193,7 +1196,7 @@ test('FreePuterClient.runRescue extracts rescue JSON embedded in prose without f
   process.env.PUTER_API_KEY = 'puter-token';
   puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
   puterSdk.ai.chat = (async () =>
-    puterMessage(`นี่คือผลการวินิจฉัย:\n${JSON.stringify(rescueFixture())}\nจบแล้ว`)) as any;
+    puterMessage(`Here is your "rescue plan"!\n\`\`\`json\n${JSON.stringify(rescueFixture())}\n\`\`\`\nGood luck!`)) as any;
   LocalGemmaClient.prototype.runRescue = (async () => {
     throw new Error('Local Gemma fallback should not run');
   }) as typeof LocalGemmaClient.prototype.runRescue;
@@ -1203,6 +1206,25 @@ test('FreePuterClient.runRescue extracts rescue JSON embedded in prose without f
   assert.equal(rescue.diagnosis.primaryReason, 'too_big');
   assert.equal(rescue.rescuePlan.mode, 'shrink');
   assert.equal(rescue.meta.model, 'puter');
+});
+
+test('FreePuterClient.runRescue extracts rescue JSON after quoted prose without fallback', async () => {
+  process.env.PUTER_API_KEY = 'puter-token';
+  puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
+  puterSdk.ai.chat = (async () =>
+    puterMessage(`Here is the "best" rescue object: ${JSON.stringify(rescueFixture())}\nDone.`)) as any;
+  LocalGemmaClient.prototype.runRescue = (async () => {
+    throw new Error('Local Gemma fallback should not run');
+  }) as typeof LocalGemmaClient.prototype.runRescue;
+
+  const rescue = await new FreePuterClient().runRescue(buildTask());
+
+  assert.equal(rescue.diagnosis.primaryReason, 'too_big');
+  assert.equal(rescue.rescuePlan.mode, 'shrink');
+  assert.equal(rescue.meta.model, 'puter');
+  assert.equal(rescue.source, 'ai');
+  assert.equal(rescue.aiProvider, 'puter');
+  assert.equal(rescue.aiAnalysisUsed, true);
 });
 
 test('FreePuterClient.runRescue parses rescue JSON with extra unknown fields', async () => {
@@ -1263,7 +1285,7 @@ test('FreePuterClient.runRescue uses Groq before Puter when rescue primary is en
   process.env.PUTER_API_KEY = 'puter-token';
   process.env.MIND_RESCUE_PRIMARY = 'groq';
   process.env.GROQ_API_KEY = 'groq-token';
-  process.env.GROQ_RESCUE_MODEL = 'llama-3.3-70b-versatile';
+  delete process.env.GROQ_RESCUE_MODEL;
   puterSdk.setAuthToken = (() => undefined) as typeof puterSdk.setAuthToken;
   puterSdk.ai.chat = (async (...args: unknown[]) => {
     puterCalls.push(args);
@@ -1277,12 +1299,15 @@ test('FreePuterClient.runRescue uses Groq before Puter when rescue primary is en
   const response = await new FreePuterClient().runRescue(buildTask());
 
   assert.equal(response.meta.model, 'groq');
+  assert.equal(response.source, 'ai');
+  assert.equal(response.aiProvider, 'groq');
+  assert.equal(response.aiAnalysisUsed, true);
   assert.equal(fetchCalls.length, 1);
   assert.equal(puterCalls.length, 0);
   const [url, init] = fetchCalls[0] ?? [];
   assert.equal(url, 'https://api.groq.com/openai/v1/chat/completions');
   assert.equal((init as RequestInit).method, 'POST');
-  assert.match(String(JSON.stringify((init as RequestInit).body)), /llama-3\.3-70b-versatile/);
+  assert.match(String(JSON.stringify((init as RequestInit).body)), /llama-3\.1-8b-instant/);
 });
 
 test('FreePuterClient.runRescue keeps existing Puter order when Groq env is missing', async () => {
@@ -1304,6 +1329,9 @@ test('FreePuterClient.runRescue keeps existing Puter order when Groq env is miss
   const response = await new FreePuterClient().runRescue(buildTask());
 
   assert.equal(response.meta.model, 'puter');
+  assert.equal(response.source, 'ai');
+  assert.equal(response.aiProvider, 'puter');
+  assert.equal(response.aiAnalysisUsed, true);
   assert.equal(fetchCalls.length, 0);
   assert.equal(puterCalls.length, 1);
 });

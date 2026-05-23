@@ -158,3 +158,127 @@ test('/api/ai/rescue returns manual rescue instead of 503 when Ollama times out'
     global.fetch = originalFetch;
   }
 });
+
+test('/api/ai/rescue parses prose-wrapped JSON successfully', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (input) => {
+    const url = typeof input === 'string'
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : input.url;
+
+    if (url.endsWith('/api/tags') || url.endsWith('/api/ps')) {
+      return Response.json({ models: [{ name: 'gemma2:2b' }] });
+    }
+
+    if (url.endsWith('/api/chat')) {
+      return Response.json({
+        message: {
+          content: `Here is your rescue plan!
+\`\`\`json
+{
+  "diagnosis": {
+    "primaryReason": "dependency",
+    "explanation": "waiting for dependency"
+  },
+  "rescuePlan": {
+    "mode": "follow_up",
+    "steps": ["step 1", "step 2"]
+  },
+  "suggestedMessage": "hello",
+  "meta": { "model": "puter", "repairUsed": false }
+}
+\`\`\`
+Good luck!`
+        }
+      });
+    }
+
+    throw new Error(`unexpected fetch: ${url}`);
+  };
+
+  try {
+    const response = await POST(buildRescueRequest({
+      task: {
+        id: 'task-3',
+        roomId: 'room-3',
+        workflowType: 'client_resume',
+        sourceText: 'test context',
+        sourceFiles: [],
+        extractedText: '',
+        createdAt: 1,
+        pendingInputs: [],
+        blockerSignals: [],
+        lifecycleState: 'stalled',
+        currentStepIndex: 0,
+        currentActionId: null,
+        rescueHistory: [],
+      },
+    }));
+
+    assert.equal(response.status, 200);
+    const data = await response.json() as any;
+    assert.equal(data.diagnosis.primaryReason, 'dependency');
+    assert.equal(data.source, 'ai');
+    assert.equal(data.aiProvider, 'local_gemma');
+    assert.equal(data.aiAnalysisUsed, true);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('/api/ai/rescue falls back to manual rescue on non-JSON response', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (input) => {
+    const url = typeof input === 'string'
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : input.url;
+
+    if (url.endsWith('/api/tags') || url.endsWith('/api/ps')) {
+      return Response.json({ models: [{ name: 'gemma2:2b' }] });
+    }
+
+    if (url.endsWith('/api/chat')) {
+      return Response.json({
+        message: {
+          content: 'This is completely invalid non-JSON output that will fail parsing.'
+        }
+      });
+    }
+
+    throw new Error(`unexpected fetch: ${url}`);
+  };
+
+  try {
+    const response = await POST(buildRescueRequest({
+      task: {
+        id: 'task-4',
+        roomId: 'room-4',
+        workflowType: 'client_resume',
+        sourceText: 'test context',
+        sourceFiles: [],
+        extractedText: '',
+        createdAt: 1,
+        pendingInputs: [],
+        blockerSignals: [],
+        lifecycleState: 'stalled',
+        currentStepIndex: 0,
+        currentActionId: null,
+        rescueHistory: [],
+      },
+    }));
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('x-mind-ai-fallback'), 'manual_rescue');
+    const data = await response.json() as any;
+    assert.equal(data.source, 'manual_fallback');
+    assert.equal(data.aiProvider, null);
+    assert.equal(data.aiAnalysisUsed, false);
+    assert.equal(typeof data.fallbackReason, 'string');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});

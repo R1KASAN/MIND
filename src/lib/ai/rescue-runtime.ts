@@ -344,6 +344,10 @@ export function buildManualRescueResponse(options: {
   const reason = inferRescueFallbackReason(task);
   const explanation = buildCausalDiagnosis(primary, secondary, anchors, isThai, allMatchedIds, reason);
   const suggestedMessage = buildSuggestedMessage(primary, anchors, isThai, task.sourceText);
+  const fallbackReason = (options.failureDetail ?? options.failedModel ?? reason)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 180);
 
   let mode: 'clarify' | 'follow_up' | 'shrink' | 'pause_cleanly' = 'shrink';
   const steps: string[] = [];
@@ -430,5 +434,9 @@ export function buildManualRescueResponse(options: {
       usedRoomFiles: readyFiles,
       repairUsed: false,
     },
+    source: 'manual_fallback',
+    aiProvider: null,
+    aiAnalysisUsed: false,
+    fallbackReason,
   };
 }

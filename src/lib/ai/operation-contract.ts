@@ -1217,7 +1217,11 @@ export function parseAiRescueResponse(raw: string, options?: {
   for (const step of data.rescuePlan.steps) {
     validateSemanticText('rescuePlan.steps', step);
   }
-  return data;
+  return {
+    ...data,
+    source: 'ai',
+    aiAnalysisUsed: true,
+  };
 }
 
 export function parseAiReentryResponse(raw: string, options?: {

@@ -6,6 +6,7 @@ import type { Action, TaskContext, RescueHistoryItem, PendingInput } from '@/lib
 import {
   ACTION_SYSTEM_PROMPT,
   PUTER_ACTION_SYSTEM_PROMPT,
+  PUTER_RESCUE_SYSTEM_PROMPT,
   RESCUE_SYSTEM_PROMPT,
   SCAFFOLD_SYSTEM_PROMPT,
   buildActionUserPrompt,
@@ -74,9 +75,18 @@ test('operation prompts include support-mode guardrails for personal friction', 
   assert.ok(ACTION_SYSTEM_PROMPT.includes('ห้ามแต่งบริบทลูกค้าหรือไฟล์ขึ้นมาเอง'), 'action prompt must not invent client/file context');
   assert.ok(RESCUE_SYSTEM_PROMPT.includes('mirror คำสำคัญจากบริบทผู้ใช้'), 'rescue prompt should mirror user wording before diagnosis');
   assert.ok(RESCUE_SYSTEM_PROMPT.includes('low_energy หรือ shrink/pause_cleanly'), 'rescue prompt should route personal friction gently');
+  assert.ok(PUTER_RESCUE_SYSTEM_PROMPT.includes('Return ONLY one minified JSON object'), 'Puter rescue prompt should force compact JSON');
+  assert.ok(PUTER_RESCUE_SYSTEM_PROMPT.includes('ห้ามใช้ markdown/prose/code fence'), 'Puter rescue prompt should forbid prose and fences');
+  assert.ok(PUTER_RESCUE_SYSTEM_PROMPT.includes('suggestedMessage เป็น null'), 'Puter rescue prompt should avoid long message truncation unless needed');
+  assert.ok(PUTER_RESCUE_SYSTEM_PROMPT.includes('ต้องอธิบายเหตุ-ผล'), 'Puter rescue prompt should require causal diagnosis wording');
+  assert.ok(PUTER_RESCUE_SYSTEM_PROMPT.includes('customer/incident/work anchors'), 'Puter rescue prompt should require work anchors when present');
+  assert.ok(PUTER_RESCUE_SYSTEM_PROMPT.includes('ห้าม diagnosis.explanation พึ่งแค่ความรู้สึก'), 'Puter rescue prompt should not diagnose only emotional state when work anchors exist');
 });
 
 test('Puter action prompt asks for work-artifact-first starterMicroSteps', () => {
+  assert.ok(PUTER_ACTION_SYSTEM_PROMPT.includes('chosenAction ต้องสร้าง work artifact'), 'Puter prompt should make chosenAction artifact-first');
+  assert.ok(PUTER_ACTION_SYSTEM_PROMPT.includes('ห้ามเลือก self-care/reset เป็น chosenAction หลัก'), 'Puter prompt should reject self-care as primary action when work anchors exist');
+  assert.ok(PUTER_ACTION_SYSTEM_PROMPT.includes('ห้าม title แนว "พัก", "กิน", "ดื่มน้ำ"'), 'Puter prompt should explicitly ban self-care primary titles');
   assert.ok(PUTER_ACTION_SYSTEM_PROMPT.includes('reset ได้มากสุด 1 ก้าว'), 'Puter prompt should limit reset steps');
   assert.ok(PUTER_ACTION_SYSTEM_PROMPT.includes('อย่างน้อย 2 ก้าวต้องพูดถึง room/work anchors'), 'Puter prompt should require grounded anchors');
   assert.ok(PUTER_ACTION_SYSTEM_PROMPT.includes('ก้าวแรกต้องเป็น work artifact'), 'Puter prompt should make step 1 artifact-first');

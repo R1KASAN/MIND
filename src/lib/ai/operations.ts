@@ -162,7 +162,12 @@ export type AiTaskShape = z.infer<typeof AiTaskShapeSchema>;
 export type AiIntakeResponse = z.infer<typeof AiIntakeResponseSchema>;
 export type AiActionResponse = z.infer<typeof AiActionResponseSchema>;
 export type AiScaffoldResponse = z.infer<typeof AiScaffoldResponseSchema>;
-export type AiRescueResponse = z.infer<typeof AiRescueResponseSchema>;
+export type AiRescueResponse = z.infer<typeof AiRescueResponseSchema> & {
+  source?: 'ai' | 'manual_fallback';
+  aiProvider?: 'groq' | 'puter' | 'local_gemma' | null;
+  aiAnalysisUsed?: boolean;
+  fallbackReason?: string;
+};
 export type AiReentryResponse = z.infer<typeof AiReentryResponseSchema>;
 export type AiActionNegotiationMode = z.infer<typeof AiActionNegotiationModeSchema>;
 export type AiReentryScope = z.infer<typeof AiReentryScopeSchema>;

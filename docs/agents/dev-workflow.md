@@ -60,7 +60,7 @@ The demo rail is Puter-first:
 
 Current demo budgets are intentionally bounded in `npm run dev`:
 
-- Puter: `MIND_PUTER_TIMEOUT_MS=15000`, `MIND_PUTER_MODEL=gpt-5.4-nano`, `MIND_PUTER_INTAKE_MAX_TOKENS=1200`, `MIND_PUTER_ACTION_MAX_TOKENS=1000`, `MIND_PUTER_TEMPERATURE=0`, `MIND_PUTER_REASONING_EFFORT=minimal`, `MIND_PUTER_TEXT_VERBOSITY=low`
+- Puter: `MIND_PUTER_TIMEOUT_MS=15000`, `MIND_PUTER_MODEL=google/gemini-2.5-flash-lite`, `MIND_PUTER_INTAKE_MAX_TOKENS=1200`, `MIND_PUTER_ACTION_MAX_TOKENS=1000`, `MIND_PUTER_RESCUE_MAX_TOKENS=650`, `MIND_PUTER_TEMPERATURE=0`, `MIND_PUTER_REASONING_EFFORT=minimal`, `MIND_PUTER_TEXT_VERBOSITY=low`
 - Local Gemma primary/action: `AI_TIMEOUT_QWEN_MS=25000`, `AI_TIMEOUT_ACTION_QWEN_MS=25000`
 - Local fallback/repair: `AI_TIMEOUT_FALLBACK_MS=12000`, `AI_TIMEOUT_ACTION_FALLBACK_MS=12000`, `AI_REPAIR_TIMEOUT_QWEN_MS=12000`
 - Overall operation budget: `AI_OVERALL_TIMEOUT_MS=45000`
@@ -126,6 +126,7 @@ Observed on 2026-05-20 with `MIND_PUTER_DEBUG_RAW=1` and the Acme tired/client p
 
 - `gpt-5-nano` returned empty content with `finish_reason: "length"` at low token budgets; it needed larger budgets and was slower.
 - `gpt-5.4-nano` returned contract-valid JSON for 3 consecutive intake -> action runs with no fallback.
+- `google/gemini-2.5-flash-lite` is the current Puter model override to test against the same contract-valid intake/action path.
 - Intake latency: about 6.5s, 8.0s, 8.0s. Action latency: about 4.4s, 4.6s, 4.4s.
 - Some intake responses included extra whitespace/prose/fence-like wrapping or non-contract candidate `kind` labels; the Puter-only pre-parser extracts the first JSON object and normalizes candidate `kind` into `reply_first`, `resume_first`, or `dependency_first` before the existing parser.
 
