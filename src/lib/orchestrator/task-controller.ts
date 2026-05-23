@@ -1824,7 +1824,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
       ...currentTask,
       lifecycleState: 'dumped',
       assistantMode: 'reentry_brief',
-      reentryBrief: currentTask.reentryBrief ?? {
+      reentryBrief: {
         summary,
         topActions: [
           {

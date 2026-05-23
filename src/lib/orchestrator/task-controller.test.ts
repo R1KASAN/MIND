@@ -2631,6 +2631,110 @@ test('handleWalkAwayFromRescue returns to Brain Dump reentry card and preserves 
   assert.equal(rescueLoading, false);
 });
 
+test('handleWalkAwayFromRescue replaces stale reentry brief with current rescue context', async () => {
+  const payload = makePayload({
+    recommended_action: {
+      title: 'ร่างอัปเดตสถานะ incident ให้ลูกค้า',
+      rationale: 'ต้องตอบลูกค้าด้วยข้อมูลล่าสุดโดยไม่ commit เวลาเกินจริง',
+      micro_steps: [
+        'สรุปสถานะ prod ล่าสุด',
+        'แยกสิ่งที่รู้แล้วกับสิ่งที่ยังต้องเช็ก',
+        'ร่างข้อความตอบลูกค้าแบบไม่ commit เวลา',
+      ],
+      micro_steps_source: 'ai',
+    },
+    situation_summary: 'ABC Corp รออัปเดต incident และยังมีงาน Dashboard/payment API ค้างอยู่',
+  });
+  const task = makeTask({
+    roomId: 'room-rescue-stale-reentry',
+    lifecycleState: 'stalled',
+    assistantMode: 'rescue_diagnosis',
+    currentActionId: 'action-1',
+    currentStepIndex: 1,
+    lastSynthesis: payload,
+    currentPlan: {
+      actionTitle: payload.recommended_action.title,
+      steps: payload.recommended_action.micro_steps.map((step, index) => ({
+        id: `step-${index + 1}`,
+        text: step,
+      })),
+    },
+    reentryBrief: {
+      summary: 'ข้อมูลเก่าจากรอบก่อนที่ไม่ควรโชว์แล้ว',
+      topActions: [
+        {
+          roomId: 'old-room',
+          title: 'ทำ action เก่าที่ไม่เกี่ยวกับ rescue รอบนี้',
+          rationale: 'เหตุผลเก่า',
+          impact: 'medium',
+          effort: 'medium',
+          resumeTarget: 'ONE_ACTION',
+        },
+      ],
+      ignoredNoise: ['old-noise'],
+      createdAt: 5,
+    },
+    rescueHistory: [{ reason: 'too_big', mode: 'shrink', createdAt: 10 }],
+  });
+  const session = normalizeSession({
+    lastActive: 100,
+    uiRoute: 'RESCUE',
+    notThisCount: 0,
+    currentActionId: task.currentActionId,
+    currentPayload: payload,
+    task,
+  });
+  const sessionRef = { current: session };
+  let latestSession: AppSession | null = session;
+
+  const controller = createTaskController({
+    session,
+    sessionRef,
+    currentPayload: payload,
+    currentActionState: {
+      ...makeAction(),
+      title: payload.recommended_action.title,
+      rationale: payload.recommended_action.rationale,
+      microSteps: payload.recommended_action.micro_steps,
+    },
+    clarificationPrompt: '',
+    dumpStartTime: null,
+    aiModel: 'qwen2.5:3b',
+    setSession: (value) => {
+      latestSession = value;
+    },
+    setCurrentPayload: () => undefined,
+    setCurrentActionState: () => undefined,
+    setManualFallbackSuggestedActions: () => undefined,
+    setManualFallbackRetryable: () => undefined,
+    setClarificationPrompt: () => undefined,
+    setCurrentWhyThisNow: () => undefined,
+    setCurrentRescueState: () => undefined,
+    setIsRescueLoading: () => undefined,
+    setIsNegotiatingAction: () => undefined,
+    setIsReentryLoading: () => undefined,
+    isScaffoldRefining: false,
+    setIsScaffoldRefining: () => undefined,
+    setScaffoldRefineFeedback: () => undefined,
+    setDumpStartTime: () => undefined,
+    recordAiOpsEntry: () => undefined,
+    persistSession: async () => undefined,
+    persistActionSave: async () => undefined,
+    persistActionUpdate: async () => undefined,
+  });
+
+  await controller.handleWalkAwayFromRescue();
+
+  assert.equal(latestSession?.uiRoute, 'DUMP_ENTRY');
+  assert.equal(latestSession?.task?.assistantMode, 'reentry_brief');
+  assert.equal(latestSession?.task?.reentryBrief?.summary, payload.situation_summary);
+  assert.equal(latestSession?.task?.reentryBrief?.topActions[0]?.roomId, 'room-rescue-stale-reentry');
+  assert.equal(latestSession?.task?.reentryBrief?.topActions[0]?.title, payload.recommended_action.title);
+  assert.equal(latestSession?.task?.reentryBrief?.topActions[0]?.rationale, payload.recommended_action.rationale);
+  assert.equal(latestSession?.task?.reentryBrief?.topActions[0]?.resumeTarget, 'SCAFFOLD');
+  assert.deepEqual(latestSession?.task?.reentryBrief?.ignoredNoise, []);
+});
+
 test('handleMakeSmaller with valid scaffold updates state and navigates once to SCAFFOLD', async () => {
   const payload = makePayload();
   const task = makeTask({
