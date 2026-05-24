@@ -342,10 +342,27 @@ select:focus {
     linear-gradient(180deg, rgba(14, 165, 233, 0.095), rgba(255, 255, 255, 0.035));
 }
 
+.completed-context-card {
+  border-color: rgba(74, 222, 128, 0.3);
+  background:
+    linear-gradient(180deg, rgba(22, 163, 74, 0.11), rgba(255, 255, 255, 0.035));
+}
+
+.completed-context-card .resume-prompt-kicker {
+  color: rgba(187, 247, 208, 0.95);
+}
+
 .active-reentry-next {
   padding: 0.75rem 0.8rem;
   border-radius: 16px;
   border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.completed-context-action {
+  padding: 0.75rem 0.8rem;
+  border-radius: 16px;
+  border: 1px solid rgba(74, 222, 128, 0.14);
   background: rgba(0, 0, 0, 0.12);
 }
 

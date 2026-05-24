@@ -765,6 +765,111 @@ test('handleCompleteScaffold completes against the full refined scaffold plan, n
   assert.equal(latestSession?.task?.currentPlan?.steps[3]?.provenance?.confirmedAt !== undefined, true);
 });
 
+test('handleCompleteScaffold finalizes a rescue-applied one-step scaffold as completed context', async () => {
+  const rescueStep = 'เปิด Dashboard เช็กสถานะล่าสุดของ payment API แล้วจดอัปเดต 3 บรรทัด';
+  const payload = makePayload({
+    situation_summary: 'ABC Corp รอ incident update หลัง payment API timeout',
+    recommended_action: {
+      title: 'ส่งอัปเดตสถานะ incident ให้ CS',
+      rationale: 'ต้องตอบ CS ด้วยข้อมูลล่าสุด',
+      micro_steps: [rescueStep],
+      micro_steps_source: 'fallback',
+    },
+  });
+  const task = makeTask({
+    sourceText: [
+      'เหนื่อยมาก',
+      'ต้องตอบ ABC Corp',
+      'payment API timeout ไป 20 นาที',
+      'CS ถามว่าจะตอบลูกค้ายังไง',
+      'ยังไม่ได้เปิด Dashboard',
+    ].join('\n'),
+    lifecycleState: 'in_scaffold',
+    assistantMode: 'scaffold_refinement',
+    currentActionId: 'action-1',
+    currentStepIndex: 0,
+    lastSynthesis: payload,
+    currentPlan: {
+      actionTitle: payload.recommended_action.title,
+      steps: [
+        {
+          id: 'rescue-step-1',
+          text: rescueStep,
+          provenance: {
+            generatedAt: 10,
+            generatedBy: 'rescue',
+            sourceIds: [],
+          },
+        },
+      ],
+    },
+    rescueHistory: [{ reason: 'too_big', mode: 'shrink', createdAt: 10 }],
+  });
+  const session = makeSession(task, payload);
+  const sessionRef = { current: session };
+  let latestSession: AppSession | null = session;
+  let currentPayload: AiSynthesisResponse | null = payload;
+  let currentActionState: Action | null = {
+    ...makeAction(),
+    title: payload.recommended_action.title,
+    rationale: payload.recommended_action.rationale,
+    microSteps: [rescueStep],
+  };
+  const actionUpdates: Array<{ id: string; modifications: Partial<Action> }> = [];
+
+  const controller = createTaskController({
+    session,
+    sessionRef,
+    currentPayload,
+    currentActionState,
+    clarificationPrompt: '',
+    dumpStartTime: null,
+    aiModel: 'qwen2.5:3b',
+    setSession: (value) => {
+      latestSession = value;
+      sessionRef.current = value;
+    },
+    setCurrentPayload: (value) => {
+      currentPayload = value;
+    },
+    setCurrentActionState: (value) => {
+      currentActionState = value;
+    },
+    setManualFallbackSuggestedActions: () => undefined,
+    setManualFallbackRetryable: () => undefined,
+    setClarificationPrompt: () => undefined,
+    setCurrentWhyThisNow: () => undefined,
+    setCurrentRescueState: () => undefined,
+    setIsRescueLoading: () => undefined,
+    setIsNegotiatingAction: () => undefined,
+    setIsReentryLoading: () => undefined,
+    isScaffoldRefining: false,
+    setIsScaffoldRefining: () => undefined,
+    setScaffoldRefineFeedback: () => undefined,
+    setDumpStartTime: () => undefined,
+    recordAiOpsEntry: () => undefined,
+    persistSession: async () => undefined,
+    persistActionSave: async () => undefined,
+    persistActionUpdate: async (id, modifications) => {
+      actionUpdates.push({ id, modifications });
+    },
+  });
+
+  await controller.handleCompleteScaffold();
+
+  assert.equal(actionUpdates[0]?.id, 'action-1');
+  assert.equal(actionUpdates[0]?.modifications.state, 'COMPLETED');
+  assert.equal(latestSession?.uiRoute, 'DUMP_ENTRY');
+  assert.equal(latestSession?.task?.lifecycleState, 'done');
+  assert.equal(latestSession?.task?.currentActionId, null);
+  assert.equal(latestSession?.task?.currentStepIndex, 0);
+  assert.equal(latestSession?.currentPayload, undefined);
+  assert.equal(latestSession?.currentActionId, null);
+  assert.equal(latestSession?.activeDumpContext?.text, task.sourceText);
+  assert.equal(currentPayload, null);
+  assert.equal(currentActionState, null);
+});
+
 test('handleStartNewFromCompletedScaffold soft-resets the Room after marking the action completed', async () => {
   const payload = makePayload();
   const task = makeTask({
@@ -824,7 +929,7 @@ test('handleStartNewFromCompletedScaffold soft-resets the Room after marking the
   assert.equal(actionUpdates[0]?.id, 'action-1');
   assert.equal(actionUpdates[0]?.modifications.state, 'COMPLETED');
   assert.equal(latestSession?.uiRoute, 'DUMP_ENTRY');
-  assert.equal(latestSession?.task?.lifecycleState, 'dumped');
+  assert.equal(latestSession?.task?.lifecycleState, 'done');
   assert.equal(latestSession?.task?.sourceText, task.sourceText);
   assert.equal(latestSession?.task?.currentActionId, null);
   assert.equal(latestSession?.task?.currentStepIndex, 0);

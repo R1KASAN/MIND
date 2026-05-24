@@ -36,6 +36,7 @@ import {
   type ActiveRoomReentryState,
   type RankedResumeRoom,
 } from '@/lib/orchestrator/home-entry';
+import { trackMindGoalSemanticCheck } from '@/lib/orchestrator/mind-goal-check';
 import {
   buildPreferredRoomSourceContext,
   createAutoRoomSourcePreference,
@@ -96,6 +97,7 @@ import { AIProcessingIndicator } from '@/components/AI/AIProcessingIndicator';
 import { GetStartedHome } from '@/components/Home/GetStartedHome';
 import { ResumePrompt } from '@/components/Home/ResumePrompt';
 import { ActiveRoomReentryCard } from '@/components/Home/ActiveRoomReentryCard';
+import { CompletedContextCard } from '@/components/Home/CompletedContextCard';
 
 const DEFAULT_AI_HEALTH: HealthCheckResult = {
   status: 'checking',
@@ -386,6 +388,7 @@ export default function StateMachinePage() {
   const [isStudioCollapsed, setIsStudioCollapsed] = useState(false);
   const [uiViewMode, setUiViewMode] = useState<'FOCUS' | 'POWER'>('FOCUS');
   const reentryUnderstoodRef = useRef<string | null>(null);
+  const semanticHomeEntryLoggedRef = useRef<string | null>(null);
   const previousUiRouteRef = useRef<UIRoute | null>(null);
   const previousActiveRoomIdRef = useRef<string | null>(null);
   const memoryModeRef = useRef<MemoryMode>('normal');
@@ -908,16 +911,63 @@ export default function StateMachinePage() {
     resetRoomViewport();
   }, [activeRoomId, resetRoomViewport, session?.roomId]);
 
-  if (!session) return null;
-
-  const aiOfflineManualMode = isAiOfflineManualMode(aiHealth);
-  const readOnlyMemory = memoryMode === 'read_only_degraded';
   const homeEntryState = resolveHomeEntryState({
     rooms,
     activeSession: session,
     resumeRoom: resumeHomeRoom ?? fallbackResumeHomeRoom,
     activeRoomId,
   });
+
+  useEffect(() => {
+    if (!session || session.uiRoute !== 'DUMP_ENTRY') return;
+
+    if (activeRoomReentry && homeEntryState.mode === 'active_room') {
+      const contextSourceLabel = activeRoomReentry.trustItems.find((item) => item.id === 'sources')?.label;
+      const key = `active:${activeRoomReentry.room.id}:${activeRoomReentry.primaryCta}:${activeRoomReentry.reason}:${contextSourceLabel ?? ''}`;
+      if (semanticHomeEntryLoggedRef.current === key) return;
+      semanticHomeEntryLoggedRef.current = key;
+      trackMindGoalSemanticCheck({
+        stage: 'active_reentry',
+        task: activeRoomReentry.room.session.task,
+        uiRoute: 'DUMP_ENTRY',
+        sourceText: activeRoomReentry.room.session.task?.sourceText ?? activeRoomReentry.summary,
+        actionTitle: activeRoomReentry.actionTitle,
+        actionCount: 1,
+        steps: [activeRoomReentry.actionTitle],
+        lifecycleState: activeRoomReentry.room.session.task?.lifecycleState,
+        label: activeRoomReentry.reason,
+        cta: activeRoomReentry.primaryCta,
+        contextSourceLabel,
+        sourceKind: 'unknown',
+      });
+      return;
+    }
+
+    if (homeEntryState.mode === 'completed_context' && homeEntryState.completedRoom) {
+      const completedRoom = homeEntryState.completedRoom;
+      const key = `completed:${completedRoom.room.id}:${completedRoom.primaryCta}:${completedRoom.headline}`;
+      if (semanticHomeEntryLoggedRef.current === key) return;
+      semanticHomeEntryLoggedRef.current = key;
+      trackMindGoalSemanticCheck({
+        stage: 'completed_context',
+        task: completedRoom.room.session.task,
+        uiRoute: 'DUMP_ENTRY',
+        sourceText: completedRoom.room.session.task?.sourceText ?? completedRoom.summary,
+        actionTitle: completedRoom.actionTitle,
+        actionCount: 1,
+        steps: [completedRoom.actionTitle],
+        lifecycleState: completedRoom.room.session.task?.lifecycleState,
+        label: completedRoom.headline,
+        cta: completedRoom.primaryCta,
+        sourceKind: 'unknown',
+      });
+    }
+  }, [activeRoomReentry, homeEntryState, session]);
+
+  if (!session) return null;
+
+  const aiOfflineManualMode = isAiOfflineManualMode(aiHealth);
+  const readOnlyMemory = memoryMode === 'read_only_degraded';
   const studioSnapshot = buildStudioSnapshot(session.task, currentActionState, currentPayload);
   const studioIntents = getStudioIntents(session, currentActionState, currentPayload);
   const isFocusMode = uiViewMode === 'FOCUS';
@@ -1718,6 +1768,16 @@ export default function StateMachinePage() {
                 }}
               />
             )}
+            {!forceInputEditor && !showDumpOnlyFirstView && homeEntryState.mode === 'completed_context' && homeEntryState.completedRoom && (
+              <CompletedContextCard
+                state={homeEntryState.completedRoom}
+                onPrimary={handleEditCurrentContext}
+                onShowRooms={() => {
+                  setIsRoomSidebarCollapsed(false);
+                  if (isCompactViewport) setShowMobileRooms(true);
+                }}
+              />
+            )}
             {!showDumpOnlyFirstView && homeEntryState.mode === 'resume_prompt' && homeEntryState.resumeRoom && (
               <ResumePrompt
                 candidate={homeEntryState.resumeRoom}
@@ -1746,6 +1806,8 @@ export default function StateMachinePage() {
                 ? 'get_started'
                 : homeEntryState.mode === 'active_room'
                   ? 'active_context'
+                  : homeEntryState.mode === 'completed_context'
+                    ? 'active_context'
                   : 'default'}
             />
             {showResetBanner && (

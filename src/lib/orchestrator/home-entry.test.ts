@@ -6,6 +6,7 @@ import {
   buildRoomSidebarItems,
   rankResumeRooms,
   selectActiveRoomReentry,
+  resolveCompletedRoomContextState,
   resolveActiveRoomReentryState,
   resolveHomeEntryState,
   type ResumeRoomCandidateInput,
@@ -195,6 +196,35 @@ test('resolveHomeEntryState switches to active_room when the ranked resume room 
   assert.equal(state.mode, 'active_room');
 });
 
+test('resolveHomeEntryState shows completed context for the active completed room', () => {
+  const completedTask = createTaskContext({
+    roomId: 'done-room',
+    sourceText: 'ABC Corp incident update was completed',
+    lifecycleState: 'done',
+    currentActionId: null,
+    createdAt: 100,
+  } as any);
+  const activeSession = session({
+    roomId: 'done-room',
+    uiRoute: 'DUMP_ENTRY',
+    task: completedTask,
+  });
+  const state = resolveHomeEntryState({
+    rooms: [room('done-room', {
+      contextSummary: 'ABC Corp incident update was completed',
+      lastKnownGoodNextMoves: ['เปิด Dashboard เช็กสถานะล่าสุดของ payment API แล้วจดอัปเดต 3 บรรทัด'],
+      session: activeSession,
+    })],
+    activeSession,
+    activeRoomId: 'done-room',
+    resumeRoom: null,
+  });
+
+  assert.equal(state.mode, 'completed_context');
+  assert.equal(state.completedRoom?.headline, 'งานนี้เสร็จแล้ว');
+  assert.equal(state.completedRoom?.primaryCta, 'ทำงานต่อจากบริบทนี้');
+});
+
 test('waiting_client with current action ranks above the latest room', () => {
   const candidates: ResumeRoomCandidateInput[] = [
     {
@@ -338,6 +368,39 @@ test('completed rooms do not rank as active reentry candidates', () => {
   assert.equal(candidates.length, 0);
 });
 
+test('completed active room resolves to completed context state without active reentry copy', () => {
+  const completedTask = createTaskContext({
+    roomId: 'done-room',
+    sourceText: 'ABC Corp incident update was completed',
+    createdAt: 100,
+    lifecycleState: 'done',
+    currentActionId: null,
+  } as any);
+  completedTask.currentPlan = {
+    actionTitle: 'เปิด Dashboard เช็กสถานะล่าสุดของ payment API แล้วจดอัปเดต 3 บรรทัด',
+    steps: [{ id: 'step-1', text: 'เปิด Dashboard เช็กสถานะล่าสุดของ payment API แล้วจดอัปเดต 3 บรรทัด' }],
+  };
+
+  const state = resolveCompletedRoomContextState({
+    room: room('done-room', {
+      contextSummary: 'ABC Corp incident update was completed',
+      lastKnownGoodBrief: 'ABC Corp incident update was completed',
+      lastKnownGoodNextMoves: ['เปิด Dashboard เช็กสถานะล่าสุดของ payment API แล้วจดอัปเดต 3 บรรทัด'],
+      session: session({ roomId: 'done-room', task: completedTask }),
+    }),
+    replay: replay({
+      actionTitle: 'เปิด Dashboard เช็กสถานะล่าสุดของ payment API แล้วจดอัปเดต 3 บรรทัด',
+      summary: 'ABC Corp incident update was completed',
+    }),
+  });
+
+  assert.equal(state?.headline, 'งานนี้เสร็จแล้ว');
+  assert.equal(state?.primaryCta, 'ทำงานต่อจากบริบทนี้');
+  assert.equal(state?.primaryAction, 'start_from_context');
+  assert.doesNotMatch(`${state?.reason} ${state?.primaryCta} ${state?.headline}`, /มีก้าวถัดไปชัดอยู่แล้ว/u);
+  assert.equal(resolveActiveRoomReentryState({ room: state!.room }), null);
+});
+
 test('active room reentry trust copy labels context source as latest input and existing room context', () => {
   const activeTask = createTaskContext({
     roomId: 'active',
@@ -454,7 +517,8 @@ test('active room reentry uses start-here copy and continue CTA for clear action
   });
 
   assert.equal(state?.headline, 'เริ่มตรงนี้');
-  assert.equal(state?.primaryCta, 'ทำก้าวนี้');
+  assert.equal(state?.reason, 'มีก้าวถัดไปชัดอยู่แล้ว');
+  assert.equal(state?.primaryCta, 'ไปต่อ');
   assert.equal(state?.primaryAction, 'continue');
 });
 
@@ -468,7 +532,7 @@ test('active room reentry uses waiting-client headline without blame', () => {
   });
 
   assert.equal(state?.headline, 'รอ client อยู่');
-  assert.equal(state?.primaryCta, 'ทำก้าวนี้');
+  assert.equal(state?.primaryCta, 'ไปต่อ');
 });
 
 test('active room reentry uses one-question CTA when context is missing', () => {
@@ -608,7 +672,7 @@ test('selectActiveRoomReentry keeps the same room cycle visible after reentry', 
   });
 
   assert.equal(state?.primaryAction, 'continue');
-  assert.equal(state?.primaryCta, 'ทำก้าวนี้');
+  assert.equal(state?.primaryCta, 'ไปต่อ');
   assert.equal(state?.actionTitle, 'ส่งคำตอบยืนยันเดโม');
   assert.equal(state?.summary, 'กลับมาทำต่อที่เดโมเดิม');
   assert.ok(state?.trustItems.some((item) => item.id === 'reentry'));

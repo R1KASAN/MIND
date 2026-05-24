@@ -64,6 +64,11 @@ import {
   type ScaffoldRefineFeedback,
 } from '@/lib/orchestrator/scaffold-refine';
 import {
+  inferMindGoalSourceKind,
+  trackMindGoalSemanticCheck,
+  type MindGoalSourceKind,
+} from '@/lib/orchestrator/mind-goal-check';
+import {
   createDraftPlanFromCurrentPlan,
   enrichPlanWithProvenance,
   markCurrentStepNotLikeThis,
@@ -347,6 +352,64 @@ export function createTaskController(bindings: TaskControllerBindings) {
     await persistSession(updated);
   };
 
+  const buildCompletedDumpContext = (task: TaskContext | null) => task?.sourceText
+    ? {
+        text: task.sourceText,
+        createdAt: task.createdAt,
+        lastAttemptAt: task.lastAttemptAt,
+        lastFailureReason: task.lastFailureReason,
+      }
+    : undefined;
+
+  const buildCompletedTask = (task: TaskContext | null): TaskContext | null => task
+    ? {
+        ...task,
+        lifecycleState: 'done',
+        assistantMode: undefined,
+        currentActionId: null,
+        currentStepIndex: 0,
+        lastFailureReason: undefined,
+      }
+    : null;
+
+  const completeTaskAndReturnToDumpEntry = async (completedTask: TaskContext | null) => {
+    const actionId = completedTask?.currentActionId ?? bindings.currentActionState?.id;
+    if (actionId) {
+      await persistActionUpdate(actionId, { state: 'COMPLETED' });
+    }
+
+    bindings.setCurrentActionState(null);
+    bindings.setCurrentPayload(null);
+    bindings.setClarificationPrompt('');
+    bindings.setCurrentWhyThisNow('');
+    bindings.setCurrentRescueState(null);
+    bindings.setIsRescueLoading(false);
+    bindings.setIsNegotiatingAction(false);
+    bindings.setIsReentryLoading(false);
+    clearScaffoldRefineState();
+
+    if (completedTask) {
+      await recordCompletedCycleInRoomMemory(completedTask);
+    }
+
+    await updateStatus('DUMP_ENTRY', {
+      currentActionId: null,
+      currentPayload: undefined,
+      activeDumpContext: buildCompletedDumpContext(completedTask),
+      lastFailureReason: undefined,
+    }, buildCompletedTask(completedTask));
+
+    if (completedTask) {
+      trackEvent('task_completed', buildAnalyticsBase(completedTask, {
+        outcome_label: 'completed_and_reset',
+      }));
+    }
+  };
+
+  const isRescueAppliedOneStepScaffold = (task: TaskContext) =>
+    task.currentPlan?.steps.length === 1 &&
+    task.currentPlan.steps[0]?.provenance?.generatedBy === 'rescue';
+
   const enterManualFallback = async (
     failureReason: AiFailureReason,
     detail?: string,
@@ -381,6 +444,54 @@ export function createTaskController(bindings: TaskControllerBindings) {
 
     const sourceFallback = task.sourceText.replace(/\s+/g, ' ').trim();
     return sourceFallback ? sourceFallback.slice(0, 220) : undefined;
+  };
+
+  const combineSourceKinds = (kinds: MindGoalSourceKind[]): MindGoalSourceKind => {
+    const normalized = kinds.filter((kind) => kind !== 'unknown');
+    if (normalized.length === 0) return 'unknown';
+    if (normalized.some((kind) => kind === 'manual') && normalized.some((kind) => kind === 'ai')) return 'mixed';
+    if (normalized.some((kind) => kind === 'fallback') && normalized.some((kind) => kind === 'ai')) return 'mixed';
+    if (normalized.every((kind) => kind === normalized[0])) return normalized[0];
+    return 'mixed';
+  };
+
+  const trackActionSemantics = (task: TaskContext, sourceKind: MindGoalSourceKind, uiRoute: UIRoute) => {
+    trackMindGoalSemanticCheck({
+      stage: 'one_action',
+      task,
+      uiRoute,
+      sourceText: task.sourceText,
+      actionTitle: task.currentPlan?.actionTitle ?? task.lastSynthesis?.recommended_action.title,
+      actionCount: task.currentPlan?.actionTitle ? 1 : 0,
+      steps: task.currentPlan?.steps.map((step) => step.text) ?? task.lastSynthesis?.recommended_action.micro_steps,
+      sourceKind,
+    });
+
+    if (sourceKind !== 'ai' && sourceKind !== 'unknown') {
+      trackMindGoalSemanticCheck({
+        stage: 'fallback',
+        task,
+        uiRoute,
+        sourceText: task.sourceText,
+        actionTitle: task.currentPlan?.actionTitle ?? task.lastSynthesis?.recommended_action.title,
+        actionCount: task.currentPlan?.actionTitle ? 1 : 0,
+        steps: task.currentPlan?.steps.map((step) => step.text) ?? task.lastSynthesis?.recommended_action.micro_steps,
+        sourceKind,
+      });
+    }
+  };
+
+  const trackWorkingStepSemantics = (task: TaskContext, sourceKind: MindGoalSourceKind, uiRoute: UIRoute) => {
+    trackMindGoalSemanticCheck({
+      stage: 'working_steps',
+      task,
+      uiRoute,
+      sourceText: task.sourceText,
+      actionTitle: task.currentPlan?.actionTitle ?? task.lastSynthesis?.recommended_action.title,
+      actionCount: task.currentPlan?.actionTitle ? 1 : 0,
+      steps: task.currentPlan?.steps.map((step) => step.text) ?? task.lastSynthesis?.recommended_action.micro_steps,
+      sourceKind,
+    });
   };
 
   const applyActionOperationSuccess = async (options: {
@@ -421,6 +532,9 @@ export function createTaskController(bindings: TaskControllerBindings) {
       ...artifacts.nextTask,
       lastStableSummary: stableSummary,
     };
+    const intakeSourceKind = inferMindGoalSourceKind(intake.meta);
+    const actionSourceKind = inferMindGoalSourceKind(actionResponse.meta);
+    const semanticSourceKind = combineSourceKinds([intakeSourceKind, actionSourceKind]);
 
     bindings.setCurrentPayload(artifacts.payload);
     bindings.setCurrentWhyThisNow(artifacts.whyThisNow);
@@ -468,6 +582,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
       lastFailureReason: undefined,
       notThisCount: 0,
     }, nextTask);
+    trackActionSemantics(nextTask, semanticSourceKind, 'ONE_ACTION');
   };
 
   const handleLegacySynthesisSuccess = async (
@@ -596,6 +711,11 @@ export function createTaskController(bindings: TaskControllerBindings) {
       lastFailureReason: undefined,
       notThisCount: 0,
     }, nextTask);
+    trackActionSemantics(
+      nextTask,
+      source === 'deterministic_fallback' ? 'fallback' : 'ai',
+      'ONE_ACTION',
+    );
   };
 
   const applyDeterministicFallback = async (
@@ -825,6 +945,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
       bindings.setScaffoldRefineFeedback(null);
       bindings.setIsScaffoldRefining(true);
       try {
+        const rescueState = bindings.currentRescueState;
         const appliedAction: Action = {
           ...currentAction,
           title: currentPayload.recommended_action.title,
@@ -885,12 +1006,26 @@ export function createTaskController(bindings: TaskControllerBindings) {
           lastFailureReason: undefined,
         }, nextTask);
         const lastRescueReason = currentTask.rescueHistory[currentTask.rescueHistory.length - 1]?.reason ??
-          bindings.currentRescueState?.diagnosis.primaryReason ??
+          rescueState?.diagnosis.primaryReason ??
           'unknown';
         trackEvent('rescue_resolved', buildAnalyticsBase(nextTask, {
           rescue_reason: lastRescueReason,
           outcome_label: 'apply_rescue_step',
         }));
+        trackMindGoalSemanticCheck({
+          stage: 'rescue',
+          task: nextTask,
+          uiRoute: 'SCAFFOLD',
+          sourceText: nextTask.sourceText,
+          actionTitle: nextTask.currentPlan?.actionTitle,
+          actionCount: 1,
+          steps: nextTask.currentPlan?.steps.map((step) => step.text),
+          sourceKind: inferMindGoalSourceKind({
+            model: rescueState?.meta.model,
+            passType: rescueState?.meta.passType,
+            source: rescueState?.source,
+          }),
+        });
       } finally {
         bindings.setIsScaffoldRefining(false);
       }
@@ -1041,12 +1176,24 @@ export function createTaskController(bindings: TaskControllerBindings) {
         currentActionId: currentAction.id || base.currentActionId,
         currentPayload: refined.nextPayload,
       }, refined.nextTask);
+      const scaffoldSourceKind = inferMindGoalSourceKind(refined.scaffold.meta);
+      trackWorkingStepSemantics(refined.nextTask, scaffoldSourceKind, 'SCAFFOLD');
       if (fromRescue) {
         const lastRescueReason = currentTask.rescueHistory[currentTask.rescueHistory.length - 1]?.reason ?? 'unknown';
         trackEvent('rescue_resolved', buildAnalyticsBase(refined.nextTask, {
           rescue_reason: lastRescueReason,
           outcome_label: 'make_smaller',
         }));
+        trackMindGoalSemanticCheck({
+          stage: 'rescue',
+          task: refined.nextTask,
+          uiRoute: 'SCAFFOLD',
+          sourceText: refined.nextTask.sourceText,
+          actionTitle: refined.nextTask.currentPlan?.actionTitle,
+          actionCount: 1,
+          steps: refined.nextTask.currentPlan?.steps.map((step) => step.text),
+          sourceKind: scaffoldSourceKind,
+        });
       }
     } catch (error) {
       if (error instanceof SynthesisFailure) {
@@ -1589,6 +1736,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
       currentActionId: bindings.currentActionState?.id || base.currentActionId,
       currentPayload: bindings.currentPayload,
     }, nextTask);
+    trackWorkingStepSemantics(nextTask, 'unknown', 'SCAFFOLD');
   };
 
   const handleRejectAction = async () => {
@@ -1772,6 +1920,11 @@ export function createTaskController(bindings: TaskControllerBindings) {
       }));
     }
     const confirmedTask = markPlanConfirmed(currentTask, confirmedAt);
+    if (isRescueAppliedOneStepScaffold(confirmedTask)) {
+      await completeTaskAndReturnToDumpEntry(confirmedTask);
+      return;
+    }
+
     const completionTask: TaskContext = {
       ...confirmedTask,
       lifecycleState: 'in_scaffold',
@@ -1824,59 +1977,9 @@ export function createTaskController(bindings: TaskControllerBindings) {
   };
 
   const handleStartNewFromCompletedScaffold = async () => {
-    if (bindings.currentActionState) {
-      await persistActionUpdate(bindings.currentActionState.id, { state: 'COMPLETED' });
-    }
     const base = getBaseSession();
     const completedTask = base ? getSessionTask(base) : null;
-    bindings.setCurrentActionState(null);
-    bindings.setCurrentPayload(null);
-    bindings.setClarificationPrompt('');
-    bindings.setCurrentWhyThisNow('');
-    bindings.setCurrentRescueState(null);
-    bindings.setIsRescueLoading(false);
-    bindings.setIsNegotiatingAction(false);
-    bindings.setIsReentryLoading(false);
-    clearScaffoldRefineState();
-
-    // Preserve completed task context so Studio still has data to display.
-    // Without this, both task and activeDumpContext are cleared and Studio
-    // shows an empty "ยังไม่มีบริบท" state even though the room has history.
-    const preservedDumpContext = completedTask?.sourceText
-      ? {
-          text: completedTask.sourceText,
-          createdAt: completedTask.createdAt,
-          lastAttemptAt: completedTask.lastAttemptAt,
-          lastFailureReason: completedTask.lastFailureReason,
-        }
-      : undefined;
-
-    const preservedTask: TaskContext | null = completedTask
-      ? {
-          ...completedTask,
-          lifecycleState: 'done',
-          assistantMode: undefined,
-          currentActionId: null,
-          currentStepIndex: 0,
-          lastFailureReason: undefined,
-        }
-      : null;
-
-    if (completedTask) {
-      await recordCompletedCycleInRoomMemory(completedTask);
-    }
-
-    await updateStatus('DUMP_ENTRY', {
-      currentActionId: null,
-      currentPayload: undefined,
-      activeDumpContext: preservedDumpContext,
-      lastFailureReason: undefined,
-    }, preservedTask);
-    if (completedTask) {
-      trackEvent('task_completed', buildAnalyticsBase(completedTask, {
-        outcome_label: 'completed_and_reset',
-      }));
-    }
+    await completeTaskAndReturnToDumpEntry(completedTask);
   };
 
   const handleWalkAwayFromRescue = async () => {

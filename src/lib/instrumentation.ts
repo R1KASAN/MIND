@@ -81,7 +81,8 @@ export type EventName =
   | 'metrics_dashboard_opened'
   | 'value_pulse_shown'
   | 'value_pulse_submitted'
-  | 'value_pulse_dismissed';
+  | 'value_pulse_dismissed'
+  | 'mind_goal_semantic_check';
 
 export type EventProperties = Record<string, unknown>;
 

@@ -87,7 +87,8 @@ export type AnalyticsEventName =
   | 'metrics_dashboard_opened'
   | 'value_pulse_shown'
   | 'value_pulse_submitted'
-  | 'value_pulse_dismissed';
+  | 'value_pulse_dismissed'
+  | 'mind_goal_semantic_check';
 
 export interface AnalyticsEventProperties extends Record<string, unknown> {
   room_id?: string;

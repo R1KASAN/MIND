@@ -2,7 +2,7 @@ import { buildRoomMemoryReplayContext, type RoomMemoryReplayContext } from '@/li
 import type { AppSession, RoomRecord } from '@/lib/store/idb';
 import { hasResumableTask } from '@/lib/orchestrator/task-machine';
 
-export type HomeEntryMode = 'get_started' | 'resume_prompt' | 'active_room';
+export type HomeEntryMode = 'get_started' | 'resume_prompt' | 'active_room' | 'completed_context';
 export type ResumeStuckSignal =
   | 'scope_unclear'
   | 'waiting_client'
@@ -50,9 +50,24 @@ export interface ActiveRoomReentryState {
   lastStuckSignal: ResumeStuckSignal;
 }
 
+export type CompletedRoomContextPrimaryAction = 'start_from_context';
+
+export interface CompletedRoomContextState {
+  room: RoomRecord;
+  headline: string;
+  actionTitle: string;
+  summary: string;
+  reason: string;
+  primaryCta: string;
+  primaryAction: CompletedRoomContextPrimaryAction;
+  secondaryCta: string;
+  trustItems: TrustStripItem[];
+}
+
 export interface HomeEntryState {
   mode: HomeEntryMode;
   resumeRoom: RankedResumeRoom | null;
+  completedRoom?: CompletedRoomContextState | null;
 }
 
 export interface RoomSidebarItemView {
@@ -376,6 +391,15 @@ export function resolveHomeEntryState(input: {
     return { mode: 'active_room', resumeRoom: null };
   }
 
+  const activeRoom = input.rooms.find((room) => room.id === input.activeRoomId || room.id === input.activeSession?.roomId);
+  if (activeRoom && activeRoom.session.task?.lifecycleState === 'done') {
+    return {
+      mode: 'completed_context',
+      resumeRoom: null,
+      completedRoom: resolveCompletedRoomContextState({ room: activeRoom }),
+    };
+  }
+
   const visibleRooms = input.rooms.filter(isVisibleRoom);
   const roomsWithWork = visibleRooms.filter((room) => roomHasWork({ room }));
   if (roomsWithWork.length === 0) {
@@ -389,6 +413,24 @@ export function resolveHomeEntryState(input: {
   return input.resumeRoom
     ? { mode: 'resume_prompt', resumeRoom: input.resumeRoom }
     : { mode: 'get_started', resumeRoom: null };
+}
+
+export function resolveCompletedRoomContextState(candidate: ResumeRoomCandidateInput): CompletedRoomContextState | null {
+  if (!isVisibleRoom(candidate.room)) return null;
+  if (!isCompletedRoom(candidate)) return null;
+  if (!roomHasWork(candidate)) return null;
+
+  return {
+    room: candidate.room,
+    headline: 'งานนี้เสร็จแล้ว',
+    actionTitle: readActionTitle(candidate) ?? 'ใช้บริบทเดิมเป็นตั้งต้นรอบใหม่',
+    summary: readSummary(candidate),
+    reason: 'บริบทนี้พร้อมใช้เป็นฐานสำหรับรอบงานถัดไป',
+    primaryCta: 'ทำงานต่อจากบริบทนี้',
+    primaryAction: 'start_from_context',
+    secondaryCta: 'ดูงานอื่น',
+    trustItems: buildTrustItems(candidate, 'unknown'),
+  };
 }
 
 export function resolveActiveRoomReentryState(candidate: ResumeRoomCandidateInput): ActiveRoomReentryState | null {
@@ -436,7 +478,7 @@ export function resolveActiveRoomReentryState(candidate: ResumeRoomCandidateInpu
     actionTitle: ranked.actionTitle,
     summary: ranked.summary,
     reason: ranked.reason,
-    primaryCta: 'ทำก้าวนี้',
+    primaryCta: 'ไปต่อ',
     primaryAction: 'continue',
     secondaryCta: 'ดูงานอื่น',
     trustItems: buildTrustItems(candidate, ranked.lastStuckSignal),

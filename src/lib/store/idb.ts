@@ -1454,7 +1454,6 @@ export function normalizeSession(session: Partial<AppSession> & { status?: unkno
   const activeTask = completedTask
     ? {
         ...completedTask,
-        lifecycleState: 'dumped' as const,
         assistantMode: undefined,
         currentActionId: null,
         currentStepIndex: 0,

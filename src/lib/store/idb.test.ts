@@ -310,7 +310,7 @@ test('normalizeSession turns completed scaffold into a soft Room cycle without r
   });
 
   assert.equal(session.uiRoute, 'DUMP_ENTRY');
-  assert.equal(session.task?.lifecycleState, 'dumped');
+  assert.equal(session.task?.lifecycleState, 'done');
   assert.equal(session.task?.sourceText, 'บริบทเก่าของงานนี้');
   assert.equal(session.task?.currentActionId, null);
   assert.equal(session.task?.currentStepIndex, 0);
