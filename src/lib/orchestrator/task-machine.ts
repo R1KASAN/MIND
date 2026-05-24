@@ -22,6 +22,30 @@ import {
   enrichPlanWithProvenance,
 } from '@/lib/orchestrator/plan-provenance';
 import { createTaskContext } from '@/lib/store/idb';
+import {
+  buildLogoRevisionActionFallback,
+  buildLogoRevisionStepFallback,
+  buildOverloadedWorkActionFallback,
+  buildOverloadedWorkStepFallback,
+  buildPhysicalRoomResetActionFallback,
+  buildPresentationPrepActionFallback,
+  buildProductPostActionFallback,
+  buildStudentReportActionFallback,
+  buildStudentReportStepFallback,
+  collectRawRoomSourceContext,
+  collectTrustedSourceContext,
+  hasDisallowedExternalStakeholderOutput,
+  isInternalPresentationPrepText,
+  isLogoRevisionText,
+  isOverloadedWorkText,
+  isPhysicalRoomResetText,
+  isProductPostText,
+  isStudentReportText,
+  PHYSICAL_ROOM_RESET_STEP_FALLBACK,
+  PRODUCT_POST_STEP_FALLBACK,
+  PRESENTATION_PREP_STEP_FALLBACK,
+  STUDENT_REPORT_STEP_FALLBACK,
+} from '@/lib/source-grounding';
 
 let sessionWorkflowHistory: WorkflowType[] = [];
 
@@ -125,6 +149,39 @@ export function collectRoomArtifactAnchors(task?: TaskContext, taskShape?: TaskS
     [/jira/u, 'Jira'],
     [/release/u, 'release'],
     [/timeline|ไทม์ไลน์/u, 'timeline'],
+    [/พรีเซนต์งานในทีม|พรีเซนต์|นำเสนอ|presentation/u, 'พรีเซนต์งานในทีม'],
+    [/notes?|โน้ต/u, 'notes'],
+    [/แชท|แชต|ไลน์|line|chat/u, 'แชท'],
+    [/ไฟล์สไลด์|สไลด์|slide/u, 'ไฟล์สไลด์'],
+    [/สมุด/u, 'สมุด'],
+    [/ผลที่ทำไปแล้ว/u, 'ผลที่ทำไปแล้ว'],
+    [/ปัญหาที่เจอ/u, 'ปัญหาที่เจอ'],
+    [/แผนต่อไป/u, 'แผนต่อไป'],
+    [/10\s*นาที|สิบ\s*นาที/u, '10 นาที'],
+    [/ห้องรก|เก็บห้อง|จัดห้อง/u, 'ห้องรก'],
+    [/เสื้อผ้า/u, 'เสื้อผ้า'],
+    [/เก้าอี้/u, 'เก้าอี้'],
+    [/โต๊ะ/u, 'โต๊ะ'],
+    [/แก้วน้ำ/u, 'แก้วน้ำ'],
+    [/กระดาษ/u, 'กระดาษ'],
+    [/renewable energy storage/u, 'renewable energy storage'],
+    [/reference links?|reference|ลิงก์/u, 'reference links'],
+    [/รายงาน|report/u, 'รายงาน'],
+    [/บทนำ/u, 'บทนำ'],
+    [/ร้านออนไลน์/u, 'ร้านออนไลน์'],
+    [/โพสต์สินค้า|สินค้าใหม่/u, 'โพสต์สินค้า'],
+    [/กระเป๋าผ้า\s*canvas|canvas/u, 'กระเป๋าผ้า canvas'],
+    [/caption|แคปชั่น/u, 'caption'],
+    [/เบา/u, 'เบา'],
+    [/ซักง่าย/u, 'ซักง่าย'],
+    [/3\s*สี|สาม\s*สี/u, '3 สี'],
+    [/fallback latency/u, 'fallback latency'],
+    [/reentry card/u, 'reentry card'],
+    [/evidence source/u, 'evidence source'],
+    [/completed context/u, 'completed context'],
+    [/context\s*หาย|context preservation|preserve context/u, 'context หาย'],
+    [/demo\s*mind/u, 'demo MIND'],
+    [/ปุ่มช่วยแก้ก้าวนี้|ช่วยแก้ก้าวนี้/u, 'ปุ่มช่วยแก้ก้าวนี้'],
     [/รายงานสรุปรายสัปดาห์|รายงานสรุป/u, 'รายงานสรุปรายสัปดาห์'],
     [/ตรวจสเปกเว็บใหม่|สเปกเว็บใหม่/u, 'ตรวจสเปกเว็บใหม่'],
     [/สเปก|spec/u, 'สเปก'],
@@ -152,6 +209,11 @@ function concreteRoomAnchors(anchors: string[]) {
 function hasRoomWorkAnchors(task?: TaskContext, taskShape?: TaskShape, actionTitle?: string) {
   if (!task) return false;
   return collectRoomArtifactAnchors(task, taskShape, actionTitle).length >= 2;
+}
+
+function hasExplicitCustomerContext(task?: TaskContext, taskShape?: TaskShape) {
+  const text = collectTrustedSourceContext(task, taskShape);
+  return /\b[A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*){0,2}\s+(?:Corp|Co|Ltd|Inc|LLC|Bank)\b|ลูกค้า|client|customer|ผู้ว่าจ้าง/iu.test(text);
 }
 
 export function hasAnchorInStep(step: string, anchors: string[]) {
@@ -234,11 +296,19 @@ function shouldUseGroundedFallbackSteps(
 
   const anchors = collectRoomArtifactAnchors(task, taskShape, action.title);
   const concreteAnchors = concreteRoomAnchors(anchors);
+  const demoQaAnchors = ['fallback latency', 'reentry card', 'evidence source', 'context หาย', 'demo MIND'];
+  const hasDemoQaRoom = anchors.includes('demo MIND') &&
+    demoQaAnchors.filter((anchor) => anchors.includes(anchor)).length >= 3;
+  const demoQaStepHits = hasDemoQaRoom
+    ? demoQaAnchors.filter((anchor) => steps.some((step) => hasAnchorInStep(step, [anchor]))).length
+    : 0;
   const anchoredCount = steps.filter((step) => hasAnchorInStep(step, anchors)).length;
   const resetOnlyCount = steps.filter(isResetOnlyStep).length;
   const genericCustomerOnlyCount = concreteAnchors.length > 0
-    ? steps.filter((step) => /ลูกค้า|client/iu.test(step) && !hasAnchorInStep(step, concreteAnchors)).length
+    ? steps.filter((step) => /ลูกค้า|client|customer|ผู้ว่าจ้าง/iu.test(step) && !hasAnchorInStep(step, concreteAnchors)).length
     : 0;
+  const inventedCustomerContext = steps.some((step) => /ลูกค้า|client|customer|ผู้ว่าจ้าง/iu.test(step)) &&
+    !hasExplicitCustomerContext(task, taskShape);
   const hasPaymentStatusRoom = anchors.includes('Dashboard') && anchors.includes('payment API');
   const hasCustomerCommunicationContext = anchors.includes('CS');
   const genericMultiItemPaymentDrift = hasPaymentStatusRoom &&
@@ -250,6 +320,8 @@ function shouldUseGroundedFallbackSteps(
     isResetOnlyStep(steps[0]) ||
     !isArtifactStep(steps[2]) ||
     anchoredCount < 2 ||
+    inventedCustomerContext ||
+    (hasDemoQaRoom && demoQaStepHits < 3) ||
     genericCustomerOnlyCount >= 2 ||
     genericMultiItemPaymentDrift ||
     resetOnlyCount > 1 ||
@@ -266,7 +338,8 @@ function buildGroundedArtifactMicroSteps(
 
   const anchors = collectRoomArtifactAnchors(task, taskShape, action.title);
   const concreteAnchors = concreteRoomAnchors(anchors);
-  const customerAnchor = anchors.find((anchor) => /corp|co|ltd|inc|llc|bank/i.test(anchor)) ?? 'ลูกค้า';
+  const customerAnchor = anchors.find((anchor) => /corp|co|ltd|inc|llc|bank/i.test(anchor)) ??
+    (hasExplicitCustomerContext(task, taskShape) ? 'ลูกค้า' : 'ตัวเอง');
   const hasIncident = anchors.some((anchor) => ['prod', 'CPU spike', 'RCA', 'incident', 'server', 'webhook'].includes(anchor));
   const hasDashboard = anchors.includes('Dashboard');
   const hasPayment = anchors.includes('payment API');
@@ -276,6 +349,16 @@ function buildGroundedArtifactMicroSteps(
     anchors.includes('ระบบ AI ร้านค้าส่ง') ||
     (anchors.includes('scope') && (anchors.includes('estimate') || anchors.includes('timeline')));
   const hasRelease = anchors.some((anchor) => ['QA', 'release', 'payment webhook', 'provider timeout', 'Jira'].includes(anchor));
+  const hasDemoQa = anchors.includes('demo MIND') &&
+    ['fallback latency', 'reentry card', 'evidence source', 'context หาย'].filter((anchor) => anchors.includes(anchor)).length >= 3;
+  const hasInternalPresentationPrep = anchors.includes('พรีเซนต์งานในทีม') &&
+    ['notes', 'แชท', 'ไฟล์สไลด์', 'สมุด'].filter((anchor) => anchors.includes(anchor)).length >= 2;
+  const hasPhysicalRoomReset = anchors.includes('ห้องรก') &&
+    ['เสื้อผ้า', 'เก้าอี้', 'โต๊ะ', 'แก้วน้ำ', 'กระดาษ', '10 นาที'].filter((anchor) => anchors.includes(anchor)).length >= 2;
+  const hasStudentReport = anchors.includes('รายงาน') &&
+    ['renewable energy storage', 'reference links', 'บทนำ', '10 นาที'].filter((anchor) => anchors.includes(anchor)).length >= 2;
+  const hasProductPost = anchors.includes('โพสต์สินค้า') &&
+    ['ร้านออนไลน์', 'กระเป๋าผ้า canvas', 'caption', 'เบา', 'ซักง่าย', '3 สี'].filter((anchor) => anchors.includes(anchor)).length >= 2;
   const hasMixedOverloadWork = taskShape?.behaviorIntent === 'personal_friction' &&
     anchors.some((anchor) => ['รายงานสรุปรายสัปดาห์', 'ตรวจสเปกเว็บใหม่'].includes(anchor));
 
@@ -285,6 +368,42 @@ function buildGroundedArtifactMicroSteps(
       'เติมอัปเดต 3 บรรทัดให้ CS',
       `ร่างข้อความตอบ ${customerAnchor} แบบไม่ commit เวลาเกินข้อมูลที่เห็น`,
     ];
+  }
+
+  if (hasDemoQa) {
+    return [
+      'จด fallback latency, reentry card, evidence source เป็น 3 จุด demo',
+      'เช็กปุ่มช่วยแก้ก้าวนี้กับ completed context ว่ายังต่อเนื่อง',
+      'ร่าง demo checklist ที่กัน context หายหลังจบงาน',
+    ];
+  }
+
+  if (hasInternalPresentationPrep) {
+    return [...PRESENTATION_PREP_STEP_FALLBACK];
+  }
+
+  if (hasPhysicalRoomReset) {
+    return [...PHYSICAL_ROOM_RESET_STEP_FALLBACK];
+  }
+
+  if (hasStudentReport) {
+    return buildStudentReportStepFallback(task?.sourceText);
+  }
+
+  const rawContext = collectRawRoomSourceContext(task);
+  const hasLogoRevision = isLogoRevisionText(rawContext);
+  if (hasLogoRevision) {
+    const isReentry = taskShape?.immediateNeed === 'resume_execution';
+    return buildLogoRevisionStepFallback(task?.sourceText, isReentry);
+  }
+
+  const hasOverloadedWork = isOverloadedWorkText(rawContext);
+  if (hasOverloadedWork) {
+    return buildOverloadedWorkStepFallback(task?.sourceText);
+  }
+
+  if (hasProductPost) {
+    return [...PRODUCT_POST_STEP_FALLBACK];
   }
 
   if (hasRelease) {
@@ -354,6 +473,335 @@ function buildGroundedArtifactMicroSteps(
   ];
 }
 
+function buildSourceGroundedActionResponse(
+  response: AiActionResponse,
+  taskShape?: TaskShape,
+  task?: TaskContext,
+): AiActionResponse {
+  const trustedContext = collectTrustedSourceContext(task, taskShape);
+  const outputTexts = [
+    response.chosenAction.title,
+    response.chosenAction.rationale,
+    response.chosenAction.successSignal,
+    response.whyThisNow,
+    response.situationSummary,
+    response.replyDraft,
+    response.alternatives.map((alternative) => `${alternative.title} ${alternative.rationale}`).join(' '),
+    response.starterMicroSteps?.join(' '),
+  ];
+  const hasExternalStakeholderDrift = hasDisallowedExternalStakeholderOutput({
+    sourceContext: collectRawRoomSourceContext(task),
+    outputTexts,
+  });
+
+  if (hasExternalStakeholderDrift && isInternalPresentationPrepText(trustedContext)) {
+    const fallback = buildPresentationPrepActionFallback();
+    return {
+      ...response,
+      chosenAction: {
+        title: fallback.chosenTitle,
+        rationale: fallback.chosenRationale,
+        successSignal: fallback.successSignal,
+      },
+      alternatives: fallback.alternatives,
+      whyThisNow: fallback.whyThisNow,
+      replyDraft: fallback.replyDraft,
+      situationSummary: fallback.situationSummary,
+      starterMicroSteps: undefined,
+      meta: {
+        ...response.meta,
+        repairUsed: response.meta.repairUsed,
+      },
+    };
+  }
+
+  const rawContext = collectRawRoomSourceContext(task);
+  if (isPhysicalRoomResetText(rawContext)) {
+    const fallback = buildPhysicalRoomResetActionFallback();
+    return {
+      ...response,
+      chosenAction: {
+        title: fallback.chosenTitle,
+        rationale: fallback.chosenRationale,
+        successSignal: fallback.successSignal,
+      },
+      alternatives: fallback.alternatives,
+      whyThisNow: fallback.whyThisNow,
+      replyDraft: fallback.replyDraft,
+      situationSummary: fallback.situationSummary,
+      starterMicroSteps: undefined,
+      meta: {
+        ...response.meta,
+        repairUsed: response.meta.repairUsed,
+      },
+    };
+  }
+
+  if (isStudentReportText(rawContext)) {
+    const fallback = buildStudentReportActionFallback(rawContext);
+    return {
+      ...response,
+      chosenAction: {
+        title: fallback.chosenTitle,
+        rationale: fallback.chosenRationale,
+        successSignal: fallback.successSignal,
+      },
+      alternatives: fallback.alternatives,
+      whyThisNow: fallback.whyThisNow,
+      replyDraft: fallback.replyDraft,
+      situationSummary: fallback.situationSummary,
+      starterMicroSteps: undefined,
+      meta: {
+        ...response.meta,
+        repairUsed: response.meta.repairUsed,
+      },
+    };
+  }
+
+  if (isLogoRevisionText(rawContext)) {
+    const isReentry = taskShape?.immediateNeed === 'resume_execution';
+    const fallback = buildLogoRevisionActionFallback(rawContext, isReentry);
+    return {
+      ...response,
+      chosenAction: {
+        title: fallback.chosenTitle,
+        rationale: fallback.chosenRationale,
+        successSignal: fallback.successSignal,
+      },
+      alternatives: fallback.alternatives,
+      whyThisNow: fallback.whyThisNow,
+      replyDraft: fallback.replyDraft,
+      situationSummary: fallback.situationSummary,
+      starterMicroSteps: undefined,
+      meta: {
+        ...response.meta,
+        repairUsed: response.meta.repairUsed,
+      },
+    };
+  }
+
+  if (isOverloadedWorkText(rawContext)) {
+    const fallback = buildOverloadedWorkActionFallback(rawContext);
+    return {
+      ...response,
+      chosenAction: {
+        title: fallback.chosenTitle,
+        rationale: fallback.chosenRationale,
+        successSignal: fallback.successSignal,
+      },
+      alternatives: fallback.alternatives,
+      whyThisNow: fallback.whyThisNow,
+      replyDraft: fallback.replyDraft,
+      situationSummary: fallback.situationSummary,
+      starterMicroSteps: undefined,
+      meta: {
+        ...response.meta,
+        repairUsed: response.meta.repairUsed,
+      },
+    };
+  }
+
+  if (isProductPostText(rawContext)) {
+    const fallback = buildProductPostActionFallback();
+    return {
+      ...response,
+      chosenAction: {
+        title: fallback.chosenTitle,
+        rationale: fallback.chosenRationale,
+        successSignal: fallback.successSignal,
+      },
+      alternatives: fallback.alternatives,
+      whyThisNow: fallback.whyThisNow,
+      replyDraft: fallback.replyDraft,
+      situationSummary: fallback.situationSummary,
+      starterMicroSteps: undefined,
+      meta: {
+        ...response.meta,
+        repairUsed: response.meta.repairUsed,
+      },
+    };
+  }
+
+  return response;
+}
+
+function buildPresentationPrepTaskFrame() {
+  return {
+    objective: 'เตรียมพรีเซนต์งานในทีมจาก notes หลายแหล่ง',
+    stage: 'กำลังแปลง notes จากแชท ไฟล์สไลด์ และสมุดให้เป็นหัวข้อพูด 3 ช่อง',
+    stakeholders: ['ทีม'],
+  };
+}
+
+function buildSourceGroundedIntake(intake: AiIntakeResponse, task: TaskContext): AiIntakeResponse {
+  const rawContext = collectRawRoomSourceContext(task);
+  if (isInternalPresentationPrepText(rawContext)) {
+    const fallback = buildPresentationPrepActionFallback();
+    return {
+      ...intake,
+      roomDigest: fallback.situationSummary,
+      taskFrame: buildPresentationPrepTaskFrame(),
+      taskShape: {
+        ...(intake.taskShape ?? {
+          deliverableType: 'execution',
+          immediateNeed: 'resume_execution',
+          missingInputs: [],
+          workContext: fallback.situationSummary,
+        }),
+        deliverableType: 'execution',
+        immediateNeed: 'resume_execution',
+        missingInputs: [
+          'notes จากแชท ไฟล์สไลด์ และสมุด',
+          'หัวข้อผลที่ทำไปแล้ว ปัญหาที่เจอ และแผนต่อไป',
+        ],
+        workContext: fallback.situationSummary,
+        behaviorIntent: 'admin_task',
+      },
+    };
+  }
+
+  if (isPhysicalRoomResetText(rawContext)) {
+    const fallback = buildPhysicalRoomResetActionFallback();
+    return {
+      ...intake,
+      workflowType: 'client_resume',
+      roomDigest: fallback.situationSummary,
+      taskFrame: {
+        objective: 'เคลียร์พื้นที่ใช้งานหนึ่งจุดในห้องรก',
+        stage: 'กำลังลดงานเก็บห้องให้เหลือก้าวกายภาพที่ทำได้ใน 10 นาที',
+        stakeholders: ['ตัวเอง'],
+      },
+      taskShape: {
+        ...(intake.taskShape ?? {
+          deliverableType: 'execution',
+          immediateNeed: 'resume_execution',
+          missingInputs: [],
+          workContext: fallback.situationSummary,
+        }),
+        deliverableType: 'execution',
+        immediateNeed: 'resume_execution',
+        missingInputs: ['พื้นที่กายภาพจุดแรกที่ต้องเคลียร์ในห้อง'],
+        workContext: fallback.situationSummary,
+        behaviorIntent: 'admin_task',
+      },
+    };
+  }
+
+  if (isStudentReportText(rawContext)) {
+    const fallback = buildStudentReportActionFallback(rawContext);
+    const hasRenewable = /renewable energy storage/i.test(rawContext);
+    const topicLabel = hasRenewable ? ' renewable energy storage' : '';
+    const refLinkLabel = /reference link/i.test(rawContext) ? 'reference link' : 'ลิงก์อ้างอิง';
+    return {
+      ...intake,
+      workflowType: 'client_resume',
+      roomDigest: fallback.situationSummary,
+      taskFrame: {
+        objective: `เริ่มบทนำรายงาน${topicLabel} จาก ${refLinkLabel} แรก`,
+        stage: 'กำลังลดรายงานให้เหลือก้าวเริ่มเขียนบทนำใน 10 นาที',
+        stakeholders: ['ตัวเอง'],
+      },
+      taskShape: {
+        ...(intake.taskShape ?? {
+          deliverableType: 'execution',
+          immediateNeed: 'resume_execution',
+          missingInputs: [],
+          workContext: fallback.situationSummary,
+        }),
+        deliverableType: 'execution',
+        immediateNeed: 'resume_execution',
+        missingInputs: [`${refLinkLabel} แรกที่ใช้เริ่มบทนำรายงาน`],
+        workContext: fallback.situationSummary,
+        behaviorIntent: 'admin_task',
+      },
+    };
+  }
+
+  if (isProductPostText(rawContext)) {
+    const fallback = buildProductPostActionFallback();
+    return {
+      ...intake,
+      workflowType: 'client_resume',
+      roomDigest: fallback.situationSummary,
+      taskFrame: {
+        objective: 'ร่าง caption สินค้าจากจุดขายที่มีอยู่',
+        stage: 'กำลังเปลี่ยนจุดขายกระเป๋าผ้า canvas ให้เป็น caption ที่โพสต์ได้คืนนี้',
+        stakeholders: ['ตัวเอง'],
+      },
+      taskShape: {
+        ...(intake.taskShape ?? {
+          deliverableType: 'execution',
+          immediateNeed: 'resume_execution',
+          missingInputs: [],
+          workContext: fallback.situationSummary,
+        }),
+        deliverableType: 'execution',
+        immediateNeed: 'resume_execution',
+        missingInputs: ['caption สินค้าที่เริ่มจากจุดขายพร้อมใช้'],
+        workContext: fallback.situationSummary,
+        behaviorIntent: 'admin_task',
+      },
+    };
+  }
+
+  if (isLogoRevisionText(rawContext)) {
+    const isReentry = intake.taskShape?.immediateNeed === 'resume_execution';
+    const fallback = buildLogoRevisionActionFallback(rawContext, isReentry);
+    return {
+      ...intake,
+      workflowType: 'client_resume',
+      roomDigest: fallback.situationSummary,
+      taskFrame: {
+        objective: isReentry ? 'ร่างคำตอบลูกค้าจากรายการที่จดไว้' : 'จัดการงานแก้โลโก้ 3 จุด (สี ฟอนต์ ขนาดโลโก้)',
+        stage: isReentry ? 'กำลังเตรียมข้อความตอบกลับลูกค้า' : 'เริ่มดำเนินการจดรายละเอียด',
+        stakeholders: isReentry ? ['ลูกค้า', 'ตัวเอง'] : ['ตัวเอง'],
+      },
+      taskShape: {
+        ...(intake.taskShape ?? {
+          deliverableType: 'execution',
+          immediateNeed: isReentry ? 'resume_execution' : 'send_reply_now',
+          missingInputs: [],
+          workContext: fallback.situationSummary,
+        }),
+        deliverableType: 'execution',
+        immediateNeed: isReentry ? 'resume_execution' : 'send_reply_now',
+        missingInputs: ['รายการแก้โลโก้ 3 จุด (สี ฟอนต์ ขนาดโลโก้)'],
+        workContext: fallback.situationSummary,
+        behaviorIntent: 'admin_task',
+      },
+    };
+  }
+
+  if (isOverloadedWorkText(rawContext)) {
+    const fallback = buildOverloadedWorkActionFallback(rawContext);
+    return {
+      ...intake,
+      workflowType: 'client_resume',
+      roomDigest: fallback.situationSummary,
+      taskFrame: {
+        objective: 'เลือกเคลียร์งานค้าง 1 อย่างจากที่มีอยู่ (พอร์ต/ใบเสนอราคา/เรซูเม่/แชทงาน)',
+        stage: 'ลดความสับสนและโฟกัสงานชิ้นเดียว',
+        stakeholders: ['ตัวเอง'],
+      },
+      taskShape: {
+        ...(intake.taskShape ?? {
+          deliverableType: 'execution',
+          immediateNeed: 'resume_execution',
+          missingInputs: [],
+          workContext: fallback.situationSummary,
+        }),
+        deliverableType: 'execution',
+        immediateNeed: 'resume_execution',
+        missingInputs: ['งานค้างที่เลือกทำเป็นอย่างแรก'],
+        workContext: fallback.situationSummary,
+        behaviorIntent: 'admin_task',
+      },
+    };
+  }
+
+  return intake;
+}
+
 export function buildPayloadFromAiActionResponse(
   workflowType: WorkflowType,
   response: AiActionResponse,
@@ -361,28 +809,29 @@ export function buildPayloadFromAiActionResponse(
   taskShape?: TaskShape,
   task?: TaskContext,
 ): AiSynthesisResponse {
-  const aiSteps = response.starterMicroSteps;
+  const groundedResponse = buildSourceGroundedActionResponse(response, taskShape, task);
+  const aiSteps = groundedResponse.starterMicroSteps;
   const useAiSteps =
     aiSteps &&
     aiSteps.length === 3 &&
     aiSteps.every((s) => s.trim().length > 0) &&
-    !shouldUseGroundedFallbackSteps(aiSteps, response.chosenAction, taskShape, task);
-  const microSteps = useAiSteps ? [...aiSteps] : buildBootstrapMicroSteps(response.chosenAction, taskShape, task);
+    !shouldUseGroundedFallbackSteps(aiSteps, groundedResponse.chosenAction, taskShape, task);
+  const microSteps = useAiSteps ? [...aiSteps] : buildBootstrapMicroSteps(groundedResponse.chosenAction, taskShape, task);
   const microStepsSource: 'ai' | 'fallback' = useAiSteps ? 'ai' : 'fallback';
 
   return {
     workflow_type: workflowType,
     requires_clarification: false,
     clarification_nudge: undefined,
-    situation_summary: response.situationSummary,
-    reply_draft: workflowType === 'client_response' ? response.replyDraft ?? undefined : undefined,
+    situation_summary: groundedResponse.situationSummary,
+    reply_draft: workflowType === 'client_response' ? groundedResponse.replyDraft ?? undefined : undefined,
     recommended_action: {
-      title: response.chosenAction.title,
-      rationale: response.chosenAction.rationale,
+      title: groundedResponse.chosenAction.title,
+      rationale: groundedResponse.chosenAction.rationale,
       micro_steps: microSteps,
       micro_steps_source: microStepsSource,
     },
-    alternative_actions: response.alternatives.slice(0, 2).map((alternative) => ({
+    alternative_actions: groundedResponse.alternatives.slice(0, 2).map((alternative) => ({
       title: alternative.title,
       rationale: alternative.rationale,
     })),
@@ -578,8 +1027,10 @@ export function buildActionSuccessArtifacts(input: {
   persistedNegotiationMode?: Extract<AiActionNegotiationMode, 'reply_first' | 'resume_first'>;
 }) {
   const { task, intake, actionResponse, evidenceContext, existingAction, persistedNegotiationMode } = input;
-  const workflowType = intake.workflowType;
-  const payload = buildPayloadFromAiActionResponse(workflowType, actionResponse, intake.blockers, intake.taskShape, task);
+  const groundedIntake = buildSourceGroundedIntake(intake, task);
+  const workflowType = groundedIntake.workflowType;
+  const groundedActionResponse = buildSourceGroundedActionResponse(actionResponse, groundedIntake.taskShape, task);
+  const payload = buildPayloadFromAiActionResponse(workflowType, groundedActionResponse, groundedIntake.blockers, groundedIntake.taskShape, task);
   const actionState = buildActionStateFromPayload(workflowType, payload, task.roomId, existingAction);
 
   let constraints = task.constraints
@@ -596,8 +1047,8 @@ export function buildActionSuccessArtifacts(input: {
     ? evidenceContext.evidenceChips
     : undefined;
   const currentPlan = enrichPlanWithProvenance({
-    actionTitle: actionResponse.chosenAction.title,
-    successSignal: actionResponse.chosenAction.successSignal,
+    actionTitle: payload.recommended_action.title,
+    successSignal: groundedActionResponse.chosenAction.successSignal,
     steps: payload.recommended_action.micro_steps.map((step, index) => ({
       id: `step-${index + 1}`,
       text: step,
@@ -608,9 +1059,9 @@ export function buildActionSuccessArtifacts(input: {
   const nextTask: TaskContext = {
     ...task,
     workflowType,
-    taskShape: intake.taskShape,
-    blockerSignals: intake.blockers,
-    taskFrame: intake.taskFrame,
+    taskShape: groundedIntake.taskShape,
+    blockerSignals: groundedIntake.blockers,
+    taskFrame: groundedIntake.taskFrame,
     lifecycleState: 'has_one_action',
     assistantMode: 'action_negotiation',
     lastAiOperation: 'action',
@@ -618,7 +1069,7 @@ export function buildActionSuccessArtifacts(input: {
     currentStepIndex: 0,
     lastSynthesis: payload,
     lastFailureReason: undefined,
-    actionExplanation: actionResponse.whyThisNow,
+    actionExplanation: groundedActionResponse.whyThisNow,
     currentPlan,
     pendingPlan: createDraftPlanFromCurrentPlan(currentPlan, 'action', generatedAt),
     planHistory: [
@@ -643,7 +1094,7 @@ export function buildActionSuccessArtifacts(input: {
     workflowType,
     payload,
     actionState,
-    whyThisNow: actionResponse.whyThisNow,
+    whyThisNow: groundedActionResponse.whyThisNow,
     nextTask,
     blockerCount: actionState.detectedBlockers?.length ?? 0,
     addressesDetectedBlocker: actionState.detectedBlockers

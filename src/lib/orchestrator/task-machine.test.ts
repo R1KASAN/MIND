@@ -50,6 +50,77 @@ const PAYMENT_API_EXPECTED_STEPS = [
   'ร่างข้อความตอบ ABC Corp แบบไม่ commit เวลาเกินข้อมูลที่เห็น',
 ];
 
+const BROWSER_QA_BRAINDUMP = [
+  'ห้องนี้รกมาก ต้องเตรียม demo MIND วันนี้',
+  'แต่ยังมี notes กระจัดกระจาย เรื่อง fallback latency, reentry card, ปุ่มช่วยแก้ก้าวนี้, evidence source',
+  'และกลัวว่ากดจบแล้วกลับมาจะ context หาย',
+  'อยากได้ก้าวเดียวที่ทำต่อได้ทันที',
+].join('\n');
+
+const BROWSER_QA_EXPECTED_STEPS = [
+  'จด fallback latency, reentry card, evidence source เป็น 3 จุด demo',
+  'เช็กปุ่มช่วยแก้ก้าวนี้กับ completed context ว่ายังต่อเนื่อง',
+  'ร่าง demo checklist ที่กัน context หายหลังจบงาน',
+];
+
+const TEAM_PRESENTATION_BRAINDUMP = [
+  'พรุ่งนี้ต้องพรีเซนต์งานในทีม แต่ตอนนี้หัวกระจัดกระจายมาก',
+  'มี notes อยู่หลายที่ ทั้งในแชท ในไฟล์สไลด์ และในสมุด',
+  'สิ่งที่ต้องพูดคือผลที่ทำไปแล้ว ปัญหาที่เจอ และแผนต่อไป',
+  'แต่ยังไม่รู้จะเริ่มจากตรงไหน กลัวเปิดสไลด์แล้วนั่งจ้องเปล่า ๆ',
+  'อยากได้ก้าวเดียวที่เริ่มทำได้ทันทีใน 10 นาที',
+].join('\n');
+
+const TEAM_PRESENTATION_EXPECTED_STEPS = [
+  'เปิด notes จากแชท ไฟล์สไลด์ และสมุด',
+  'จดหัวข้อพรีเซนต์ 3 ช่อง: ผลที่ทำไปแล้ว ปัญหาที่เจอ แผนต่อไป',
+  'เติมสไลด์แรกด้วยหัวข้อที่เริ่มได้ใน 10 นาที',
+];
+
+const MESSY_PHYSICAL_ROOM_BRAINDUMP = [
+  'ห้องรกมาก มีเสื้อผ้ากองบนเก้าอี้',
+  'โต๊ะมีแก้วน้ำกับกระดาษเต็มไปหมด',
+  'อยากเริ่มเก็บใน 10 นาทีแต่ไม่รู้จะเริ่มจากตรงไหน',
+].join('\n');
+
+const MESSY_PHYSICAL_ROOM_EXPECTED_STEPS = [
+  'เก็บเสื้อผ้า 5 ชิ้นออกจากเก้าอี้',
+  'ย้ายแก้วน้ำกับกระดาษออกจากโต๊ะหนึ่งมุม',
+  'เช็กว่าเก้าอี้หรือโต๊ะพร้อมใช้งานใน 10 นาที',
+];
+
+const CUSTOMER_LOGO_REVISION_BRAINDUMP = [
+  'ลูกค้าขอแก้งานโลโก้ 3 จุด (สี ฟอนต์ ขนาดโลโก้)',
+  'ข้อมูลอยู่กระจายใน LINE ยังไม่ตอบลูกค้า',
+  'อยากได้ก้าวเดียวเริ่มงานได้โดยไม่เปิดทุกอย่างพร้อมกัน',
+].join('\n');
+
+const STUDENT_REPORT_BRAINDUMP = [
+  'ต้องส่งรายงานวิชาวิศวะพรุ่งนี้ แต่ตอนนี้ติดมาก',
+  'หัวข้อคือ renewable energy storage มี reference links หลายอันในแชท',
+  'ยังไม่ได้เปิดเอกสารจริง ไม่รู้จะเริ่มเขียนบทนำจากตรงไหน',
+  'อยากได้ก้าวเดียวที่ทำได้ใน 10 นาที',
+].join('\n');
+
+const STUDENT_REPORT_EXPECTED_STEPS = [
+  'เปิด reference link 1 อันของ renewable energy storage',
+  'จด 3 bullet สำหรับบทนำรายงาน',
+  'เขียนประโยคแรกของบทนำจาก bullet ที่จด',
+];
+
+const PRODUCT_POST_BRAINDUMP = [
+  'ต้องโพสต์สินค้าใหม่ในร้านออนไลน์คืนนี้ เป็นกระเป๋าผ้า canvas',
+  'มีรูปสินค้าแล้ว แต่ caption ยังไม่มี',
+  'จุดขายคือเบา ซักง่าย และมี 3 สี',
+  'กลัวนั่งคิดนาน อยากได้ก้าวเดียวที่เริ่มทำได้ทันที',
+].join('\n');
+
+const PRODUCT_POST_EXPECTED_STEPS = [
+  'จดจุดขายกระเป๋าผ้า canvas: เบา ซักง่าย 3 สี',
+  'ร่าง caption สินค้า 3 บรรทัด',
+  'ตรวจว่า caption พร้อมโพสต์คืนนี้',
+];
+
 test('buildActionSuccessArtifacts keeps continuity and persists durable negotiation', () => {
   const task = makeTask({
     taskFrame: {
@@ -684,6 +755,318 @@ test('buildPayloadFromAiActionResponse grounds accepted payment API BrainDump sc
   assert.deepEqual(payload.recommended_action.micro_steps, PAYMENT_API_EXPECTED_STEPS);
   assert.equal(payload.recommended_action.micro_steps_source, 'fallback');
   assert.doesNotMatch(payload.recommended_action.micro_steps.join(' '), /แยกงานค้าง|แต่ละรายการ/u);
+});
+
+test('buildPayloadFromAiActionResponse grounds Browser QA demo scaffold without collapsing to button-only work', () => {
+  const task = makeTask({
+    workflowType: 'client_resume',
+    sourceText: BROWSER_QA_BRAINDUMP,
+    blockerSignals: ['too_big'],
+    taskFrame: {
+      objective: 'เตรียม demo MIND ให้เช็ก lifecycle ได้ครบ',
+      stage: 'demo_readiness',
+      stakeholders: ['demo reviewer'],
+    },
+  });
+  const response: AiActionResponse = {
+    chosenAction: {
+      title: 'ทำ checklist demo MIND สำหรับ fallback latency, reentry card, evidence source',
+      rationale: 'ต้องรวมจุดเสี่ยงของ demo ให้กลายเป็นก้าวเดียวที่ทำต่อได้',
+      successSignal: 'มี checklist demo ที่ใช้ไล่เช็กก่อนพรีเซนต์',
+    },
+    alternatives: [],
+    whyThisNow: 'demo MIND วันนี้ต้องไม่หลุด context หลังจบงาน',
+    situationSummary: 'notes กระจัดกระจายเรื่อง fallback latency, reentry card, ปุ่มช่วยแก้, evidence source และ context หาย',
+    starterMicroSteps: [
+      'สรุป ปุ่ม เป็น 3 บรรทัด',
+      'แยกสิ่งที่รู้แล้วกับสิ่งที่ยังขาด',
+      'ร่างอัปเดตลูกค้า 3 บรรทัดจากข้อมูลที่มีตอนนี้',
+    ],
+    meta: { model: 'mock', usedRoomFiles: [], repairUsed: false },
+  };
+
+  const payload = buildPayloadFromAiActionResponse('client_resume', response, ['too_big'], {
+    deliverableType: 'execution',
+    immediateNeed: 'resume_execution',
+    missingInputs: [],
+    workContext: 'เตรียม demo MIND เรื่อง fallback latency, reentry card, ปุ่มช่วยแก้ก้าวนี้, evidence source, context หาย',
+    behaviorIntent: 'admin_task',
+    confidence: 0.88,
+  }, task);
+
+  assert.deepEqual(payload.recommended_action.micro_steps, BROWSER_QA_EXPECTED_STEPS);
+  assert.equal(payload.recommended_action.micro_steps_source, 'fallback');
+  assert.doesNotMatch(payload.recommended_action.micro_steps.join(' '), /ลูกค้า|client|customer|สรุป ปุ่ม เป็น 3 บรรทัด/iu);
+});
+
+test('buildPayloadFromAiActionResponse rejects invented customer starter steps when source has no customer anchor', () => {
+  const task = makeTask({
+    workflowType: 'client_resume',
+    sourceText: BROWSER_QA_BRAINDUMP,
+    taskFrame: {
+      objective: 'เตรียม demo MIND ให้เช็ก lifecycle ได้ครบ',
+      stage: 'demo_readiness',
+      stakeholders: ['demo reviewer'],
+    },
+  });
+  const response: AiActionResponse = {
+    chosenAction: {
+      title: 'ทำ checklist demo MIND สำหรับ fallback latency, reentry card, evidence source',
+      rationale: 'ต้องรวมจุดเสี่ยงของ demo ให้กลายเป็นก้าวเดียวที่ทำต่อได้',
+      successSignal: 'มี checklist demo ที่ใช้ไล่เช็กก่อนพรีเซนต์',
+    },
+    alternatives: [],
+    whyThisNow: 'demo MIND วันนี้ต้องไม่หลุด context หลังจบงาน',
+    situationSummary: 'notes กระจัดกระจายเรื่อง fallback latency, reentry card, ปุ่มช่วยแก้, evidence source และ context หาย',
+    starterMicroSteps: [
+      'แจ้งลูกค้าว่ากำลังตรวจสอบ completed context',
+      'ร่างอัปเดตลูกค้า 3 บรรทัดจากข้อมูลที่มีตอนนี้',
+      'ส่งข้อความให้ customer หลังเช็ก evidence source',
+    ],
+    meta: { model: 'mock', usedRoomFiles: [], repairUsed: false },
+  };
+
+  const payload = buildPayloadFromAiActionResponse('client_resume', response, [], {
+    deliverableType: 'execution',
+    immediateNeed: 'resume_execution',
+    missingInputs: [],
+    workContext: 'เตรียม demo MIND เรื่อง fallback latency, reentry card, ปุ่มช่วยแก้ก้าวนี้, evidence source, context หาย',
+    behaviorIntent: 'admin_task',
+    confidence: 0.88,
+  }, task);
+
+  assert.equal(payload.recommended_action.micro_steps_source, 'fallback');
+  assert.doesNotMatch(payload.recommended_action.micro_steps.join(' '), /ลูกค้า|client|customer/iu);
+  assert.match(payload.recommended_action.micro_steps.join(' '), /fallback latency|reentry card|evidence source|context/u);
+});
+
+test('buildPayloadFromAiActionResponse rejects customer-contaminated action for internal team presentation prep', () => {
+  const task = makeTask({
+    workflowType: 'client_resume',
+    sourceText: TEAM_PRESENTATION_BRAINDUMP,
+    taskFrame: {
+      objective: 'ช่วยเหลือลูกค้าในการจัดระเบียบและเริ่มต้นเตรียมการนำเสนอผลงาน',
+      stage: 'presentation_prep',
+      stakeholders: ['ลูกค้า'],
+    },
+  });
+  const response: AiActionResponse = {
+    chosenAction: {
+      title: 'ร่างข้อความตอบลูกค้าเพื่อสรุปประเด็นนำเสนอ',
+      rationale: 'ช่วยให้ลูกค้าจัดระเบียบความคิดและเห็นภาพรวมของสิ่งที่ต้องนำเสนอ',
+      successSignal: 'ลูกค้าได้ข้อความสรุปประเด็นนำเสนอ',
+    },
+    alternatives: [],
+    whyThisNow: 'ลูกค้าต้องเริ่มเตรียมการนำเสนอภายใน 10 นาที',
+    situationSummary: 'ลูกค้าต้องการเตรียมการนำเสนอในทีมพรุ่งนี้ แต่ข้อมูลกระจัดกระจายและไม่รู้จะเริ่มอย่างไร',
+    starterMicroSteps: [
+      'สรุปสิ่งที่ลูกค้าต้องพูดเป็นรายการสั้น',
+      'ร่างข้อความตอบลูกค้าเกี่ยวกับสไลด์',
+      'ส่งข้อความให้ customer หลังจัด notes',
+    ],
+    meta: { model: 'mock', usedRoomFiles: [], repairUsed: false },
+  };
+
+  const payload = buildPayloadFromAiActionResponse('client_resume', response, [], {
+    deliverableType: 'execution',
+    immediateNeed: 'resume_execution',
+    missingInputs: ['notes จากแชท ไฟล์สไลด์ และสมุด'],
+    workContext: 'ลูกค้าต้องการเตรียมการนำเสนอในทีมพรุ่งนี้ แต่ข้อมูลกระจัดกระจาย',
+    behaviorIntent: 'admin_task',
+    confidence: 0.88,
+  }, task);
+
+  const combined = [
+    payload.situation_summary,
+    payload.recommended_action.title,
+    payload.recommended_action.rationale,
+    ...payload.recommended_action.micro_steps,
+  ].join(' ');
+
+  assert.equal(payload.recommended_action.title, 'เปิด notes ทั้ง 3 แหล่ง แล้วจดหัวข้อพรีเซนต์ 3 ช่อง');
+  assert.deepEqual(payload.recommended_action.micro_steps, TEAM_PRESENTATION_EXPECTED_STEPS);
+  assert.equal(payload.recommended_action.micro_steps_source, 'fallback');
+  assert.match(combined, /พรีเซนต์งานในทีม|notes|แชท|ไฟล์สไลด์|สมุด|ผลที่ทำไปแล้ว|ปัญหาที่เจอ|แผนต่อไป|10 นาที/);
+  assert.doesNotMatch(combined, /ลูกค้า|client|customer|ผู้ว่าจ้าง/iu);
+});
+
+test('buildBootstrapMicroSteps grounds internal presentation prep to notes and slide anchors', () => {
+  const steps = buildBootstrapMicroSteps(
+    {
+      title: 'เปิด notes ทั้ง 3 แหล่ง แล้วจดหัวข้อพรีเซนต์ 3 ช่อง',
+      successSignal: 'ได้หัวข้อพรีเซนต์ที่เริ่มเติมสไลด์ได้',
+    },
+    {
+      deliverableType: 'execution',
+      immediateNeed: 'resume_execution',
+      missingInputs: ['notes จากแชท ไฟล์สไลด์ และสมุด'],
+      workContext: 'ต้องเตรียมพรีเซนต์งานในทีมจาก notes หลายแหล่งใน 10 นาที',
+      behaviorIntent: 'admin_task',
+      confidence: 0.88,
+    },
+    makeTask({ sourceText: TEAM_PRESENTATION_BRAINDUMP }),
+  );
+
+  assert.deepEqual(steps, TEAM_PRESENTATION_EXPECTED_STEPS);
+  assert.doesNotMatch(steps.join(' '), /ลูกค้า|client|customer|ผู้ว่าจ้าง/iu);
+});
+
+test('buildPayloadFromAiActionResponse grounds messy physical room to physical cleanup steps', () => {
+  const task = makeTask({
+    workflowType: 'client_resume',
+    sourceText: MESSY_PHYSICAL_ROOM_BRAINDUMP,
+    taskFrame: {
+      objective: 'เคลียร์พื้นที่ใช้งานหนึ่งจุดในห้องรก',
+      stage: 'physical_room_reset',
+      stakeholders: ['ตัวเอง'],
+    },
+  });
+  const response: AiActionResponse = {
+    chosenAction: {
+      title: 'วางแผนจัดห้องทั้งหมดให้เป็นระบบ',
+      rationale: 'ห้องรกและต้องจัดระเบียบหลายส่วน',
+      successSignal: 'ห้องเรียบร้อย',
+    },
+    alternatives: [],
+    whyThisNow: 'ต้องเริ่มเก็บใน 10 นาที',
+    situationSummary: 'ห้องรก มีเสื้อผ้าบนเก้าอี้และของบนโต๊ะ',
+    starterMicroSteps: [
+      'วางแผนจัดห้องทั้งหมด',
+      'แยกประเภทของทุกชิ้นในห้อง',
+      'จัดระบบใหม่ทั้งโต๊ะและเก้าอี้',
+    ],
+    meta: { model: 'mock', usedRoomFiles: [], repairUsed: false },
+  };
+
+  const payload = buildPayloadFromAiActionResponse('client_resume', response, [], {
+    deliverableType: 'execution',
+    immediateNeed: 'resume_execution',
+    missingInputs: ['พื้นที่กายภาพจุดแรกที่ต้องเคลียร์ในห้อง'],
+    workContext: 'ห้องรก มีเสื้อผ้าบนเก้าอี้และของบนโต๊ะ จึงควรเริ่มจากเคลียร์พื้นที่กายภาพหนึ่งจุดใน 10 นาที',
+    behaviorIntent: 'admin_task',
+    confidence: 0.88,
+  }, task);
+
+  assert.deepEqual(payload.recommended_action.micro_steps, MESSY_PHYSICAL_ROOM_EXPECTED_STEPS);
+  assert.equal(payload.recommended_action.micro_steps_source, 'fallback');
+  assert.match(payload.recommended_action.title, /เก็บเสื้อผ้า 5 ชิ้น|เคลียร์เก้าอี้/u);
+  assert.doesNotMatch([
+    payload.recommended_action.title,
+    payload.recommended_action.rationale,
+    ...payload.recommended_action.micro_steps,
+  ].join(' '), /ลูกค้า|client|customer|proposal|วางแผนจัดห้องทั้งหมด/u);
+});
+
+test('buildPayloadFromAiActionResponse allows customer wording when source is customer logo revision', () => {
+  const task = makeTask({
+    workflowType: 'client_response',
+    sourceText: CUSTOMER_LOGO_REVISION_BRAINDUMP,
+    taskFrame: {
+      objective: 'ตอบลูกค้าเรื่องแก้งานโลโก้',
+      stage: 'logo_revision',
+      stakeholders: ['ลูกค้า'],
+    },
+  });
+  const response: AiActionResponse = {
+    chosenAction: {
+      title: 'เปิด LINE แล้วจดรายการแก้โลโก้ 3 จุด: สี / ฟอนต์ / ขนาดโลโก้',
+      rationale: 'ลูกค้าขอแก้สีหลักและอยากได้โลโก้ minimal กว่าเดิม',
+      successSignal: 'ลูกค้ารู้ลำดับการแก้โลโก้',
+    },
+    alternatives: [],
+    whyThisNow: 'ต้องตอบลูกค้าว่าจะเริ่มแก้จากจุดไหนก่อน',
+    situationSummary: 'ลูกค้าขอแก้งานโลโก้ สีหลักยังไม่ตรงแบรนด์',
+    starterMicroSteps: [
+      'สรุป feedback โลโก้เรื่องสีหลักและแบรนด์',
+      'ร่างข้อความตอบลูกค้าว่าจะเริ่มจากสีหลัก',
+      'ตรวจว่าไม่รับแก้ scope เกิน feedback',
+    ],
+    meta: { model: 'mock', usedRoomFiles: [], repairUsed: false },
+  };
+
+  const payload = buildPayloadFromAiActionResponse('client_response', response, [], {
+    deliverableType: 'reply',
+    immediateNeed: 'send_reply_now',
+    missingInputs: [],
+    workContext: 'ลูกค้าขอแก้งานโลโก้ สีหลักยังไม่ตรงแบรนด์ และอยากได้ตัวเลือก minimal',
+    behaviorIntent: 'client_delivery',
+    confidence: 0.9,
+  }, task);
+  const combined = [
+    payload.situation_summary,
+    payload.recommended_action.title,
+    payload.recommended_action.rationale,
+    ...payload.recommended_action.micro_steps,
+  ].join(' ');
+
+  assert.match(combined, /ลูกค้า/);
+  assert.match(combined, /โลโก้|สีหลัก|แบรนด์|minimal/u);
+});
+
+test('buildPayloadFromAiActionResponse grounds student report without customer framing', () => {
+  const task = makeTask({
+    workflowType: 'client_resume',
+    sourceText: STUDENT_REPORT_BRAINDUMP,
+  });
+  const response: AiActionResponse = {
+    chosenAction: {
+      title: 'ร่างข้อความแนะนำวิธีเริ่มเขียนบทนำรายงาน renewable energy storage',
+      rationale: 'ช่วยให้เริ่มต้นงานได้ภายในเวลาที่กำหนด',
+      successSignal: 'ได้แนวทางเริ่มรายงาน',
+    },
+    alternatives: [],
+    whyThisNow: 'ต้องส่งรายงานพรุ่งนี้',
+    situationSummary: 'ต้องเริ่มรายงานจาก reference links ในแชท',
+    starterMicroSteps: ['สรุป แชท/10 นาที เป็น 3 บรรทัด', 'จดสถานะล่าสุดของแต่ละรายการ', 'ร่างข้อความตอบลูกค้า'],
+    meta: { model: 'mock', usedRoomFiles: [], repairUsed: false },
+  };
+
+  const payload = buildPayloadFromAiActionResponse('client_resume', response, [], {
+    deliverableType: 'execution',
+    immediateNeed: 'resume_execution',
+    missingInputs: ['reference link แรกที่ใช้เริ่มบทนำรายงาน'],
+    workContext: 'ต้องเริ่มรายงานวิชาวิศวะหัวข้อ renewable energy storage จาก reference links ในแชท โดยเริ่มบทนำให้ได้ใน 10 นาที',
+    behaviorIntent: 'admin_task',
+    confidence: 0.88,
+  }, task);
+  const combined = [payload.situation_summary, payload.recommended_action.title, ...payload.recommended_action.micro_steps].join(' ');
+
+  assert.deepEqual(payload.recommended_action.micro_steps, STUDENT_REPORT_EXPECTED_STEPS);
+  assert.match(combined, /รายงาน|renewable energy storage|reference link|บทนำ|10 นาที/u);
+  assert.doesNotMatch(combined, /ลูกค้า|client|customer|บริษัท|หัวหน้า|เงิน|หมอ/iu);
+});
+
+test('buildPayloadFromAiActionResponse grounds product post without customer framing', () => {
+  const task = makeTask({
+    workflowType: 'client_resume',
+    sourceText: PRODUCT_POST_BRAINDUMP,
+  });
+  const response: AiActionResponse = {
+    chosenAction: {
+      title: 'เสนอ caption ตัวอย่างสำหรับกระเป๋าผ้า canvas',
+      rationale: 'ลูกค้าต้องการ caption สำหรับสินค้าใหม่',
+      successSignal: 'ได้ caption',
+    },
+    alternatives: [],
+    whyThisNow: 'ต้องโพสต์สินค้าใหม่คืนนี้',
+    situationSummary: 'ต้องโพสต์สินค้าใหม่ในร้านออนไลน์',
+    starterMicroSteps: ['สรุป แชท/แชต เป็น 3 บรรทัด', 'จดสถานะล่าสุดของแต่ละรายการ', 'ร่างข้อความตอบลูกค้า'],
+    meta: { model: 'mock', usedRoomFiles: [], repairUsed: false },
+  };
+
+  const payload = buildPayloadFromAiActionResponse('client_resume', response, [], {
+    deliverableType: 'execution',
+    immediateNeed: 'resume_execution',
+    missingInputs: ['caption สินค้าที่เริ่มจากจุดขายพร้อมใช้'],
+    workContext: 'ต้องโพสต์สินค้าใหม่ในร้านออนไลน์คืนนี้ เป็นกระเป๋าผ้า canvas มีรูปแล้ว จุดขายคือเบา ซักง่าย และมี 3 สี',
+    behaviorIntent: 'admin_task',
+    confidence: 0.88,
+  }, task);
+  const combined = [payload.situation_summary, payload.recommended_action.title, ...payload.recommended_action.micro_steps].join(' ');
+
+  assert.deepEqual(payload.recommended_action.micro_steps, PRODUCT_POST_EXPECTED_STEPS);
+  assert.match(combined, /โพสต์สินค้า|ร้านออนไลน์|กระเป๋าผ้า canvas|caption|เบา|ซักง่าย|3 สี/u);
+  assert.doesNotMatch(combined, /ลูกค้า|client|customer|บริษัท|หัวหน้า|เงิน|หมอ/iu);
 });
 
 test('buildPayloadFromAiActionResponse rejects generic multi-item payment API starter steps', () => {
