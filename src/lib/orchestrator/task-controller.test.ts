@@ -2735,6 +2735,142 @@ test('handleWalkAwayFromRescue replaces stale reentry brief with current rescue 
   assert.deepEqual(latestSession?.task?.reentryBrief?.ignoredNoise, []);
 });
 
+test('handleMakeSmaller from rescue applies the current rescue step without reopening scaffold generation', async () => {
+  const payload = makePayload({
+    situation_summary: 'ABC Corp รอ incident update หลัง payment API timeout',
+    recommended_action: {
+      title: 'ส่งอัปเดตสถานะ incident ให้ CS',
+      rationale: 'ลูกค้าต้องได้ status update ก่อนเพื่อคุมความคาดหวัง',
+      micro_steps: [
+        'เช็ก Dashboard ล่าสุด',
+        'เติม status update 3 บรรทัด',
+        'ส่งให้ทีม CS',
+      ],
+      micro_steps_source: 'ai',
+    },
+  });
+  const task = makeTask({
+    sourceText: [
+      'เหนื่อยมาก แต่ยังต้องตอบ ABC Corp เรื่อง incident เมื่อเช้า',
+      'payment API timeout ไป 20 นาที',
+      'ทีม CS ถามว่าจะตอบลูกค้ายังไง',
+      'ผมยังไม่ได้เปิด Dashboard อีกรอบ',
+      'หัวตื้อ ไม่รู้จะเริ่มตรงไหน',
+    ].join('\n'),
+    lifecycleState: 'stalled',
+    assistantMode: 'rescue_diagnosis',
+    currentActionId: 'action-1',
+    currentStepIndex: 0,
+    lastSynthesis: payload,
+    currentPlan: {
+      actionTitle: payload.recommended_action.title,
+      steps: payload.recommended_action.micro_steps.map((step, index) => ({
+        id: `step-${index + 1}`,
+        text: step,
+      })),
+    },
+    rescueHistory: [{ reason: 'too_big', mode: 'shrink', createdAt: 10 }],
+  });
+  const session = normalizeSession({
+    lastActive: 100,
+    uiRoute: 'RESCUE',
+    notThisCount: 0,
+    currentActionId: task.currentActionId,
+    currentPayload: payload,
+    task,
+  });
+  const sessionRef = { current: session };
+  let latestSession: AppSession | null = session;
+  let currentPayload: AiSynthesisResponse | null = payload;
+  let currentActionState: Action | null = {
+    ...makeAction(),
+    title: payload.recommended_action.title,
+    rationale: payload.recommended_action.rationale,
+    microSteps: payload.recommended_action.micro_steps,
+  };
+  const persistedUpdates: Array<Partial<Action>> = [];
+
+  const originalFetch = global.fetch;
+  global.fetch = async (input) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.includes('/api/ai/scaffold')) {
+      throw new Error('apply rescue must not call scaffold generation');
+    }
+    return new Response('{}', { status: 404 });
+  };
+
+  try {
+    const controller = createTaskController({
+      session,
+      sessionRef,
+      currentPayload: payload,
+      currentActionState,
+      currentRescueState: {
+        diagnosis: {
+          primaryReason: 'too_big',
+          explanation: 'ยังไม่ได้เช็ก Dashboard ล่าสุดของ payment API จึงตอบ CS ไม่มั่นใจ',
+        },
+        rescuePlan: {
+          mode: 'shrink',
+          steps: ['เปิด Dashboard เช็กสถานะล่าสุดของ payment API แล้วเติมอัปเดต 3 บรรทัดให้ CS'],
+        },
+        suggestedMessage: undefined,
+        meta: {
+          model: 'test-rescue',
+          repairUsed: false,
+          usedRoomFiles: [],
+        },
+      },
+      clarificationPrompt: '',
+      dumpStartTime: null,
+      aiModel: 'qwen2.5:3b',
+      setSession: (value) => {
+        latestSession = value;
+        sessionRef.current = value;
+      },
+      setCurrentPayload: (value) => {
+        currentPayload = value;
+      },
+      setCurrentActionState: (value) => {
+        currentActionState = value;
+      },
+      setManualFallbackSuggestedActions: () => undefined,
+      setManualFallbackRetryable: () => undefined,
+      setClarificationPrompt: () => undefined,
+      setCurrentWhyThisNow: () => undefined,
+      setCurrentRescueState: () => undefined,
+      setIsRescueLoading: () => undefined,
+      setIsNegotiatingAction: () => undefined,
+      setIsReentryLoading: () => undefined,
+      isScaffoldRefining: false,
+      setIsScaffoldRefining: () => undefined,
+      setScaffoldRefineFeedback: () => undefined,
+      setDumpStartTime: () => undefined,
+      recordAiOpsEntry: () => undefined,
+      persistSession: async () => undefined,
+      persistActionSave: async () => undefined,
+      persistActionUpdate: async (_id, modifications) => {
+        persistedUpdates.push(modifications);
+      },
+    });
+
+    await controller.handleMakeSmaller();
+
+    assert.equal(latestSession?.uiRoute, 'SCAFFOLD');
+    assert.equal(latestSession?.task?.assistantMode, 'scaffold_refinement');
+    assert.equal(latestSession?.task?.currentPlan?.steps.length, 1);
+    assert.equal(
+      latestSession?.task?.currentPlan?.steps[0]?.text,
+      'เปิด Dashboard เช็กสถานะล่าสุดของ payment API แล้วเติมอัปเดต 3 บรรทัดให้ CS',
+    );
+    assert.equal(currentPayload?.recommended_action.micro_steps[0], 'เปิด Dashboard เช็กสถานะล่าสุดของ payment API แล้วเติมอัปเดต 3 บรรทัดให้ CS');
+    assert.deepEqual(currentActionState?.microSteps, ['เปิด Dashboard เช็กสถานะล่าสุดของ payment API แล้วเติมอัปเดต 3 บรรทัดให้ CS']);
+    assert.deepEqual(persistedUpdates[0]?.microSteps, ['เปิด Dashboard เช็กสถานะล่าสุดของ payment API แล้วเติมอัปเดต 3 บรรทัดให้ CS']);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('handleMakeSmaller with valid scaffold updates state and navigates once to SCAFFOLD', async () => {
   const payload = makePayload();
   const task = makeTask({

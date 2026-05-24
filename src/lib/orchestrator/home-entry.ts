@@ -158,27 +158,46 @@ function hasMissingContext(candidate: ResumeRoomCandidateInput, signal: ResumeSt
   });
 }
 
-function countManualTextSource(room: RoomRecord) {
-  const task = room.session.task;
-  const text = task?.sourceText || room.contextSummary || room.lastKnownGoodBrief || '';
-  return text.trim().length > 0 ? 1 : 0;
+function hasLatestInput(room: RoomRecord) {
+  return Boolean(
+    room.session.task?.sourceText?.trim() ||
+      room.session.activeDumpContext?.text?.trim(),
+  );
+}
+
+function hasExistingRoomContext(candidate: ResumeRoomCandidateInput) {
+  return Boolean(
+    normalizeUserWorkText(candidate.room.lastKnownGoodBrief) ||
+      candidate.room.lastReentryBrief ||
+      normalizeUserWorkText(candidate.room.contextSummary) ||
+      normalizeUserWorkText(candidate.replay?.snapshot?.currentSummary),
+  );
+}
+
+function buildContextSourceLabel(candidate: ResumeRoomCandidateInput, fileCount: number) {
+  const sourceLabels: string[] = [];
+  if (hasLatestInput(candidate.room) && hasExistingRoomContext(candidate)) {
+    sourceLabels.push('latest input + existing room context');
+  } else if (hasLatestInput(candidate.room)) {
+    sourceLabels.push('latest input');
+  } else if (hasExistingRoomContext(candidate)) {
+    sourceLabels.push('existing room context');
+  }
+  if (fileCount > 0) sourceLabels.push(`${fileCount} ไฟล์`);
+  return sourceLabels.length > 0 ? `ใช้ ${sourceLabels.join(' + ')}` : undefined;
 }
 
 function buildTrustItems(candidate: ResumeRoomCandidateInput, signal: ResumeStuckSignal): TrustStripItem[] {
   const room = candidate.room;
   const task = room.session.task;
   const sourceFiles = task?.sourceFiles ?? [];
-  const manualCount = countManualTextSource(room);
-  const sourceParts = [
-    sourceFiles.length > 0 ? `${sourceFiles.length} ไฟล์` : '',
-    manualCount > 0 ? 'ข้อความเดิม' : '',
-  ].filter(Boolean);
+  const sourceLabel = buildContextSourceLabel(candidate, sourceFiles.length);
   const trustItems: TrustStripItem[] = [];
 
-  if (sourceParts.length > 0) {
+  if (sourceLabel) {
     trustItems.push({
       id: 'sources',
-      label: `ใช้บริบทจาก ${sourceParts.join(' + ')}`,
+      label: sourceLabel,
       tone: 'ready',
     });
   }
@@ -245,6 +264,10 @@ function roomHasWork(candidate: ResumeRoomCandidateInput) {
   );
 }
 
+function isCompletedRoom(candidate: ResumeRoomCandidateInput) {
+  return candidate.room.session.task?.lifecycleState === 'done';
+}
+
 export function formatUpdatedAt(value: number) {
   const diffMs = Date.now() - value;
   if (diffMs < 1000 * 60 * 60) return 'ขยับล่าสุดในชั่วโมงนี้';
@@ -262,6 +285,7 @@ function readLastEventAt(candidate: ResumeRoomCandidateInput) {
 
 function rankCandidate(candidate: ResumeRoomCandidateInput): RankedResumeRoom | null {
   if (!isVisibleRoom(candidate.room)) return null;
+  if (isCompletedRoom(candidate)) return null;
   if (!roomHasWork(candidate)) return null;
 
   const actionTitle = readActionTitle(candidate);

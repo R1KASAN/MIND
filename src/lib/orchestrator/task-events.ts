@@ -13,6 +13,7 @@ import {
   type AiScaffoldResponse,
 } from '@/lib/ai/operations';
 import { parseAiReentryResponse, parseAiRescueResponse } from '@/lib/ai/operation-contract';
+import { normalizeRescueResponse } from '@/lib/ai/rescue-runtime';
 import type { AiOpsFailureTelemetry } from '@/lib/ai/ai-ops-debug';
 import type { AiSynthesisResponse } from '@/lib/ai/schema';
 import { AiSynthesisResponseSchema } from '@/lib/ai/schema';
@@ -553,12 +554,13 @@ export async function requestRescue(task: TaskContext, action: Action | null, cu
         signal: options?.signal,
       });
 
-      const parsed = await parseOperationResponse(
+      const parsedResponse = await parseOperationResponse(
         response,
         AiRescueResponseSchema,
         `AI rescue ไม่สำเร็จ (${response.status})`,
         'rescue',
       );
+      const parsed = normalizeRescueResponse({ task, action: action ?? undefined, currentStepIndex, rescue: parsedResponse });
 
       if (retryAttempted) {
         trackEvent('synthesis_completed', {
@@ -670,29 +672,34 @@ export async function requestRescue(task: TaskContext, action: Action | null, cu
         throw error;
       }
 
-      const fallbackRescue = parseAiRescueResponse(
-        JSON.stringify({
-          diagnosis: {
-            primaryReason: 'unknown',
-            explanation:
-              'MIND ยังวินิจฉัยไม่สำเร็จในรอบนี้ แต่บริบทงานและข้อความเดิมของคุณยังอยู่ครบ ลองย่อยให้เล็กลงอีก หรือพักไว้แล้วกลับมาลอง rescue ใหม่ได้',
+      const fallbackRescue = normalizeRescueResponse({
+        task,
+        action: action ?? undefined,
+        currentStepIndex,
+        rescue: parseAiRescueResponse(
+          JSON.stringify({
+            diagnosis: {
+              primaryReason: 'unknown',
+              explanation:
+                'MIND ยังวินิจฉัยไม่สำเร็จในรอบนี้ แต่บริบทงานและข้อความเดิมของคุณยังอยู่ครบ ลองย่อยให้เล็กลงอีก หรือพักไว้แล้วกลับมาลอง rescue ใหม่ได้',
+            },
+            rescuePlan: {
+              mode: 'shrink',
+              steps: [
+                'กลับไปทำแค่ส่วนเล็กที่สุดของ step นี้ก่อน',
+                'ถ้ายังติดอยู่จริง งานนี้ยังถูกเก็บไว้เหมือนเดิม ค่อยกลับมาลองใหม่เมื่อพร้อม',
+              ],
+            },
+          }),
+          {
+            fallbackReason: 'unknown',
+            fallbackActionTitle: action?.title ?? task.currentPlan?.actionTitle,
+            fallbackCurrentStep:
+              task.currentPlan?.steps[currentStepIndex]?.text ??
+              action?.microSteps?.[currentStepIndex],
           },
-          rescuePlan: {
-            mode: 'shrink',
-            steps: [
-              'กลับไปทำแค่ส่วนเล็กที่สุดของ step นี้ก่อน',
-              'ถ้ายังติดอยู่จริง งานนี้ยังถูกเก็บไว้เหมือนเดิม ค่อยกลับมาลองใหม่เมื่อพร้อม',
-            ],
-          },
-        }),
-        {
-          fallbackReason: 'unknown',
-          fallbackActionTitle: action?.title ?? task.currentPlan?.actionTitle,
-          fallbackCurrentStep:
-            task.currentPlan?.steps[currentStepIndex]?.text ??
-            action?.microSteps?.[currentStepIndex],
-        },
-      );
+        ),
+      });
       const refs = roomMemoryRefsFromSources(buildRoomDataSources(task).filter((source) => source.status === 'ready'));
       await safeAppendLiveSourceAddedEvents(task, refs, 'rescue:fallback');
       await safeAppendLiveRoomMemoryEvent(buildLiveRoomMemoryEvent({

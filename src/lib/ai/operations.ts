@@ -126,7 +126,7 @@ export const AiRescueResponseSchema = z.object({
   }),
   rescuePlan: z.object({
     mode: z.enum(['clarify', 'follow_up', 'shrink', 'switch_track', 'pause_cleanly']),
-    steps: z.array(z.string()).min(2).max(4),
+    steps: z.array(z.string()).min(1).max(4),
   }),
   suggestedMessage: NullableOptionalString,
   meta: AiOperationMetaSchema,

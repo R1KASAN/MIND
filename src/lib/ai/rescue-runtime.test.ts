@@ -5,9 +5,10 @@ import {
   buildManualRescueResponse,
   extractAnchorWords,
   inferRescueFallbackReason,
+  normalizeRescueResponse,
   resolveRescueRouteBudget,
 } from './rescue-runtime';
-import type { TaskContext } from '@/lib/store/idb';
+import type { Action, TaskContext } from '@/lib/store/idb';
 
 // ─── Banned Phrases ──────────────────────────────────────────────────────────
 
@@ -130,7 +131,7 @@ test('buildManualRescueResponse (missing_context): no banned phrases, has causal
     'Explanation must describe WHY blocked (missing info)');
 
   // Recovery quality
-  assert.ok(response.rescuePlan.steps.length >= 2, 'Must have at least 2 recovery steps');
+  assert.equal(response.rescuePlan.steps.length, 1, 'Must have exactly 1 recovery step');
   for (const step of response.rescuePlan.steps) {
     assertNoBannedPhrases(step, 'recovery step');
   }
@@ -138,6 +139,58 @@ test('buildManualRescueResponse (missing_context): no banned phrases, has causal
   // Suggested message quality
   assert.ok(response.suggestedMessage, 'missing_context should include a copy-paste message');
   assertNoBannedPhrases(response.suggestedMessage!, 'suggested message');
+});
+
+test('normalizeRescueResponse keeps exactly one grounded smaller step for the incident room', () => {
+  const task = makeRescueTask({
+    sourceText: [
+      'เหนื่อยมาก แต่ยังต้องตอบ ABC Corp เรื่อง incident เมื่อเช้า',
+      'payment API timeout ไป 20 นาที',
+      'ทีม CS ถามว่าจะตอบลูกค้ายังไง',
+      'ผมยังไม่ได้เปิด Dashboard อีกรอบ',
+      'หัวตื้อ ไม่รู้จะเริ่มตรงไหน',
+    ].join('\n'),
+  });
+  const action: Action = {
+    id: 'action-1',
+    createdAt: 1,
+    title: 'ส่งอัปเดตสถานะ incident ให้ CS',
+    rationale: 'ตอบลูกค้าด้วยสถานะล่าสุดก่อน',
+    microSteps: ['เปิด Dashboard', 'เช็ก payment API', 'ร่าง update ให้ CS'],
+    isPinned: false,
+    state: 'IN_PROGRESS',
+    workflowType: 'client_response',
+  };
+
+  const response = normalizeRescueResponse({
+    task,
+    action,
+    currentStepIndex: 0,
+    rescue: {
+      diagnosis: {
+        primaryReason: 'too_big',
+        explanation: 'ยังไม่ได้เปิด Dashboard และยังต้องตอบ CS เรื่อง payment API',
+      },
+      rescuePlan: {
+        mode: 'shrink',
+        steps: [
+          'วิเคราะห์ root cause ของ timeout',
+          'ทำ RCA แล้ววางแผน incident response หลายขั้น',
+        ],
+      },
+      suggestedMessage: undefined,
+      meta: {
+        model: 'test-rescue',
+        repairUsed: false,
+        usedRoomFiles: [],
+      },
+    },
+  });
+
+  assert.equal(response.rescuePlan.steps.length, 1);
+  assert.equal(response.rescuePlan.mode, 'shrink');
+  assert.equal(response.rescuePlan.steps[0], 'เปิด Dashboard เช็กสถานะล่าสุดของ payment API แล้วเติมอัปเดต 3 บรรทัดให้ CS');
+  assert.doesNotMatch(response.rescuePlan.steps[0] ?? '', /CPU spike|10:20/u);
 });
 
 test('buildManualRescueResponse (dependency): no banned phrases, includes follow-up message', () => {

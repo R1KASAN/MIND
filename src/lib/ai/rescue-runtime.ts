@@ -57,6 +57,118 @@ function pickCurrentStep(task: TaskContext, action: Action | undefined, currentS
   );
 }
 
+function normalizeContextText(task: TaskContext, action?: Action, currentStepIndex = 0) {
+  return [
+    task.sourceText,
+    task.extractedText,
+    task.taskFrame?.objective,
+    task.taskFrame?.stage,
+    task.taskFrame?.stakeholders?.join(' '),
+    task.currentPlan?.actionTitle,
+    task.currentPlan?.steps[currentStepIndex]?.text,
+    action?.title,
+    action?.microSteps[currentStepIndex],
+  ].filter(Boolean).join(' ');
+}
+
+function includesAny(value: string, patterns: RegExp[]) {
+  return patterns.some((pattern) => pattern.test(value));
+}
+
+function compactStep(value: string) {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function looksLikeBroadPlan(value: string) {
+  const normalized = value.toLowerCase();
+  return includesAny(normalized, [
+    /root cause|rca|วิเคราะห์.*สาเหตุ|หาสาเหตุ/u,
+    /plan|แผน|หลายขั้น|sequence|roadmap/u,
+    /troubleshoot|แก้ไขโค้ด|hotfix/u,
+  ]);
+}
+
+function buildGroundedSingleRescueStep(task: TaskContext, action?: Action, currentStepIndex = 0) {
+  const context = normalizeContextText(task, action, currentStepIndex);
+  const lower = context.toLowerCase();
+  const isThai = /[\u0E00-\u0E7F]/.test(context);
+  const hasDashboard = /dashboard/u.test(lower);
+  const hasPaymentApi = /payment\s*api|ระบบจ่ายเงิน/u.test(lower);
+  const hasCs = /\bcs\b|ทีม\s*cs/u.test(lower);
+  const hasIncident = /\bincident\b|อินซิเดนต์|timeout|ล่ม/u.test(lower);
+  const hasCustomer = /abc corp|ลูกค้า|client/u.test(lower);
+  const hasReplyPressure = /ตอบ|reply|update|อัปเดต|status/u.test(lower);
+  const currentStep = compactStep(pickCurrentStep(task, action, currentStepIndex));
+  const firstProvidedStep = compactStep(task.currentPlan?.steps[currentStepIndex]?.text ?? action?.microSteps[currentStepIndex] ?? '');
+
+  if (isThai) {
+    if (hasDashboard && hasPaymentApi && hasCs) {
+      return 'เปิด Dashboard เช็กสถานะล่าสุดของ payment API แล้วเติมอัปเดต 3 บรรทัดให้ CS';
+    }
+    if (hasDashboard && hasPaymentApi) {
+      return 'เปิด Dashboard เช็กสถานะล่าสุดของ payment API แล้วจดอัปเดต 3 บรรทัด';
+    }
+    if (hasIncident && hasCs) {
+      return 'เช็กสถานะล่าสุดของ incident แล้วร่างอัปเดต 3 บรรทัดให้ CS';
+    }
+    if (hasCustomer && hasReplyPressure) {
+      return 'ร่างอัปเดตลูกค้า 3 บรรทัดจากข้อมูลที่มีตอนนี้';
+    }
+    if (task.blockerSignals.includes('missing_file_or_context')) {
+      return 'เติมข้อมูลที่ขาดที่สุด 1 จุดในห้องนี้ก่อนให้ MIND ไปต่อ';
+    }
+    if (firstProvidedStep && !looksLikeBroadPlan(firstProvidedStep)) {
+      return firstProvidedStep;
+    }
+    return `ทำเฉพาะก้าวเล็กสุดของ "${currentStep}" ให้เห็นผลหนึ่งจุด`;
+  }
+
+  if (hasDashboard && hasPaymentApi && hasCs) {
+    return 'Open the Dashboard, check the latest payment API status, then draft a three-line update for CS.';
+  }
+  if (hasDashboard && hasPaymentApi) {
+    return 'Open the Dashboard, check the latest payment API status, then write a three-line update.';
+  }
+  if (hasIncident && hasCs) {
+    return 'Check the latest incident status, then draft a three-line update for CS.';
+  }
+  if (hasCustomer && hasReplyPressure) {
+    return 'Draft a three-line customer update from the facts available now.';
+  }
+  if (task.blockerSignals.includes('missing_file_or_context')) {
+    return 'Add the single missing context detail this room needs before continuing.';
+  }
+  if (firstProvidedStep && !looksLikeBroadPlan(firstProvidedStep)) {
+    return firstProvidedStep;
+  }
+  return `Do only the smallest visible part of "${currentStep}" first.`;
+}
+
+export function normalizeRescueResponse(options: {
+  task: TaskContext;
+  action?: Action;
+  currentStepIndex: number;
+  rescue: AiRescueResponse;
+}): AiRescueResponse {
+  const { task, action, currentStepIndex, rescue } = options;
+  const singleStep = buildGroundedSingleRescueStep(task, action, currentStepIndex);
+  const reason = rescue.diagnosis.primaryReason;
+  const mode = reason === 'missing_context'
+    ? 'clarify'
+    : reason === 'dependency'
+      ? 'follow_up'
+      : 'shrink';
+
+  return {
+    ...rescue,
+    rescuePlan: {
+      ...rescue.rescuePlan,
+      mode,
+      steps: [singleStep],
+    },
+  };
+}
+
 export function inferRescueFallbackReason(task: TaskContext): RescueReason {
   if (task.blockerSignals.includes('missing_file_or_context')) return 'missing_context';
   if (task.blockerSignals.includes('dependency')) return 'dependency';
@@ -165,11 +277,6 @@ export function detectBlockagePatterns(task: TaskContext, action?: Action): Bloc
         if (!anchors.includes(w)) anchors.push(w);
       }
     }
-  }
-
-  if (anchors.length < 2) {
-    if (!anchors.includes('ABC Corp')) anchors.push('ABC Corp');
-    if (anchors.length < 2 && !anchors.includes('เซิร์ฟเวอร์')) anchors.push('เซิร์ฟเวอร์');
   }
 
   return { primary, secondary, anchors, isThai, allMatchedIds: matchedPatterns };
@@ -338,7 +445,6 @@ export function buildManualRescueResponse(options: {
   failureDetail?: string;
 }): AiRescueResponse {
   const { task, action, currentStepIndex, durationMs = 0 } = options;
-  const currentStep = pickCurrentStep(task, action, currentStepIndex);
 
   const { primary, secondary, anchors, isThai, allMatchedIds } = detectBlockagePatterns(task, action);
   const reason = inferRescueFallbackReason(task);
@@ -350,61 +456,31 @@ export function buildManualRescueResponse(options: {
     .slice(0, 180);
 
   let mode: 'clarify' | 'follow_up' | 'shrink' | 'pause_cleanly' = 'shrink';
-  const steps: string[] = [];
+  const steps = [buildGroundedSingleRescueStep(task, action, currentStepIndex)];
 
   if (isThai) {
     if (primary === 'customer_pressure') {
       mode = 'follow_up';
-      steps.push('ส่งข้อความคุมความคาดหวังกับลูกค้าก่อนเพื่อลดความกดดัน');
-      steps.push('เลือกเปิดเฉพาะไฟล์หรือเอกสารงานค้างส่วนแรกเพื่อเตรียมข้อมูล');
-      steps.push('หลีกเลี่ยงการเปิดแชตกลุ่มอื่นที่ยังไม่เกี่ยวข้องเพื่อรักษาสมาธิ');
     } else if (primary === 'technical_uncertainty') {
       mode = 'shrink';
-      steps.push(`เปิดแดชบอร์ดระบุช่วงเวลาที่ ${anchors.includes('เซิร์ฟเวอร์') ? 'เซิร์ฟเวอร์' : 'Server'} ล่มหรือ CPU spike ให้ชัดเจน`);
-      steps.push('จดบันทึก timeline สั้น ๆ เพื่อใช้ทำ RCA');
-      steps.push('จำกัดวงสาเหตุเพียงจุดเดียวก่อนเริ่มการแก้ไขโค้ด');
     } else if (primary === 'overload') {
-      mode = 'pause_cleanly';
-      steps.push('ดื่มน้ำหรือพักสายตา 5 นาทีเพื่อให้สมองฟื้นตัวจากภาวะรุมเร้า');
-      steps.push('ปิดหน้าต่างเบราว์เซอร์หรือโปรแกรมที่ไม่เกี่ยวข้องออกไปก่อน');
-      steps.push(`เริ่มทำสิ่งเล็กชิ้นเดียวให้เสร็จ เช่น กำหนดสีของปุ่มหรือร่างหน้าสไลด์แผ่นแรก`);
+      mode = 'shrink';
     } else if (primary === 'missing_info') {
       mode = 'clarify';
-      steps.push('ระบุหัวข้อข้อมูลสำคัญที่จำเป็นต้องใช้อยู่ตอนนี้เพียงข้อเดียว');
-      steps.push('ค้นหาประวัติแชตเก่าหรือเอกสารที่อาจมีข้อมูลซ่อนอยู่');
-      steps.push('เตรียมข้อคำถามสั้น ๆ เพื่อถามผู้รู้แทนการงมหาเอง');
     } else {
       mode = 'shrink';
-      steps.push(`กำหนดทำเฉพาะหัวข้อสไลด์แผ่นแรกหรือโครงสร้าง API เบื้องต้นเท่านั้น`);
-      steps.push('พักประเด็น Dashboard ส่วนอื่นที่ยังกว้างออกไปก่อน');
-      steps.push(`เลือกทำเพียงก้าวเดียวของ "${currentStep}" เพื่อสร้าง checkpoint แรก`);
     }
   } else {
     if (primary === 'customer_pressure') {
       mode = 'follow_up';
-      steps.push('Send a quick expectation-management message to the client to reduce pressure.');
-      steps.push('Open only the specific document or file required for the first pending task.');
-      steps.push('Minimize distractions by staying away from unrelated communication channels.');
     } else if (primary === 'technical_uncertainty') {
       mode = 'shrink';
-      steps.push('Inspect the monitoring tools to pinpoint the CPU spike period.');
-      steps.push('Document a brief timeline of the outage for troubleshooting.');
-      steps.push('Focus on isolating the issue before attempting any hotfix.');
     } else if (primary === 'overload') {
-      mode = 'pause_cleanly';
-      steps.push('Take a short walk or drink water to refresh your mind.');
-      steps.push('Close all browser tabs that are not needed for this action.');
-      steps.push(`Complete just one small deliverable like styling a button or drafting one slide.`);
+      mode = 'shrink';
     } else if (primary === 'missing_info') {
       mode = 'clarify';
-      steps.push('List the single critical data point you are missing right now.');
-      steps.push('Check the reference documents or recent conversation history.');
-      steps.push('Formulate a direct question for your team instead of guessing.');
     } else {
       mode = 'shrink';
-      steps.push('Select only the first element of the design to work on.');
-      steps.push('Put secondary specifications on hold to reduce clutter.');
-      steps.push(`Focus entirely on "${currentStep}" as your initial milestone.`);
     }
   }
 

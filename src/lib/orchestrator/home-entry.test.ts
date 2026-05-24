@@ -307,6 +307,60 @@ test('buildRoomSidebarItems marks waiting-client current action as recommended',
   assert.equal(recommended?.nextAction, 'ส่ง follow-up สั้น ๆ');
 });
 
+test('completed rooms do not rank as active reentry candidates', () => {
+  const completedTask = createTaskContext({
+    roomId: 'done-room',
+    sourceText: 'ABC Corp incident update was already sent',
+    createdAt: 100,
+    lifecycleState: 'done',
+    currentActionId: null,
+  } as any);
+  completedTask.currentPlan = {
+    actionTitle: 'ส่งอัปเดตให้ CS',
+    steps: [{ id: 'step-1', text: 'ส่งอัปเดตให้ CS แล้ว' }],
+  };
+
+  const candidates = rankResumeRooms([
+    {
+      room: room('done-room', {
+        contextSummary: 'ABC Corp incident update was already sent',
+        lastKnownGoodBrief: 'ABC Corp incident update was already sent',
+        lastKnownGoodNextMoves: ['ส่งอัปเดตให้ CS'],
+        session: session({ roomId: 'done-room', task: completedTask }),
+      }),
+      replay: replay({
+        actionTitle: 'ส่งอัปเดตให้ CS',
+        summary: 'ABC Corp incident update was already sent',
+      }),
+    },
+  ]);
+
+  assert.equal(candidates.length, 0);
+});
+
+test('active room reentry trust copy labels context source as latest input and existing room context', () => {
+  const activeTask = createTaskContext({
+    roomId: 'active',
+    sourceText: 'latest pasted update for ABC Corp',
+    createdAt: 100,
+    lifecycleState: 'dumped',
+  } as any);
+
+  const state = resolveActiveRoomReentryState({
+    room: room('active', {
+      contextSummary: 'existing room context for ABC Corp',
+      session: session({ roomId: 'active', task: activeTask }),
+    }),
+    replay: replay({
+      actionTitle: 'ส่งอัปเดตสถานะให้ CS',
+      summary: 'existing room context for ABC Corp',
+      latestReentry: true,
+    }),
+  });
+
+  assert.ok(state?.trustItems.some((item) => item.label.includes('ใช้ latest input + existing room context')));
+});
+
 test('buildRoomSidebarItems marks drift reentry as recommended when no waiting-client room exists', () => {
   const generic = room('generic', { contextSummary: 'มีก้าวถัดไป' });
   const drift = room('drift', { contextSummary: 'AI เตรียม context ใหม่' });

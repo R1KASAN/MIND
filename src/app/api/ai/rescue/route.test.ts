@@ -60,7 +60,8 @@ test('/api/ai/rescue returns deterministic clarify plan for missing file/context
 
     assert.equal(data.diagnosis.primaryReason, 'missing_context');
     assert.equal(data.rescuePlan.mode, 'clarify');
-    assert.equal(data.rescuePlan.steps.length, 3);
+    assert.equal(data.rescuePlan.steps.length, 1);
+    assert.match(data.rescuePlan.steps[0] ?? '', /เติมข้อมูลที่ขาดที่สุด 1 จุด|ร่างอัปเดตลูกค้า/u);
     assert.equal(data.meta.model, 'deterministic_missing_context');
     assert.equal(data.meta.passType, 'fallback_pass');
     assert.equal(data.meta.repairUsed, false);
@@ -149,7 +150,8 @@ test('/api/ai/rescue returns manual rescue instead of 503 when Ollama times out'
 
     assert.equal(data.diagnosis.primaryReason, 'dependency');
     assert.equal(data.rescuePlan.mode, 'follow_up');
-    assert.equal(data.rescuePlan.steps.length, 3);
+    assert.equal(data.rescuePlan.steps.length, 1);
+    assert.match(data.rescuePlan.steps[0] ?? '', /follow up ลูกค้า|ร่างอัปเดตลูกค้า|สรุปข้อมูลที่ยังขาด/u);
     assert.match(data.meta.model, /^manual_rescue/);
     assert.equal(data.meta.passType, 'fallback_pass');
     assert.equal(data.meta.repairUsed, false);

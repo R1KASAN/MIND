@@ -968,8 +968,8 @@ function normalizeRescueCandidate(value: unknown, options?: {
     options?.fallbackCurrentStep,
   );
   const normalizedSteps = rescueSteps.map((step, index) => step ?? fallbackSteps[index] ?? fallbackSteps[fallbackSteps.length - 1]);
-  while (normalizedSteps.length < 2) {
-    normalizedSteps.push(fallbackSteps[normalizedSteps.length] ?? fallbackSteps[fallbackSteps.length - 1]);
+  if (normalizedSteps.length === 0) {
+    normalizedSteps.push(fallbackSteps[0] ?? options?.fallbackCurrentStep ?? options?.fallbackActionTitle ?? 'เริ่มจากก้าวเล็กที่สุดก่อน');
   }
 
   return {

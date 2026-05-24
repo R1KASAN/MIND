@@ -1,6 +1,11 @@
 import type { Action, TaskContext } from '@/lib/store/idb';
 import { parseAiRescueResponse } from '@/lib/ai/operation-contract';
-import { buildManualRescueResponse, inferRescueFallbackReason, resolveRescueRouteBudget } from '@/lib/ai/rescue-runtime';
+import {
+  buildManualRescueResponse,
+  inferRescueFallbackReason,
+  normalizeRescueResponse,
+  resolveRescueRouteBudget,
+} from '@/lib/ai/rescue-runtime';
 import { getAiClient } from '@/lib/ai/client';
 import { handleAiRouteError } from '@/lib/ai/operation-route-helpers';
 import { buildOperationTaskContext } from '@/lib/ai/operation-prompts';
@@ -16,16 +21,7 @@ const RESCUE_REPAIR_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_RESCUE_REPAIR_MS 
 const RESCUE_FALLBACK_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_RESCUE_FALLBACK_MS || 6000) || 6000;
 const RESCUE_OVERALL_BUDGET_MS = Number(process.env.AI_OVERALL_TIMEOUT_RESCUE_MS || 18000) || 18000;
 
-function buildDeterministicMissingContextRescue(task: TaskContext, action: Action | undefined, currentStepIndex: number) {
-  const currentStep =
-    action?.microSteps[currentStepIndex] ??
-    action?.microSteps[0] ??
-    task.currentPlan?.steps[currentStepIndex]?.text ??
-    task.currentPlan?.steps[0]?.text ??
-    action?.title ??
-    task.currentPlan?.actionTitle ??
-    'ก้าวนี้';
-
+function buildDeterministicMissingContextRescue(task: TaskContext) {
   return {
     diagnosis: {
       primaryReason: 'missing_context' as const,
@@ -35,8 +31,6 @@ function buildDeterministicMissingContextRescue(task: TaskContext, action: Actio
       mode: 'clarify' as const,
       steps: [
         'ระบุให้ชัดว่าตอนนี้ยังขาดไฟล์หรือข้อมูลชิ้นไหน',
-        `เปิดหรือแนบสิ่งที่ต้องใช้กับ "${currentStep}" ก่อน`,
-        'ถ้ายังไม่มีไฟล์ ให้พิมพ์สรุปสิ่งที่รู้ตอนนี้ 2-3 บรรทัดเพื่อให้ MIND ไปต่อได้',
       ],
     },
     suggestedMessage: 'ตอนนี้ยังขาดไฟล์หรือบริบทบางส่วน ช่วยแนบสิ่งที่เกี่ยวข้องหรือพิมพ์สรุปสั้น ๆ เพิ่มอีกนิด แล้ว MIND จะช่วยต่อจากตรงนั้นได้ทันที',
@@ -106,12 +100,17 @@ export async function POST(req: Request) {
     task.blockerSignals.every((signal) => signal === 'missing_file_or_context');
 
   if (missingContextOnly) {
-    return Response.json(buildDeterministicMissingContextRescue(task, action, currentStepIndex));
+    return Response.json(normalizeRescueResponse({
+      task,
+      action,
+      currentStepIndex,
+      rescue: buildDeterministicMissingContextRescue(task),
+    }));
   }
 
   try {
     const aiResponse = await getAiClient().runRescue(task, { action, currentStepIndex, retryContext });
-    return Response.json(aiResponse);
+    return Response.json(normalizeRescueResponse({ task, action, currentStepIndex, rescue: aiResponse }));
   } catch (error) {
     if (error && typeof error === 'object' && 'name' in error && error.name === 'AiRouteError') {
       const durationMs = (error as any).telemetry?.durationMs ?? Date.now() - routeStartedAt;
@@ -130,15 +129,17 @@ export async function POST(req: Request) {
         detail: detail ? `manual rescue returned after AI failure: ${detail}` : 'manual rescue returned after AI failure',
       });
 
+      const manualRescue = buildManualRescueResponse({
+        task,
+        action,
+        currentStepIndex,
+        durationMs,
+        failedModel: model,
+        failureDetail: detail,
+      });
+
       return Response.json(
-        buildManualRescueResponse({
-          task,
-          action,
-          currentStepIndex,
-          durationMs,
-          failedModel: model,
-          failureDetail: detail,
-        }),
+        normalizeRescueResponse({ task, action, currentStepIndex, rescue: manualRescue }),
         { status: 200, headers: { 'x-mind-ai-fallback': 'manual_rescue' } },
       );
     }

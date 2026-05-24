@@ -819,6 +819,84 @@ export function createTaskController(bindings: TaskControllerBindings) {
       state: 'IN_PROGRESS' as const,
       workflowType: taskForScaffold.workflowType,
     };
+    const rescueStep = fromRescue ? bindings.currentRescueState?.rescuePlan.steps[0]?.trim() : undefined;
+
+    if (fromRescue && rescueStep) {
+      bindings.setScaffoldRefineFeedback(null);
+      bindings.setIsScaffoldRefining(true);
+      try {
+        const appliedAction: Action = {
+          ...currentAction,
+          title: currentPayload.recommended_action.title,
+          rationale: currentPayload.recommended_action.rationale,
+          microSteps: [rescueStep],
+          microStepsSource: 'fallback',
+          state: currentAction.state ?? 'IN_PROGRESS',
+        };
+        const nextPayload: AiSynthesisResponse = {
+          ...currentPayload,
+          recommended_action: {
+            ...currentPayload.recommended_action,
+            micro_steps: [rescueStep],
+            micro_steps_source: 'fallback',
+          },
+        };
+        const existingStep = currentTask.currentPlan?.steps[currentTask.currentStepIndex] ?? currentTask.currentPlan?.steps[0];
+        const nextTask: TaskContext = {
+          ...taskForScaffold,
+          lifecycleState: 'in_scaffold',
+          assistantMode: 'scaffold_refinement',
+          currentActionId: appliedAction.id,
+          currentStepIndex: 0,
+          lastSynthesis: nextPayload,
+          lastFailureReason: undefined,
+          currentPlan: {
+            actionTitle: currentPayload.recommended_action.title,
+            successSignal: currentTask.currentPlan?.successSignal,
+            steps: [
+              {
+                ...existingStep,
+                id: existingStep?.id ?? 'rescue-step-1',
+                text: rescueStep,
+                provenance: {
+                  ...(existingStep?.provenance ?? {}),
+                  generatedAt: Date.now(),
+                  generatedBy: 'rescue',
+                  sourceIds: existingStep?.provenance?.sourceIds ?? [],
+                },
+              },
+            ],
+          },
+        };
+
+        bindings.setCurrentPayload(nextPayload);
+        bindings.setCurrentActionState(appliedAction);
+        bindings.setCurrentRescueState(null);
+        if (currentAction.id) {
+          await persistActionUpdate(currentAction.id, {
+            title: appliedAction.title,
+            microSteps: appliedAction.microSteps,
+            microStepsSource: appliedAction.microStepsSource,
+          });
+        }
+        await updateStatus('SCAFFOLD', {
+          currentActionId: appliedAction.id,
+          currentPayload: nextPayload,
+          lastFailureReason: undefined,
+        }, nextTask);
+        const lastRescueReason = currentTask.rescueHistory[currentTask.rescueHistory.length - 1]?.reason ??
+          bindings.currentRescueState?.diagnosis.primaryReason ??
+          'unknown';
+        trackEvent('rescue_resolved', buildAnalyticsBase(nextTask, {
+          rescue_reason: lastRescueReason,
+          outcome_label: 'apply_rescue_step',
+        }));
+      } finally {
+        bindings.setIsScaffoldRefining(false);
+      }
+      return;
+    }
+
     const previousVisibleSteps = getVisibleScaffoldSteps(
       getScaffoldStepTexts(currentTask, bindings.currentPayload),
       taskForScaffold.currentStepIndex,
