@@ -752,8 +752,9 @@ test('FreePuterClient raw diagnostics classify empty Puter output before fallbac
   assert.match(rawLog, /"category":"empty"/);
 });
 
-test('FreePuterClient timeout fallback log includes elapsed and timeout metadata', async () => {
+test('FreePuterClient.runIntake fast-manuals Puter timeout without LocalGemma', async () => {
   const warnings: string[] = [];
+  let localIntakeCalls = 0;
   process.env.PUTER_API_KEY = 'puter-token';
   process.env.MIND_PUTER_TIMEOUT_MS = '5';
   process.env.MIND_PUTER_MODEL = 'gpt-5-nano';
@@ -762,24 +763,37 @@ test('FreePuterClient timeout fallback log includes elapsed and timeout metadata
   console.warn = ((...args: unknown[]) => {
     warnings.push(stringifyLogArgs(args));
   }) as typeof console.warn;
-  LocalGemmaClient.prototype.runIntake = (async () => ({
-    ...intakeFixture(),
-    meta: {
-      ...intakeFixture().meta,
-      model: 'local_gemma_fixture',
-      passType: 'fallback_pass',
-    },
-  })) as typeof LocalGemmaClient.prototype.runIntake;
+  LocalGemmaClient.prototype.runIntake = (async () => {
+    localIntakeCalls += 1;
+    return {
+      ...intakeFixture(),
+      meta: {
+        ...intakeFixture().meta,
+        model: 'local_gemma_fixture',
+        passType: 'fallback_pass',
+      },
+    };
+  }) as typeof LocalGemmaClient.prototype.runIntake;
 
-  const intake = await new FreePuterClient().runIntake(buildTask());
+  await assert.rejects(
+    () => new FreePuterClient().runIntake(buildTask()),
+    (error: unknown) => {
+      assert.equal(error instanceof Error ? error.name : '', 'AiRouteError');
+      assert.equal((error as any).type, 'puter_timeout_fast_manual');
+      assert.equal((error as any).reason, 'request_timeout');
+      assert.equal((error as any).model, 'gpt-5-nano');
+      assert.equal((error as any).telemetry?.passType, 'timeout');
+      return true;
+    },
+  );
 
   const joined = warnings.join('\n');
-  assert.equal(intake.meta.model, 'local_gemma_fixture');
-  assert.match(joined, /Puter failed, falling back/);
+  assert.equal(localIntakeCalls, 0);
+  assert.match(joined, /Puter intake timeout, using manual response/);
   assert.match(joined, /"operation":"intake"/);
   assert.match(joined, /"backend":"puter"/);
-  assert.match(joined, /"nextBackend":"local_gemma"/);
-  assert.match(joined, /"reason":"puter_timeout"/);
+  assert.match(joined, /"nextBackend":"manual"/);
+  assert.match(joined, /"reason":"puter_timeout_fast_manual"/);
   assert.match(joined, /"model":"gpt-5-nano"/);
   assert.match(joined, /"elapsed_ms":\d+/);
   assert.match(joined, /"timeout_ms":5/);

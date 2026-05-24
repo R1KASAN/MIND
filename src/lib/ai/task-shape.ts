@@ -1,3 +1,22 @@
+import {
+  buildLogoRevisionActionFallback,
+  buildOverloadedWorkActionFallback,
+  buildPhysicalRoomResetActionFallback,
+  buildPresentationPrepActionFallback,
+  buildProductPostActionFallback,
+  buildStudentReportActionFallback,
+  isCustomerLogoRevisionTaskShape,
+  isOverloadedWorkTaskShape,
+  isInternalPresentationPrepText,
+  isInternalPresentationTaskShape,
+  isPhysicalRoomResetText,
+  isPhysicalRoomTaskShape,
+  isProductPostText,
+  isProductPostTaskShape,
+  isStudentReportText,
+  isStudentReportTaskShape,
+} from '@/lib/source-grounding';
+
 export const TASK_SHAPE_DELIVERABLE_TYPES = [
   'reply',
   'proposal',
@@ -244,6 +263,22 @@ function hasAdminTaskSignal(normalized: string) {
   ]);
 }
 
+function hasInternalPresentationSignal(normalized: string) {
+  return isInternalPresentationPrepText(normalized);
+}
+
+function hasPhysicalRoomResetSignal(normalized: string) {
+  return isPhysicalRoomResetText(normalized);
+}
+
+function hasStudentReportSignal(normalized: string) {
+  return isStudentReportText(normalized);
+}
+
+function hasProductPostSignal(normalized: string) {
+  return isProductPostText(normalized);
+}
+
 function isPersonalFrictionTaskShape(taskShape: TaskShape) {
   return taskShape.behaviorIntent === 'personal_friction' ||
     (taskShape.deliverableType === 'unknown' && taskShape.workContext.includes('แรงเสียดทานส่วนตัว'));
@@ -290,6 +325,10 @@ function detectDeliverableTypeFromText(text: string): TaskShapeDeliverableType |
   const hasPersonalFriction = hasPersonalFrictionSignal(normalized);
 
   // Priority 1: explicit reply / demo request
+  if (hasInternalPresentationSignal(normalized)) return 'execution';
+  if (hasPhysicalRoomResetSignal(normalized)) return 'execution';
+  if (hasStudentReportSignal(normalized)) return 'execution';
+  if (hasProductPostSignal(normalized)) return 'execution';
   if (hasExplicitReplyIntent(text) || hasDemoRequestIntent(text)) return 'reply';
 
   // Priority 2: proposal-like (combined signals win over individual)
@@ -325,6 +364,16 @@ function detectImmediateNeedFromText(
   deliverableType: TaskShapeDeliverableType,
 ): TaskShapeImmediateNeed | undefined {
   const normalized = normalizeTextForMatch(text);
+
+  if (hasInternalPresentationSignal(normalized)) {
+    return 'resume_execution';
+  }
+  if (hasPhysicalRoomResetSignal(normalized)) {
+    return 'resume_execution';
+  }
+  if (hasStudentReportSignal(normalized) || hasProductPostSignal(normalized)) {
+    return 'resume_execution';
+  }
 
   if (hasExplicitReplyIntent(text) || hasDemoRequestIntent(text)) {
     return 'send_reply_now';
@@ -378,12 +427,14 @@ function detectBehaviorIntentFromText(
   deliverableType: TaskShapeDeliverableType,
 ): TaskBehaviorIntent {
   const normalized = normalizeTextForMatch(text);
+  if (hasInternalPresentationSignal(normalized)) return 'admin_task';
+  if (hasPhysicalRoomResetSignal(normalized)) return 'admin_task';
+  if (hasStudentReportSignal(normalized) || hasProductPostSignal(normalized)) return 'admin_task';
   if (hasPersonalFrictionSignal(normalized)) return 'personal_friction';
   if (
-    deliverableType !== 'unknown' ||
     hasExplicitReplyIntent(text) ||
     hasDemoRequestIntent(text) ||
-    includesAny(normalized, ['ลูกค้า', 'client', 'ผู้ว่าจ้าง'])
+    includesAny(normalized, ['ลูกค้า', 'client', 'customer', 'ผู้ว่าจ้าง'])
   ) return 'client_delivery';
   if (hasAdminTaskSignal(normalized)) return 'admin_task';
   return 'admin_task';
@@ -392,6 +443,16 @@ function detectBehaviorIntentFromText(
 function deriveMissingInputsFromText(text: string, deliverableType: TaskShapeDeliverableType) {
   const normalized = normalizeTextForMatch(text);
   const missingInputs: string[] = [];
+
+  if (hasPhysicalRoomResetSignal(normalized)) {
+    missingInputs.push('พื้นที่กายภาพจุดแรกที่ต้องเคลียร์ในห้อง');
+  }
+  if (hasStudentReportSignal(normalized)) {
+    missingInputs.push('reference link แรกที่ใช้เริ่มบทนำรายงาน');
+  }
+  if (hasProductPostSignal(normalized)) {
+    missingInputs.push('caption สินค้าที่เริ่มจากจุดขายพร้อมใช้');
+  }
 
   if (includesAny(normalized, ['requirement', 'requirements', 'ยังไม่ได้สรุป', 'brief ยังไม่ชัด', 'ต้องเคลียร์ scope'])) {
     missingInputs.push('requirement ที่ต้องการจริง');
@@ -423,6 +484,30 @@ function buildWorkContextFromText(
   missingInputs: string[],
 ) {
   const normalized = normalizeTextForMatch(text);
+
+  if (hasInternalPresentationSignal(normalized)) {
+    return 'ต้องเตรียมพรีเซนต์งานในทีมจาก notes หลายแหล่ง ทั้งแชท ไฟล์สไลด์ และสมุด โดยต้องพูดผลที่ทำไปแล้ว ปัญหาที่เจอ และแผนต่อไปใน 10 นาที';
+  }
+
+  if (hasPhysicalRoomResetSignal(normalized)) {
+    return 'ห้องรก มีเสื้อผ้าบนเก้าอี้และของบนโต๊ะ จึงควรเริ่มจากเคลียร์พื้นที่กายภาพหนึ่งจุดใน 10 นาที';
+  }
+
+  if (hasStudentReportSignal(normalized)) {
+    const hasRenewable = /renewable energy storage/i.test(text);
+    const topicLabel = hasRenewable ? 'วิชาวิศวะหัวข้อ renewable energy storage' : 'วิชาหนึ่ง';
+    const refLinkLabel = /reference link/i.test(text) ? 'reference links ในแชท' : 'ลิงก์อ้างอิงและหัวข้อที่มี';
+    const chatLabel = /แชท|แชต/.test(text) ? 'ในแชท' : 'ที่มี';
+    return `ต้องเริ่มรายงาน${topicLabel}จาก${refLinkLabel} โดยเริ่มบทนำให้ได้ใน 10 นาที`;
+  }
+
+  if (hasProductPostSignal(normalized)) {
+    return 'ต้องโพสต์สินค้าใหม่ในร้านออนไลน์คืนนี้ เป็นกระเป๋าผ้า canvas มีรูปแล้ว จุดขายคือเบา ซักง่าย และมี 3 สี';
+  }
+
+  if (/ลูกค้า|client|customer|ผู้ว่าจ้าง/u.test(normalized) && /โลโก้|logo|สีหลัก|แบรนด์|brand|minimal|แก้งาน/u.test(normalized)) {
+    return 'ลูกค้าขอแก้งานโลโก้ สีหลักยังไม่ตรงแบรนด์ และอยากได้ตัวเลือกที่ minimal กว่าเดิม';
+  }
 
   if (deliverableType === 'proposal') {
     if (immediateNeed === 'define_scope') {
@@ -530,6 +615,38 @@ export function buildTaskFrameFallback(
   workflowType: TaskShapeWorkflowType,
   taskShape: TaskShape,
 ) {
+  if (isInternalPresentationTaskShape(taskShape)) {
+    return {
+      objective: 'เตรียมพรีเซนต์งานในทีมจาก notes หลายแหล่ง',
+      stage: 'กำลังแปลง notes จากแชท ไฟล์สไลด์ และสมุดให้เป็นหัวข้อพูด 3 ช่อง',
+    };
+  }
+
+  if (isPhysicalRoomTaskShape(taskShape)) {
+    return {
+      objective: 'เคลียร์พื้นที่ใช้งานหนึ่งจุดในห้องรก',
+      stage: 'กำลังลดงานเก็บห้องให้เหลือก้าวกายภาพที่ทำได้ใน 10 นาที',
+    };
+  }
+
+  if (isStudentReportTaskShape(taskShape)) {
+    const workContext = taskShape.workContext ?? '';
+    const hasRenewable = /renewable energy storage/i.test(workContext);
+    const topicLabel = hasRenewable ? ' renewable energy storage' : '';
+    const refLinkLabel = /reference link/i.test(workContext) ? 'reference link' : 'ลิงก์อ้างอิง';
+    return {
+      objective: `เริ่มบทนำรายงาน${topicLabel} จาก ${refLinkLabel} แรก`,
+      stage: 'กำลังลดรายงานให้เหลือก้าวเริ่มเขียนบทนำใน 10 นาที',
+    };
+  }
+
+  if (isProductPostTaskShape(taskShape)) {
+    return {
+      objective: 'ร่าง caption สินค้าจากจุดขายที่มีอยู่',
+      stage: 'กำลังเปลี่ยนจุดขายกระเป๋าผ้า canvas ให้เป็น caption ที่โพสต์ได้คืนนี้',
+    };
+  }
+
   if (workflowType === 'client_response') {
     const isDemoRequest = taskShape.workContext.includes('นัด demo') || taskShape.workContext.includes('pilot');
     if (isDemoRequest) {
@@ -591,6 +708,72 @@ export function buildIntakeFallbackCandidates(
   workflowType: TaskShapeWorkflowType,
   taskShape: TaskShape,
 ) {
+  if (isInternalPresentationTaskShape(taskShape)) {
+    return [
+      {
+        title: 'เปิด notes ทั้ง 3 แหล่ง แล้วจดหัวข้อพรีเซนต์ 3 ช่อง',
+        rationale: 'ช่วยให้เริ่มจากแชท ไฟล์สไลด์ และสมุดโดยไม่ต้องจัดทุกอย่างให้เสร็จก่อน',
+        kind: 'resume_first' as const,
+      },
+      {
+        title: 'เปิดไฟล์สไลด์แล้วเติม 3 หัวข้อหลักก่อน',
+        rationale: 'เหมาะเมื่อกลัวเปิดสไลด์แล้วจ้องเปล่า และต้องเริ่มให้เห็นผลใน 10 นาที',
+        kind: 'dependency_first' as const,
+      },
+    ];
+  }
+
+  if (isPhysicalRoomTaskShape(taskShape)) {
+    return [
+      {
+        title: 'เก็บเสื้อผ้า 5 ชิ้นออกจากเก้าอี้',
+        rationale: 'ช่วยให้ห้องรกขยับจากพื้นที่จริงหนึ่งจุด โดยเห็นผลใน 10 นาที',
+        kind: 'resume_first' as const,
+      },
+      {
+        title: 'เคลียร์เก้าอี้ให้กลับมานั่งได้',
+        rationale: 'เหมาะเมื่ออยากเริ่มจากพื้นที่ที่ใช้ได้ทันทีแทนการเก็บทั้งห้อง',
+        kind: 'dependency_first' as const,
+      },
+    ];
+  }
+
+  if (isStudentReportTaskShape(taskShape)) {
+    const workContext = taskShape.workContext ?? '';
+    const hasRenewable = /renewable energy storage/i.test(workContext);
+    const topicLabel = hasRenewable ? ' ของ renewable energy storage' : '';
+    const hasRefLinkEn = /reference link/i.test(workContext);
+    const refLinkLabel = hasRefLinkEn ? 'reference link' : 'ลิงก์อ้างอิง';
+    const refLinkLabelPlural = hasRefLinkEn ? 'reference links' : 'ลิงก์อ้างอิง';
+    return [
+      {
+        title: `เปิด ${refLinkLabel} 1 อัน แล้วจด 3 bullet สำหรับบทนำรายงาน`,
+        rationale: `ช่วยให้เริ่มรายงานจากแหล่งเดียวก่อน แทนการจมกับ ${refLinkLabelPlural} หลายอัน`,
+        kind: 'resume_first' as const,
+      },
+      {
+        title: `เขียนประโยคแรกของบทนำจากหัวข้อรายงาน${topicLabel}`,
+        rationale: 'เหมาะเมื่ออยากเห็นข้อความจริงใน 10 นาทีแรก',
+        kind: 'dependency_first' as const,
+      },
+    ];
+  }
+
+  if (isProductPostTaskShape(taskShape)) {
+    return [
+      {
+        title: 'ร่าง caption สินค้า 3 บรรทัดจากจุดขาย เบา ซักง่าย และ 3 สี',
+        rationale: 'ช่วยให้โพสต์สินค้าใหม่ขยับได้ทันทีจากข้อมูลที่มีอยู่แล้ว',
+        kind: 'resume_first' as const,
+      },
+      {
+        title: 'จดจุดขายกระเป๋าผ้า canvas เป็น 3 bullet',
+        rationale: 'เหมาะเมื่ออยากล็อกวัตถุดิบก่อนเขียน caption',
+        kind: 'dependency_first' as const,
+      },
+    ];
+  }
+
   if (workflowType === 'client_response') {
     const isDemoRequest = taskShape.workContext.includes('นัด demo') || taskShape.workContext.includes('pilot');
     if (isDemoRequest) {
@@ -732,6 +915,30 @@ export function buildActionFallbackCopy(
   workflowType: TaskShapeWorkflowType,
   taskShape: TaskShape,
 ) {
+  if (isInternalPresentationTaskShape(taskShape)) {
+    return buildPresentationPrepActionFallback();
+  }
+
+  if (isPhysicalRoomTaskShape(taskShape)) {
+    return buildPhysicalRoomResetActionFallback();
+  }
+
+  if (isStudentReportTaskShape(taskShape)) {
+    return buildStudentReportActionFallback();
+  }
+
+  if (isProductPostTaskShape(taskShape)) {
+    return buildProductPostActionFallback();
+  }
+
+  if (isCustomerLogoRevisionTaskShape(taskShape)) {
+    return buildLogoRevisionActionFallback();
+  }
+
+  if (isOverloadedWorkTaskShape(taskShape)) {
+    return buildOverloadedWorkActionFallback();
+  }
+
   if (workflowType === 'client_response') {
     const isDemoRequest = taskShape.workContext.includes('นัด demo') || taskShape.workContext.includes('pilot');
     if (isDemoRequest) {

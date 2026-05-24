@@ -523,9 +523,9 @@ export function createTaskController(bindings: TaskControllerBindings) {
     });
     console.info('[MIND][AI_PUTER] Normalized Action Response:', JSON.stringify(artifacts.payload, null, 2));
     const stableSummary = buildStableSummary(task, [
-      actionResponse.situationSummary,
-      intake.roomDigest,
       artifacts.payload.situation_summary,
+      artifacts.nextTask.taskFrame?.objective,
+      artifacts.nextTask.taskFrame?.stage,
       task.lastStableSummary,
     ]);
     const nextTask: TaskContext = {

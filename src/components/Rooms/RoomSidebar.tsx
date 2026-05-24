@@ -12,10 +12,10 @@ interface Props {
   focusMode?: boolean;
 }
 
-function scenarioLabel(room: RoomRecord) {
+export function scenarioLabel(room: RoomRecord) {
   if (room.scenarioType === 'sales_inquiry_demo_request') return 'ต้องตอบลูกค้า';
-  if (room.scenarioType === 'client_project_restart') return 'งานค้างของลูกค้า';
-  return 'ห้องงานลูกค้า';
+  if (room.scenarioType === 'client_project_restart') return 'งานค้าง';
+  return 'ห้องงาน';
 }
 
 function freshnessCopy(room: RoomRecord) {
@@ -62,7 +62,7 @@ export function RoomSidebar({
       <div className="room-sidebar-header">
         <div className="room-sidebar-header-copy">
           <p className="studio-eyebrow">ห้องงาน</p>
-          {!collapsed && <h2 style={{ fontSize: '1.02rem', lineHeight: 1.3 }}>ห้องงานลูกค้า</h2>}
+          {!collapsed && <h2 style={{ fontSize: '1.02rem', lineHeight: 1.3 }}>ห้องงาน</h2>}
         </div>
         <div className="room-sidebar-header-actions">
           <button
@@ -136,7 +136,10 @@ export function RoomSidebar({
                     <span className={`room-sidebar-chip room-sidebar-chip-${freshness.tone}`}>{freshness.label}</span>
                     {room.unread && <span className="room-sidebar-chip room-sidebar-chip-hot">ยังมีของค้าง</span>}
                     {room.stale && <span className="room-sidebar-dot room-sidebar-dot-warn">ค้าง</span>}
-                    {active && <span className="room-sidebar-dot room-sidebar-dot-active">กำลังทำ</span>}
+                    {item.activityLabel === 'งานนี้เสร็จแล้ว' && (
+                      <span className="room-sidebar-chip room-sidebar-chip-fallback">{item.activityLabel}</span>
+                    )}
+                    {item.showActiveBadge && <span className="room-sidebar-dot room-sidebar-dot-active">กำลังทำ</span>}
                   </div>
 
                   {item.nextAction && (

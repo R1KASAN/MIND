@@ -69,12 +69,19 @@ export async function POST(req: Request) {
       const detail = (error as any).detail;
       const repairUsed = (error as any).telemetry?.repairUsed ?? false;
 
-      console.warn('[MIND][AI_FALLBACK] Local Gemma failed, using manual response', {
-        operation: 'intake',
-        backend: 'local_gemma',
-        nextBackend: 'manual',
-        reason: (error as any).reason ?? 'unknown',
-      });
+      const isPuterFastManual = (error as any).type === 'puter_timeout_fast_manual';
+
+      console.warn(
+        isPuterFastManual
+          ? '[MIND][AI_FALLBACK] Puter intake timeout fast-manual response'
+          : '[MIND][AI_FALLBACK] Local Gemma failed, using manual response',
+        {
+          operation: 'intake',
+          backend: isPuterFastManual ? 'puter' : 'local_gemma',
+          nextBackend: 'manual',
+          reason: isPuterFastManual ? 'puter_timeout_fast_manual' : ((error as any).reason ?? 'unknown'),
+        },
+      );
       logAiOperationTelemetry({
         operationName: 'intake',
         passType: 'fallback_pass',

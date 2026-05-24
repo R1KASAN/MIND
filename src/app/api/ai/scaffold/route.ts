@@ -49,6 +49,7 @@ export async function POST(req: Request) {
       buildRepairUserPrompt: (invalidOutput, failureDetail) =>
         buildOperationRepairUserPrompt('scaffold', taskContext, invalidOutput, failureDetail),
       parse: (raw) => parseAiScaffoldResponse(raw, {
+        task,
         fallbackPlanTitle: action.title,
         fallbackCurrentStep: action.microSteps[currentStepIndex] ?? action.microSteps[0] ?? action.title,
         fallbackSteps: action.microSteps,

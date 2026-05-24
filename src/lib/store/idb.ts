@@ -978,7 +978,7 @@ function deriveRoomSummaryFromSession(session: AppSession) {
     session.currentPayload?.situation_summary ||
     session.task?.sourceText ||
     session.activeDumpContext?.text ||
-    'เริ่มห้องนี้ด้วย client chaos แล้วให้ MIND ช่วยหา next move';
+    'เริ่มห้องนี้ด้วยบริบทงานที่รก แล้วให้ MIND ช่วยหา next move';
   return truncateRoomLabel(summary.replace(/\s+/g, ' ').trim(), 160);
 }
 

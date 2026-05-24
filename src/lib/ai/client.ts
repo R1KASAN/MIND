@@ -6,7 +6,7 @@ import type {
   AiRescueResponse
 } from '@/lib/ai/operations';
 import type { ActionEvidenceContext } from '@/lib/orchestrator/evidence-context';
-import { runAiOperation } from '@/lib/ai/operation-route-helpers';
+import { AiRouteError, runAiOperation } from '@/lib/ai/operation-route-helpers';
 import {
   AiOperationContractError,
   parseAiIntakeResponse,
@@ -277,6 +277,7 @@ export class LocalGemmaClient implements AiClient {
       buildRepairUserPrompt: (invalidOutput, failureDetail) =>
         buildOperationRepairUserPrompt('intake', taskContext, invalidOutput, failureDetail),
       parse: (raw) => parseAiIntakeResponse(raw, {
+        task,
         fallbackSourceText: task.sourceText,
         fallbackTaskShape,
         fallbackWorkflowType,
@@ -317,6 +318,7 @@ export class LocalGemmaClient implements AiClient {
       buildRepairUserPrompt: (invalidOutput, failureDetail) =>
         buildOperationRepairUserPrompt('action', taskContext, invalidOutput, failureDetail),
       parse: (raw) => parseAiActionResponse(raw, {
+        task,
         fallbackChosenTitle: preferredTitle,
         fallbackChosenRationale: preferredRationale,
         fallbackSuccessSignal,
@@ -362,6 +364,7 @@ export class LocalGemmaClient implements AiClient {
       buildRepairUserPrompt: (invalidOutput, failureDetail) =>
         buildOperationRepairUserPrompt('rescue', taskContext, invalidOutput, failureDetail),
       parse: (raw) => parseAiRescueResponse(raw, {
+        task,
         fallbackReason,
         fallbackActionTitle,
         fallbackCurrentStep,
@@ -796,6 +799,22 @@ function logPuterFallback(operation: AiOperationName, error: unknown) {
       });
     }
   }
+}
+
+function logPuterIntakeTimeoutFastManual(error: unknown) {
+  const meta = readPuterFailureMeta('intake', error);
+  console.warn('[MIND][AI_FALLBACK] Puter intake timeout, using manual response', {
+    operation: 'intake',
+    backend: 'puter',
+    nextBackend: 'manual',
+    reason: 'puter_timeout_fast_manual',
+    circuit_key: getPuterCircuitKey('intake'),
+    error_class: getPuterErrorClass(error),
+    model: meta.model,
+    elapsed_ms: meta.elapsedMs,
+    timeout_ms: meta.timeoutMs,
+    detail: describePuterFailure(error),
+  });
 }
 
 function pruneRecentFailures(operation: AiOperationName, now: number) {
@@ -1661,6 +1680,24 @@ export class FreePuterClient implements AiClient {
         })
       );
     } catch (err) {
+      if (err instanceof PuterOperationError && err.reason === 'puter_timeout') {
+        logPuterIntakeTimeoutFastManual(err);
+        throw new AiRouteError(
+          'puter_timeout_fast_manual',
+          'request_timeout',
+          'Puter intake timed out; using manual fallback',
+          err.message,
+          503,
+          true,
+          err.model,
+          undefined,
+          {
+            passType: 'timeout',
+            durationMs: err.elapsedMs,
+            repairUsed: false,
+          },
+        );
+      }
       logPuterFallback('intake', err);
       return new LocalGemmaClient().runIntake(task);
     }

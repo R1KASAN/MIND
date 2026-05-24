@@ -19,7 +19,8 @@ import {
   inferWorkflowTypeFromTaskShape,
   type TaskShape,
 } from '@/lib/ai/task-shape';
-import type { RescueReason } from '@/lib/store/idb';
+import type { RescueReason, TaskContext } from '@/lib/store/idb';
+import { guardStalePhrases } from '@/lib/source-grounding';
 
 export type AiOperationValidationFailureKind =
   | 'json_extraction_failed'
@@ -561,9 +562,12 @@ const FILE_REF_PATTERN = /(ไฟล์|เอกสาร)/;
 export function validateStarterMicroSteps(
   raw: unknown,
   hasFileEvidence: boolean,
+  sourceText?: string,
 ): [string, string, string] | undefined {
   if (!Array.isArray(raw)) return undefined;
   if (raw.length !== 3) return undefined;
+
+  const hasFileMention = sourceText ? /(ไฟล์|เอกสาร)/.test(sourceText) : false;
 
   const steps: string[] = [];
   for (const item of raw) {
@@ -574,7 +578,7 @@ export function validateStarterMicroSteps(
       console.info('[MIND][contract] starterMicroSteps rejected: generic pattern detected', { step: trimmed });
       return undefined;
     }
-    if (!hasFileEvidence && FILE_REF_PATTERN.test(trimmed)) {
+    if (!hasFileEvidence && !hasFileMention && FILE_REF_PATTERN.test(trimmed)) {
       console.info('[MIND][contract] starterMicroSteps rejected: file reference without file evidence', { step: trimmed });
       return undefined;
     }
@@ -593,6 +597,7 @@ function normalizeActionCandidate(value: unknown, options?: {
   fallbackReplyDraft?: string;
   fallbackWorkflowType?: 'client_response' | 'client_resume';
   fallbackTaskShape?: TaskShape;
+  sourceText?: string;
   hasFileEvidence?: boolean;
 }) {
   const object = asObject(unwrapEnvelope(value)) ?? firstObjectFromArray(unwrapEnvelope(value));
@@ -1093,6 +1098,7 @@ function validateOperation<T>(schema: ZodSchema<T>, normalized: unknown) {
 }
 
 export function parseAiIntakeResponse(raw: string, options?: {
+  task?: TaskContext;
   fallbackSourceText?: string;
   fallbackTaskShape?: TaskShape;
   fallbackWorkflowType?: 'client_response' | 'client_resume';
@@ -1120,10 +1126,20 @@ export function parseAiIntakeResponse(raw: string, options?: {
     validateSemanticText('candidateActions.title', candidate.title);
     validateSemanticText('candidateActions.rationale', candidate.rationale);
   }
+  if (options?.task) {
+    data.roomDigest = guardStalePhrases(data.roomDigest, options.task);
+    data.taskFrame.objective = guardStalePhrases(data.taskFrame.objective, options.task);
+    data.taskFrame.stage = guardStalePhrases(data.taskFrame.stage, options.task);
+    for (const candidate of data.candidateActions) {
+      candidate.title = guardStalePhrases(candidate.title, options.task);
+      candidate.rationale = guardStalePhrases(candidate.rationale, options.task);
+    }
+  }
   return data;
 }
 
 export function parseAiActionResponse(raw: string, options?: {
+  task?: TaskContext;
   fallbackChosenTitle?: string;
   fallbackChosenRationale?: string;
   fallbackSuccessSignal?: string;
@@ -1147,6 +1163,16 @@ export function parseAiActionResponse(raw: string, options?: {
     validateSemanticText('whyThisNow', data.whyThisNow);
     validateSemanticText('situationSummary', data.situationSummary);
     validateActionContextAlignment(data, options);
+    if (options?.task) {
+      data.chosenAction.title = guardStalePhrases(data.chosenAction.title, options.task);
+      data.chosenAction.rationale = guardStalePhrases(data.chosenAction.rationale, options.task);
+      data.whyThisNow = guardStalePhrases(data.whyThisNow, options.task);
+      data.situationSummary = guardStalePhrases(data.situationSummary, options.task);
+      for (const alt of data.alternatives) {
+        alt.title = guardStalePhrases(alt.title, options.task);
+        alt.rationale = guardStalePhrases(alt.rationale, options.task);
+      }
+    }
     return data;
   }
 
@@ -1168,10 +1194,21 @@ export function parseAiActionResponse(raw: string, options?: {
   validateSemanticText('whyThisNow', data.whyThisNow);
   validateSemanticText('situationSummary', data.situationSummary);
   validateActionContextAlignment(data, options);
+  if (options?.task) {
+    data.chosenAction.title = guardStalePhrases(data.chosenAction.title, options.task);
+    data.chosenAction.rationale = guardStalePhrases(data.chosenAction.rationale, options.task);
+    data.whyThisNow = guardStalePhrases(data.whyThisNow, options.task);
+    data.situationSummary = guardStalePhrases(data.situationSummary, options.task);
+    for (const alt of data.alternatives) {
+      alt.title = guardStalePhrases(alt.title, options.task);
+      alt.rationale = guardStalePhrases(alt.rationale, options.task);
+    }
+  }
   return data;
 }
 
 export function parseAiScaffoldResponse(raw: string, options?: {
+  task?: TaskContext;
   fallbackPlanTitle?: string;
   fallbackCurrentStep?: string;
   fallbackSteps?: string[];
@@ -1193,10 +1230,17 @@ export function parseAiScaffoldResponse(raw: string, options?: {
   for (const step of data.steps) {
     validateSemanticText('steps.text', step.text);
   }
+  if (options?.task) {
+    data.planTitle = guardStalePhrases(data.planTitle, options.task);
+    for (const step of data.steps) {
+      step.text = guardStalePhrases(step.text, options.task);
+    }
+  }
   return data;
 }
 
 export function parseAiRescueResponse(raw: string, options?: {
+  task?: TaskContext;
   fallbackReason?: RescueReason;
   fallbackActionTitle?: string;
   fallbackCurrentStep?: string;
@@ -1217,6 +1261,12 @@ export function parseAiRescueResponse(raw: string, options?: {
   for (const step of data.rescuePlan.steps) {
     validateSemanticText('rescuePlan.steps', step);
   }
+  if (options?.task) {
+    data.diagnosis.explanation = guardStalePhrases(data.diagnosis.explanation, options.task);
+    for (let i = 0; i < data.rescuePlan.steps.length; i++) {
+      data.rescuePlan.steps[i] = guardStalePhrases(data.rescuePlan.steps[i], options.task);
+    }
+  }
   return {
     ...data,
     source: 'ai',
@@ -1225,6 +1275,7 @@ export function parseAiRescueResponse(raw: string, options?: {
 }
 
 export function parseAiReentryResponse(raw: string, options?: {
+  task?: TaskContext;
   fallbackRoomId?: string;
   fallbackActionTitle?: string;
   fallbackCurrentStep?: string;
@@ -1246,6 +1297,13 @@ export function parseAiReentryResponse(raw: string, options?: {
   for (const action of data.topActions) {
     validateSemanticText('topActions.title', action.title);
     validateSemanticText('topActions.rationale', action.rationale);
+  }
+  if (options?.task) {
+    data.reentrySummary = guardStalePhrases(data.reentrySummary, options.task);
+    for (const action of data.topActions) {
+      action.title = guardStalePhrases(action.title, options.task);
+      action.rationale = guardStalePhrases(action.rationale, options.task);
+    }
   }
   return data;
 }

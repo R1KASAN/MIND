@@ -368,6 +368,84 @@ test('completed rooms do not rank as active reentry candidates', () => {
   assert.equal(candidates.length, 0);
 });
 
+test('rankResumeRooms prefers guarded session action over stale raw room-memory snapshot', () => {
+  const task = createTaskContext({
+    roomId: 'student-report',
+    sourceText: 'ต้องส่งรายงานวิชาวิศวะ หัวข้อ renewable energy storage มี reference links ในแชท',
+    lifecycleState: 'has_one_action',
+    createdAt: 100,
+  } as any);
+  task.currentPlan = {
+    actionTitle: 'เปิด reference link 1 อัน แล้วจด 3 bullet สำหรับบทนำรายงาน',
+    steps: [{ id: 'step-1', text: 'เปิด reference link 1 อันของ renewable energy storage' }],
+  };
+  task.lastStableSummary = 'ต้องเริ่มรายงาน renewable energy storage จาก reference links ในแชท';
+
+  const [ranked] = rankResumeRooms([
+    {
+      room: room('student-report', {
+        contextSummary: 'ต้องเริ่มรายงาน renewable energy storage จาก reference links ในแชท',
+        session: session({
+          roomId: 'student-report',
+          uiRoute: 'ONE_ACTION',
+          task,
+          currentPayload: {
+            workflow_type: 'client_resume',
+            requires_clarification: false,
+            situation_summary: 'ต้องเริ่มรายงาน renewable energy storage จาก reference links ในแชท',
+            recommended_action: {
+              title: 'เปิด reference link 1 อัน แล้วจด 3 bullet สำหรับบทนำรายงาน',
+              rationale: 'เริ่มจาก reference เดียวก่อน',
+              micro_steps: ['เปิด reference link 1 อันของ renewable energy storage'],
+              micro_steps_source: 'fallback',
+            },
+            alternative_actions: [],
+            detected_blockers: [],
+          },
+        }),
+      }),
+      replay: replay({
+        actionTitle: 'ร่างข้อความตอบลูกค้าพร้อมเสนอ 3 แนวทางเริ่มบทนำรายงาน',
+        summary: 'ลูกค้าต้องการเริ่มรายงาน',
+        lastEventAt: 250,
+      }),
+    },
+  ]);
+
+  assert.equal(ranked?.actionTitle, 'เปิด reference link 1 อัน แล้วจด 3 bullet สำหรับบทนำรายงาน');
+  assert.equal(ranked?.summary, 'ต้องเริ่มรายงาน renewable energy storage จาก reference links ในแชท');
+  assert.doesNotMatch(ranked?.actionTitle ?? '', /ลูกค้า|client|customer/i);
+  assert.doesNotMatch(ranked?.summary ?? '', /ลูกค้า|client|customer/i);
+});
+
+test('completed active room sidebar item exposes completed state instead of active-work badge', () => {
+  const completedTask = createTaskContext({
+    roomId: 'done-room',
+    sourceText: 'demo MIND checklist completed',
+    createdAt: 100,
+    lifecycleState: 'done',
+    currentActionId: null,
+  } as any);
+  completedTask.currentPlan = {
+    actionTitle: 'ทำ checklist demo MIND สำหรับ fallback latency, reentry card, evidence source',
+    steps: [{ id: 'step-1', text: 'ทำ checklist demo MIND สำหรับ fallback latency, reentry card, evidence source' }],
+  };
+
+  const items = buildRoomSidebarItems({
+    rooms: [
+      room('done-room', {
+        contextSummary: 'demo MIND checklist completed',
+        session: session({ roomId: 'done-room', task: completedTask }),
+      }),
+    ],
+    activeRoomId: 'done-room',
+    rankedResumeRooms: [],
+  });
+
+  assert.equal(items[0]?.activityLabel, 'งานนี้เสร็จแล้ว');
+  assert.equal(items[0]?.showActiveBadge, false);
+});
+
 test('completed active room resolves to completed context state without active reentry copy', () => {
   const completedTask = createTaskContext({
     roomId: 'done-room',

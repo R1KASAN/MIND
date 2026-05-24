@@ -169,7 +169,7 @@ test('handleMakeSmaller stays on SCAFFOLD with no_change feedback after structur
     },
   });
   const session = makeSession(task, payload);
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   const refineLoadingStates: boolean[] = [];
   let latestSession: AppSession | null = session;
   let feedback = null as { message: string; reason: string; diagnostic: string } | null;
@@ -302,7 +302,7 @@ test('handleMakeSmaller routes to clarification when no_change suggests missing 
     },
   });
   const session = makeSession(task, payload);
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   let clarificationPrompt = '';
   let feedback = null as { routeLabel?: string; reasonLabel?: string } | null;
@@ -399,7 +399,7 @@ test('handleMakeSmaller surfaces failed diagnostics when scaffold request fails'
     },
   });
   const session = makeSession(task, payload);
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let feedback = null as { message: string; reason: string; diagnostic: string } | null;
   const trackedEvents: Array<{ name: string; properties: Record<string, unknown> | undefined }> = [];
 
@@ -499,7 +499,7 @@ test('handleMakeSmaller accepts a richer scaffold when downstream steps become m
     },
   });
   const session = makeSession(task, payload);
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   let currentPayload: AiSynthesisResponse | null = payload;
 
@@ -585,7 +585,7 @@ test('handleCompleteScaffold advances to the next step without clearing the task
     },
   });
   const session = makeSession(task, payload);
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
 
   const controller = createTaskController({
@@ -647,7 +647,7 @@ test('handleCompleteScaffold enters completion summary on the last step', async 
     },
   });
   const session = makeSession(task, payload);
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   const actionUpdates: Array<{ id: string; modifications: Partial<Action> }> = [];
 
@@ -723,7 +723,7 @@ test('handleCompleteScaffold completes against the full refined scaffold plan, n
     },
   });
   const session = makeSession(task, payload);
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
 
   const controller = createTaskController({
@@ -806,7 +806,7 @@ test('handleCompleteScaffold finalizes a rescue-applied one-step scaffold as com
     rescueHistory: [{ reason: 'too_big', mode: 'shrink', createdAt: 10 }],
   });
   const session = makeSession(task, payload);
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   let currentPayload: AiSynthesisResponse | null = payload;
   let currentActionState: Action | null = {
@@ -887,7 +887,7 @@ test('handleStartNewFromCompletedScaffold soft-resets the Room after marking the
     },
   });
   const session = makeSession(task, payload);
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   const actionUpdates: Array<{ id: string; modifications: Partial<Action> }> = [];
 
@@ -965,7 +965,7 @@ test('handleRejectAction sends the user to decision board without losing the ori
     currentPayload: payload,
     task,
   });
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
 
   const controller = createTaskController({
@@ -1033,7 +1033,7 @@ test('handleReturnToPrimaryAction restores the original one-action screen', asyn
     currentPayload: payload,
     task,
   });
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   let latestWhyThisNow = '';
 
@@ -1090,7 +1090,7 @@ test('handleDump falls back to local synthesis when action synthesis times out',
     notThisCount: 0,
     task: initialTask,
   });
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   let currentPayload = null as AiSynthesisResponse | null;
   let currentActionState = null as Action | null;
@@ -1220,7 +1220,7 @@ test('handleDump ignores a second concurrent submit and only runs one AI lifecyc
     notThisCount: 0,
     task: undefined,
   });
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   const fetchCalls: string[] = [];
   let releaseIntake = null as (() => void) | null;
@@ -1361,7 +1361,7 @@ test('handleDump writes lastStableSummary from action operation success', async 
       currentStepIndex: 0,
     }),
   });
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
 
   const originalFetch = global.fetch;
@@ -1494,7 +1494,7 @@ test('handleRetry falls back deterministically without calling legacy synthesis 
     currentPayload: payload,
     task,
   });
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   const fetchCalls: string[] = [];
 
@@ -1614,7 +1614,7 @@ test('handleClarificationSubmit falls back deterministically without legacy rout
     notThisCount: 0,
     task,
   });
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   const fetchCalls: string[] = [];
 
@@ -1739,7 +1739,7 @@ test('loadReentryBrief updates lastStableSummary from successful reentry output'
     currentPayload: payload,
     task,
   });
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
 
   const originalFetch = global.fetch;
@@ -1849,7 +1849,7 @@ test('resumeFromSuggestedReentry seeds one-action state for dumped save-point ro
     currentPayload: undefined,
     task,
   });
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   let currentPayload = null as AiSynthesisResponse | null;
   let currentActionState = null as Action | null;
@@ -1918,7 +1918,7 @@ test('handleOneActionAdjustmentTouched marks the current one-action proposal as 
     currentPayload: payload,
     task,
   });
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
 
   const controller = createTaskController({
@@ -1980,7 +1980,7 @@ test('openDumpWithCurrentContext keeps the task context visible while returning 
     },
   });
   const session = makeSession(task, payload);
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
 
   const controller = createTaskController({
@@ -2042,7 +2042,7 @@ test('handleAcceptAction emits one_action_accepted_first_try when no alternative
     currentPayload: payload,
     task,
   });
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   const originalConsoleLog = console.log;
   const loggedLines: string[] = [];
   console.log = (...args: unknown[]) => {
@@ -2131,7 +2131,7 @@ test('handleAcceptAction marks retrieval analytics only when current step has re
     currentPayload: payload,
     task,
   });
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   const originalConsoleLog = console.log;
   const events: Array<{ name: string; properties: Record<string, unknown> }> = [];
   console.log = (...args: unknown[]) => {
@@ -2198,7 +2198,7 @@ test('handleEnterRescue falls back with safe-copy language when rescue fails', a
     lastSynthesis: payload,
   });
   const session = makeSession(task, payload);
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   let latestRescueState: AiRescueResponse | null = null;
 
@@ -2272,7 +2272,7 @@ test('openDumpWithCurrentContext ignores delayed rescue result after user leaves
     lastSynthesis: payload,
   });
   const session = makeSession(task, payload);
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   let latestRescueState: AiRescueResponse | null = null;
   const rescueRequests: Array<{ resolve: (response: Response) => void }> = [];
@@ -2344,7 +2344,7 @@ test('handleEnterRescue lets the newest rescue request win over an older delayed
     lastSynthesis: payload,
   });
   const session = makeSession(task, payload);
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   let latestRescueState: AiRescueResponse | null = null;
   const rescueRequests: Array<{ resolve: (response: Response) => void }> = [];
@@ -2422,7 +2422,7 @@ test('handleEnterRescue ignores rescue error after user leaves Rescue', async ()
     lastSynthesis: payload,
   });
   const session = makeSession(task, payload);
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   let latestRescueState: AiRescueResponse | null = null;
   const rescueRequests: Array<{ resolve: (response: Response) => void }> = [];
@@ -2502,7 +2502,7 @@ test('handleEnterRescue ignores AbortError after user leaves Rescue', async () =
     lastSynthesis: payload,
   });
   const session = makeSession(task, payload);
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   let latestRescueState: AiRescueResponse | null = null;
   let fetchStarted = false;
@@ -2587,7 +2587,7 @@ test('handleMakeSmaller with invalid scaffold stays on Rescue with failed feedba
     currentPayload: payload,
     task,
   });
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   let latestFeedback: any = null;
 
@@ -2680,7 +2680,7 @@ test('handleWalkAwayFromRescue returns to Brain Dump reentry card and preserves 
     currentPayload: payload,
     task,
   });
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   let latestRescueState: AiRescueResponse | null = makeRescueResponse('too_big');
   let rescueLoading = true;
@@ -2789,7 +2789,7 @@ test('handleWalkAwayFromRescue replaces stale reentry brief with current rescue 
     currentPayload: payload,
     task,
   });
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
 
   const controller = createTaskController({
@@ -2884,7 +2884,7 @@ test('handleMakeSmaller from rescue applies the current rescue step without reop
     currentPayload: payload,
     task,
   });
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   let currentPayload: AiSynthesisResponse | null = payload;
   let currentActionState: Action | null = {
@@ -2999,7 +2999,7 @@ test('handleMakeSmaller with valid scaffold updates state and navigates once to 
     currentPayload: payload,
     task,
   });
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   let sessionUpdateCount = 0;
   let currentPayload: AiSynthesisResponse | null = payload;
@@ -3092,7 +3092,7 @@ test('handleMakeSmaller rejects English scaffold in a Thai room', async () => {
     currentPayload: payload,
     task,
   });
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   let latestFeedback: any = null;
 
@@ -3181,7 +3181,7 @@ test('handleMakeSmaller rejects scaffold if it does not contain room anchors', a
     currentPayload: payload,
     task,
   });
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   let latestFeedback: any = null;
 
@@ -3270,7 +3270,7 @@ test('handleMakeSmaller accepts Thai non-echoing scaffold when room anchors are 
     currentPayload: payload,
     task,
   });
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   let currentPayload: AiSynthesisResponse | null = payload;
   let latestFeedback: any = null;
@@ -3365,7 +3365,7 @@ test('handleMakeSmaller rejects scaffold if a step echoes action title', async (
     currentPayload: payload,
     task,
   });
-  const sessionRef = { current: session };
+  const sessionRef: { current: AppSession | null } = { current: session };
   let latestSession: AppSession | null = session;
   let latestFeedback: any = null;
 

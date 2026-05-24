@@ -1,6 +1,7 @@
 import { buildRoomMemoryReplayContext, type RoomMemoryReplayContext } from '@/lib/store/room-memory-db';
 import type { AppSession, RoomRecord } from '@/lib/store/idb';
 import { hasResumableTask } from '@/lib/orchestrator/task-machine';
+import { guardStalePhrases } from '@/lib/source-grounding';
 
 export type HomeEntryMode = 'get_started' | 'resume_prompt' | 'active_room' | 'completed_context';
 export type ResumeStuckSignal =
@@ -78,9 +79,11 @@ export interface RoomSidebarItemView {
   nextAction?: string;
   reason?: string;
   lastEventAt?: number;
+  activityLabel?: 'กำลังทำ' | 'งานนี้เสร็จแล้ว';
+  showActiveBadge: boolean;
 }
 
-const EMPTY_ROOM_SUMMARY = 'เริ่มห้องนี้ด้วย client chaos แล้วให้ MIND ช่วยหา next move';
+const EMPTY_ROOM_SUMMARY = 'เริ่มห้องนี้ด้วยบริบทงานที่รก แล้วให้ MIND ช่วยหา next move';
 
 function isVisibleRoom(room: RoomRecord) {
   return typeof room.trashedAt !== 'number';
@@ -125,24 +128,26 @@ function readStuckSignal(candidate: ResumeRoomCandidateInput): ResumeStuckSignal
 function readActionTitle(candidate: ResumeRoomCandidateInput) {
   const snapshot = candidate.replay?.snapshot;
   const task = candidate.room.session.task;
-  return normalizeText(snapshot?.currentAction?.title) ||
-    normalizeText(snapshot?.currentPlan?.actionTitle) ||
-    normalizeText(task?.currentPlan?.actionTitle) ||
+  const raw = normalizeText(task?.currentPlan?.actionTitle) ||
     normalizeText(candidate.room.session.currentPayload?.recommended_action.title) ||
+    normalizeText(snapshot?.currentAction?.title) ||
+    normalizeText(snapshot?.currentPlan?.actionTitle) ||
     normalizeText(candidate.room.lastKnownGoodNextMoves[0]) ||
     normalizeText(candidate.room.nextMoves[0]);
+  return guardStalePhrases(raw, task);
 }
 
 function readSummary(candidate: ResumeRoomCandidateInput) {
   const snapshot = candidate.replay?.snapshot;
   const task = candidate.room.session.task;
-  return normalizeUserWorkText(snapshot?.currentSummary) ||
-    normalizeText(snapshot?.latestReentry?.summary) ||
+  const raw = normalizeText(task?.lastStableSummary) ||
     normalizeUserWorkText(candidate.room.lastKnownGoodBrief) ||
     normalizeText(task?.reentryBrief?.summary) ||
-    normalizeText(task?.lastStableSummary) ||
+    normalizeText(snapshot?.latestReentry?.summary) ||
+    normalizeUserWorkText(snapshot?.currentSummary) ||
     normalizeUserWorkText(candidate.room.contextSummary) ||
     'MIND เก็บบริบทล่าสุดของห้องนี้ไว้แล้ว';
+  return guardStalePhrases(raw, task);
 }
 
 function hasDrift(candidate: ResumeRoomCandidateInput) {
@@ -373,6 +378,12 @@ export function buildRoomSidebarItems(input: {
         nextAction: ranked?.actionTitle,
         reason: ranked?.reason,
         lastEventAt: ranked?.lastEventAt,
+        activityLabel: room.session.task?.lifecycleState === 'done'
+          ? 'งานนี้เสร็จแล้ว'
+          : room.id === input.activeRoomId
+            ? 'กำลังทำ'
+            : undefined,
+        showActiveBadge: room.id === input.activeRoomId && room.session.task?.lifecycleState !== 'done',
       };
     });
 }
@@ -439,7 +450,7 @@ export function resolveActiveRoomReentryState(candidate: ResumeRoomCandidateInpu
 
   const brokenFileContext = hasBrokenFileContext(candidate.room);
   const missingContext = hasMissingContext(candidate, ranked.lastStuckSignal);
-  const question = 'งานนี้ต้องตอบลูกค้า สรุปสถานะ หรือแก้บริบทก่อน?';
+  const question = 'งานนี้ต้องสรุปสถานะ ตอบกลับ หรือแก้บริบทก่อน?';
 
   if (brokenFileContext) {
     return {

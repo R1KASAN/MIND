@@ -94,6 +94,7 @@ export async function POST(req: Request) {
           roomMemoryContext || 'ไม่มี',
         ].join('\n'), invalidOutput, failureDetail),
       parse: (raw) => parseAiReentryResponse(raw, {
+        task,
         fallbackRoomId: task.id,
         fallbackActionTitle: action?.title ?? task.currentPlan?.actionTitle ?? task.taskFrame?.objective,
         fallbackCurrentStep,

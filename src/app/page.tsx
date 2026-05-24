@@ -1735,7 +1735,7 @@ export default function StateMachinePage() {
       case 'CLARIFICATION':
         return (
           <Clarification
-            prompt={clarificationPrompt || 'ตอนนี้ควรตอบลูกค้าหรือเริ่มงานค้างส่วนไหนก่อน'}
+            prompt={clarificationPrompt || 'ตอนนี้ควรตอบกลับ สรุปสถานะ หรือเริ่มงานค้างส่วนไหนก่อน'}
             onSubmit={controller.handleClarificationSubmit}
             focusMode={isFocusMode}
           />

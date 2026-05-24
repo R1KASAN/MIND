@@ -888,6 +888,7 @@ export async function requestReentry(
         ignoredNoise: [],
       }),
       {
+        task,
         fallbackRoomId: task.currentActionId ?? 'current-room',
         fallbackActionTitle: action?.title ?? task.currentPlan?.actionTitle,
         fallbackCurrentStep:
