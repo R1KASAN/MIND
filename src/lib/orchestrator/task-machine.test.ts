@@ -35,6 +35,21 @@ function makeTask(overrides: Partial<TaskContext> = {}): TaskContext {
   };
 }
 
+const PAYMENT_API_BRAINDUMP = [
+  'เหนื่อยมาก',
+  'ต้องตอบ ABC Corp',
+  'payment API timeout ไป 20 นาที',
+  'CS ถามว่าจะตอบลูกค้ายังไง',
+  'ยังไม่ได้เปิด Dashboard',
+  'หัวตื้อ ไม่รู้จะเริ่มตรงไหน',
+].join('\n');
+
+const PAYMENT_API_EXPECTED_STEPS = [
+  'เปิด Dashboard เช็กสถานะล่าสุดของ payment API',
+  'เติมอัปเดต 3 บรรทัดให้ CS',
+  'ร่างข้อความตอบ ABC Corp แบบไม่ commit เวลาเกินข้อมูลที่เห็น',
+];
+
 test('buildActionSuccessArtifacts keeps continuity and persists durable negotiation', () => {
   const task = makeTask({
     taskFrame: {
@@ -634,6 +649,81 @@ test('buildPayloadFromAiActionResponse uses AI starterMicroSteps when valid', ()
   const payload = buildPayloadFromAiActionResponse('client_response', response, []);
   assert.deepEqual(payload.recommended_action.micro_steps, ['เปิดแชต ABC Corp', 'ร่างข้อความตอบกลับ', 'ส่ง draft']);
   assert.equal(payload.recommended_action.micro_steps_source, 'ai');
+});
+
+test('buildPayloadFromAiActionResponse grounds accepted payment API BrainDump scaffold steps', () => {
+  const task = makeTask({
+    sourceText: PAYMENT_API_BRAINDUMP,
+    taskFrame: {
+      objective: 'ร่างข้อความตอบ ABC Corp ว่าขอเวลาตรวจสอบ Payment API timeout',
+      stage: 'triage',
+      stakeholders: ['ABC Corp', 'CS'],
+    },
+  });
+  const response: AiActionResponse = {
+    chosenAction: {
+      title: 'ร่างข้อความตอบ ABC Corp ว่าขอเวลาตรวจสอบ Payment API timeout',
+      rationale: 'ต้องตอบ ABC Corp/CS โดยไม่เดาสถานะก่อนเช็ก Dashboard',
+      successSignal: 'มีข้อความตอบกลับที่อิงสถานะล่าสุด',
+    },
+    alternatives: [],
+    whyThisNow: 'ABC Corp และ CS รอคำตอบเรื่อง payment API timeout',
+    situationSummary: 'ABC Corp มี payment API timeout และยังไม่ได้เปิด Dashboard',
+    meta: { model: 'mock', usedRoomFiles: [], repairUsed: false },
+  };
+
+  const payload = buildPayloadFromAiActionResponse('client_response', response, [], {
+    deliverableType: 'reply',
+    immediateNeed: 'send_reply_now',
+    missingInputs: ['สถานะล่าสุดจาก Dashboard'],
+    workContext: 'ABC Corp รอคำตอบเรื่อง payment API timeout และ CS ต้องตอบลูกค้า',
+    behaviorIntent: 'client_delivery',
+    confidence: 0.9,
+  }, task);
+
+  assert.deepEqual(payload.recommended_action.micro_steps, PAYMENT_API_EXPECTED_STEPS);
+  assert.equal(payload.recommended_action.micro_steps_source, 'fallback');
+  assert.doesNotMatch(payload.recommended_action.micro_steps.join(' '), /แยกงานค้าง|แต่ละรายการ/u);
+});
+
+test('buildPayloadFromAiActionResponse rejects generic multi-item payment API starter steps', () => {
+  const task = makeTask({
+    sourceText: PAYMENT_API_BRAINDUMP,
+    taskFrame: {
+      objective: 'ร่างข้อความตอบ ABC Corp ว่าขอเวลาตรวจสอบ Payment API timeout',
+      stage: 'triage',
+      stakeholders: ['ABC Corp', 'CS'],
+    },
+  });
+  const response: AiActionResponse = {
+    chosenAction: {
+      title: 'ร่างข้อความตอบ ABC Corp ว่าขอเวลาตรวจสอบ Payment API timeout',
+      rationale: 'ต้องตอบ ABC Corp/CS โดยไม่เดาสถานะก่อนเช็ก Dashboard',
+      successSignal: 'มีข้อความตอบกลับที่อิงสถานะล่าสุด',
+    },
+    alternatives: [],
+    whyThisNow: 'ABC Corp และ CS รอคำตอบเรื่อง payment API timeout',
+    situationSummary: 'ABC Corp มี payment API timeout และยังไม่ได้เปิด Dashboard',
+    starterMicroSteps: [
+      'แยกงานค้างของ ABC Corp เป็นรายการสั้น',
+      'จดสถานะล่าสุดของแต่ละรายการ',
+      'ร่างข้อความตอบ ABC Corp แบบไม่ commit เวลา',
+    ],
+    meta: { model: 'mock', usedRoomFiles: [], repairUsed: false },
+  };
+
+  const payload = buildPayloadFromAiActionResponse('client_response', response, [], {
+    deliverableType: 'reply',
+    immediateNeed: 'send_reply_now',
+    missingInputs: ['สถานะล่าสุดจาก Dashboard'],
+    workContext: 'ABC Corp รอคำตอบเรื่อง payment API timeout และ CS ต้องตอบลูกค้า',
+    behaviorIntent: 'client_delivery',
+    confidence: 0.9,
+  }, task);
+
+  assert.deepEqual(payload.recommended_action.micro_steps, PAYMENT_API_EXPECTED_STEPS);
+  assert.equal(payload.recommended_action.micro_steps_source, 'fallback');
+  assert.doesNotMatch(payload.recommended_action.micro_steps.join(' '), /แยกงานค้าง|แต่ละรายการ/u);
 });
 
 test('buildPayloadFromAiActionResponse falls back to bootstrap when starterMicroSteps absent', () => {

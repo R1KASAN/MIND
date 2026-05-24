@@ -121,6 +121,7 @@ export function collectRoomArtifactAnchors(task?: TaskContext, taskShape?: TaskS
     [/server|เซิร์ฟเวอร์/u, 'server'],
     [/webhook/u, 'webhook'],
     [/\bqa\b/u, 'QA'],
+    [/\bcs\b/u, 'CS'],
     [/jira/u, 'Jira'],
     [/release/u, 'release'],
     [/timeline|ไทม์ไลน์/u, 'timeline'],
@@ -238,6 +239,11 @@ function shouldUseGroundedFallbackSteps(
   const genericCustomerOnlyCount = concreteAnchors.length > 0
     ? steps.filter((step) => /ลูกค้า|client/iu.test(step) && !hasAnchorInStep(step, concreteAnchors)).length
     : 0;
+  const hasPaymentStatusRoom = anchors.includes('Dashboard') && anchors.includes('payment API');
+  const hasCustomerCommunicationContext = anchors.includes('CS');
+  const genericMultiItemPaymentDrift = hasPaymentStatusRoom &&
+    hasCustomerCommunicationContext &&
+    steps.some((step) => /แยกงานค้าง|แต่ละรายการ/u.test(step));
 
   return (
     !isConcreteWorkStep(steps[0]) ||
@@ -245,6 +251,7 @@ function shouldUseGroundedFallbackSteps(
     !isArtifactStep(steps[2]) ||
     anchoredCount < 2 ||
     genericCustomerOnlyCount >= 2 ||
+    genericMultiItemPaymentDrift ||
     resetOnlyCount > 1 ||
     steps.some((step) => echoesActionTitle(step, action.title) || isGenericStarterTemplateStep(step))
   );
@@ -263,7 +270,7 @@ function buildGroundedArtifactMicroSteps(
   const hasIncident = anchors.some((anchor) => ['prod', 'CPU spike', 'RCA', 'incident', 'server', 'webhook'].includes(anchor));
   const hasDashboard = anchors.includes('Dashboard');
   const hasPayment = anchors.includes('payment API');
-  const hasChat = anchors.includes('แชต') || anchors.includes('ลูกค้า');
+  const hasChat = anchors.includes('CS') || anchors.includes('แชต') || anchors.includes('ลูกค้า');
   const hasProposal = taskShape?.deliverableType === 'proposal' ||
     anchors.includes('proposal') ||
     anchors.includes('ระบบ AI ร้านค้าส่ง') ||
@@ -271,6 +278,14 @@ function buildGroundedArtifactMicroSteps(
   const hasRelease = anchors.some((anchor) => ['QA', 'release', 'payment webhook', 'provider timeout', 'Jira'].includes(anchor));
   const hasMixedOverloadWork = taskShape?.behaviorIntent === 'personal_friction' &&
     anchors.some((anchor) => ['รายงานสรุปรายสัปดาห์', 'ตรวจสเปกเว็บใหม่'].includes(anchor));
+
+  if (hasDashboard && hasPayment && anchors.includes('CS')) {
+    return [
+      'เปิด Dashboard เช็กสถานะล่าสุดของ payment API',
+      'เติมอัปเดต 3 บรรทัดให้ CS',
+      `ร่างข้อความตอบ ${customerAnchor} แบบไม่ commit เวลาเกินข้อมูลที่เห็น`,
+    ];
+  }
 
   if (hasRelease) {
     return [
