@@ -16,6 +16,7 @@ import {
   routeFromResumeTarget,
 } from './task-machine';
 import { validateStarterMicroSteps } from '../ai/operation-contract';
+import { COMPLETED_CONTEXT_REUSE_HANDOFF } from '../source-grounding';
 
 function makeTask(overrides: Partial<TaskContext> = {}): TaskContext {
   return {
@@ -1001,6 +1002,62 @@ test('buildPayloadFromAiActionResponse allows customer wording when source is cu
 
   assert.match(combined, /ลูกค้า/);
   assert.match(combined, /โลโก้|สีหลัก|แบรนด์|minimal/u);
+});
+
+test('buildPayloadFromAiActionResponse advances completed logo context to reply drafting', () => {
+  const completedLogoContext = [
+    CUSTOMER_LOGO_REVISION_BRAINDUMP,
+    COMPLETED_CONTEXT_REUSE_HANDOFF,
+    'อัปเดตล่าสุด: ทำก้าวแรกเสร็จแล้ว แต่ยังไม่แน่ใจว่าควรทำอะไรต่อดี',
+  ].join('\n\n');
+  const task = makeTask({
+    workflowType: 'client_response',
+    sourceText: completedLogoContext,
+    taskFrame: {
+      objective: 'ตอบลูกค้าเรื่องแก้งานโลโก้',
+      stage: 'logo_revision',
+      stakeholders: ['ลูกค้า'],
+    },
+  });
+  const response: AiActionResponse = {
+    chosenAction: {
+      title: 'เปิด LINE แล้วจดรายการแก้โลโก้ 3 จุด: สี / ฟอนต์ / ขนาดโลโก้',
+      rationale: 'รวมจุดที่ต้องแก้ให้อยู่ที่เดียวกันก่อน จะได้ไม่ตกหล่น',
+      successSignal: 'ได้รายการแก้โลโก้ 3 จุดที่ชัดเจน',
+    },
+    alternatives: [],
+    whyThisNow: 'ลูกค้าขอแก้งานผ่าน LINE ที่กระจัดกระจาย การจดออกมาก่อนจะช่วยให้เริ่มทำทีละจุดได้ง่ายขึ้น',
+    situationSummary: 'ลูกค้าขอแก้งานโลโก้ 3 จุด (สี ฟอนต์ ขนาดโลโก้) ข้อมูลอยู่กระจายใน LINE ยังไม่ตอบลูกค้า',
+    starterMicroSteps: [
+      'เปิด LINE หาข้อความที่ลูกค้าบรีฟเรื่องโลโก้',
+      'จดรายการแก้สี ฟอนต์ และขนาดโลโก้ลง Notes',
+      'เช็กให้ชัวร์ว่ามีแค่ 3 จุดนี้',
+    ],
+    meta: { model: 'mock', usedRoomFiles: [], repairUsed: false },
+  };
+
+  const payload = buildPayloadFromAiActionResponse('client_response', response, [], {
+    deliverableType: 'execution',
+    immediateNeed: 'send_reply_now',
+    missingInputs: [],
+    workContext: 'ลูกค้าขอแก้งานโลโก้ 3 จุด (สี ฟอนต์ ขนาดโลโก้) ข้อมูลอยู่กระจายใน LINE ยังไม่ตอบลูกค้า',
+    behaviorIntent: 'client_delivery',
+    confidence: 0.9,
+  }, task);
+
+  assert.equal(
+    payload.recommended_action.title,
+    'ร่างคำตอบลูกค้า 3 บรรทัดจากรายการแก้สี ฟอนต์ และขนาดโลโก้',
+  );
+  assert.equal(
+    payload.situation_summary,
+    'จดรายการแก้โลโก้ 3 จุด (สี ฟอนต์ ขนาดโลโก้) เรียบร้อยแล้ว',
+  );
+  assert.deepEqual(payload.recommended_action.micro_steps, [
+    'เรียบเรียง 3 จุดที่จดไว้เป็นประโยคตอบกลับ',
+    'ตรวจทานความถูกต้องก่อนส่งให้ลูกค้า',
+    'กดส่งข้อความทาง LINE',
+  ]);
 });
 
 test('buildPayloadFromAiActionResponse grounds student report without customer framing', () => {
