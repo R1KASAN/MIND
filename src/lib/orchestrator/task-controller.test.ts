@@ -1478,6 +1478,165 @@ test('handleDump writes lastStableSummary from action operation success', async 
   }
 });
 
+test('handleDump carries completed room context into follow-up input before grounding reentry copy', async () => {
+  const completedLogoContext = 'ลูกค้าขอแก้งานโลโก้ 3 จุด (สี ฟอนต์ ขนาดโลโก้) ข้อมูลอยู่กระจายใน LINE ยังไม่ตอบลูกค้า อยากได้ก้าวเดียวเริ่มงานได้โดยไม่เปิดทุกอย่างพร้อมกัน';
+  const followUpText = 'ทำก้าวแรกเสร็จแล้ว แต่ยังไม่แน่ใจว่าควรทำอะไรต่อดี อยากต่อจากบริบทเดิม ไม่อยากเริ่มใหม่ทั้งหมด';
+  const session = normalizeSession({
+    lastActive: 100,
+    uiRoute: 'DUMP_ENTRY',
+    notThisCount: 0,
+    currentActionId: null,
+    currentPayload: undefined,
+    activeDumpContext: {
+      text: completedLogoContext,
+      createdAt: 1,
+      lastAttemptAt: 2,
+    },
+    task: makeTask({
+      lifecycleState: 'dumped',
+      currentActionId: null,
+      sourceText: completedLogoContext,
+      currentStepIndex: 0,
+    }),
+  });
+  const sessionRef: { current: AppSession | null } = { current: session };
+  let latestSession: AppSession | null = session;
+  let currentPayload: AiSynthesisResponse | null = null;
+  let currentActionState: Action | null = null;
+  let intakeSourceText = '';
+  let actionSourceText = '';
+
+  const originalFetch = global.fetch;
+  global.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    const body = init?.body ? JSON.parse(String(init.body)) : {};
+
+    if (url.includes('/api/ai/intake')) {
+      intakeSourceText = body.task?.sourceText ?? '';
+      return new Response(JSON.stringify({
+        workflowType: 'client_resume',
+        roomDigest: 'แนะนำขั้นตอนต่อไปตามบริบทเดิม',
+        taskFrame: {
+          objective: 'แนะนำขั้นตอนต่อไปตามบริบทเดิม',
+          stage: 'คุณทำก้าวแรกเสร็จสิ้นแล้วและต้องการคำแนะนำในการดำเนินการต่อไปโดยอิงจากบริบทเดิม',
+          stakeholders: ['ลูกค้า'],
+        },
+        blockers: [],
+        requiresClarification: false,
+        clarificationQuestion: null,
+        taskShape: {
+          deliverableType: 'execution',
+          immediateNeed: 'send_reply_now',
+          missingInputs: [],
+          workContext: 'ลูกค้าขอแก้งานโลโก้ 3 จุด (สี ฟอนต์ ขนาดโลโก้) ข้อมูลอยู่กระจายใน LINE ยังไม่ตอบลูกค้า',
+          confidence: 0.9,
+        },
+        candidateActions: [
+          {
+            title: 'เปิด LINE แล้วจดรายการแก้โลโก้ 3 จุด: สี / ฟอนต์ / ขนาดโลโก้',
+            rationale: 'รวมจุดที่ต้องแก้ให้อยู่ที่เดียวกันก่อน จะได้ไม่ตกหล่น',
+            kind: 'resume_first',
+          },
+        ],
+        meta: {
+          model: 'test-intake',
+          repairUsed: false,
+          usedRoomFiles: [],
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.includes('/api/ai/action')) {
+      actionSourceText = body.task?.sourceText ?? '';
+      return new Response(JSON.stringify({
+        chosenAction: {
+          title: 'เปิด LINE แล้วจดรายการแก้โลโก้ 3 จุด: สี / ฟอนต์ / ขนาดโลโก้',
+          rationale: 'รวมจุดที่ต้องแก้ให้อยู่ที่เดียวกันก่อน จะได้ไม่ตกหล่น',
+          successSignal: 'ได้รายการแก้โลโก้ 3 จุดที่ชัดเจน',
+        },
+        alternatives: [],
+        whyThisNow: 'ลูกค้าขอแก้งานผ่าน LINE ที่กระจัดกระจาย การจดออกมาก่อนจะช่วยให้เริ่มทำทีละจุดได้ง่ายขึ้น',
+        situationSummary: 'ลูกค้าขอแก้งานโลโก้ 3 จุด (สี ฟอนต์ ขนาดโลโก้) ข้อมูลอยู่กระจายใน LINE ยังไม่ตอบลูกค้า',
+        meta: {
+          model: 'test-action',
+          repairUsed: false,
+          usedRoomFiles: [],
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    throw new Error(`unexpected fetch call to ${url}`);
+  };
+
+  try {
+    const controller = createTaskController({
+      session,
+      sessionRef,
+      currentPayload,
+      currentActionState,
+      clarificationPrompt: '',
+      dumpStartTime: null,
+      aiModel: 'qwen2.5:3b',
+      setSession: (value) => {
+        latestSession = value;
+        if (value) sessionRef.current = value;
+      },
+      setCurrentPayload: (value) => {
+        currentPayload = value;
+      },
+      setCurrentActionState: (value) => {
+        currentActionState = value;
+      },
+      setManualFallbackSuggestedActions: () => undefined,
+      setManualFallbackRetryable: () => undefined,
+      setClarificationPrompt: () => undefined,
+      setCurrentWhyThisNow: () => undefined,
+      setCurrentRescueState: () => undefined,
+      setIsRescueLoading: () => undefined,
+      setIsNegotiatingAction: () => undefined,
+      setIsReentryLoading: () => undefined,
+      isScaffoldRefining: false,
+      setIsScaffoldRefining: () => undefined,
+      setScaffoldRefineFeedback: () => undefined,
+      setDumpStartTime: () => undefined,
+      recordAiOpsEntry: () => undefined,
+      persistSession: async () => undefined,
+      persistActionSave: async () => undefined,
+      persistActionUpdate: async () => undefined,
+    });
+
+    await controller.handleDump({
+      text: followUpText,
+      sourceText: followUpText,
+      extractedText: '',
+      sourceFiles: [],
+    });
+
+    assert.match(intakeSourceText, /ลูกค้าขอแก้งานโลโก้ 3 จุด/);
+    assert.match(intakeSourceText, /ทำก้าวแรกเสร็จแล้ว/);
+    assert.match(actionSourceText, /MIND_COMPLETED_CONTEXT_REUSE:first_step_done/);
+    assert.match(actionSourceText, /สี ฟอนต์ ขนาดโลโก้/);
+    assert.equal(
+      currentPayload?.recommended_action.title,
+      'ร่างคำตอบลูกค้า 3 บรรทัดจากรายการแก้สี ฟอนต์ และขนาดโลโก้',
+    );
+    assert.equal(
+      latestSession?.task?.currentPlan?.actionTitle,
+      'ร่างคำตอบลูกค้า 3 บรรทัดจากรายการแก้สี ฟอนต์ และขนาดโลโก้',
+    );
+    assert.doesNotMatch(currentPayload?.recommended_action.title ?? '', /เปิด LINE แล้วจดรายการแก้โลโก้/);
+    assert.doesNotMatch(currentPayload?.situation_summary ?? '', /ยังไม่ตอบลูกค้า/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('handleRetry falls back deterministically without calling legacy synthesis route', async () => {
   const payload = makePayload();
   const task = makeTask({

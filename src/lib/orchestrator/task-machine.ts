@@ -34,6 +34,7 @@ import {
   buildStudentReportStepFallback,
   collectRawRoomSourceContext,
   collectTrustedSourceContext,
+  hasCompletedContextReuseHandoff,
   hasDisallowedExternalStakeholderOutput,
   isInternalPresentationPrepText,
   isLogoRevisionText,
@@ -393,7 +394,7 @@ function buildGroundedArtifactMicroSteps(
   const rawContext = collectRawRoomSourceContext(task);
   const hasLogoRevision = isLogoRevisionText(rawContext);
   if (hasLogoRevision) {
-    const isReentry = taskShape?.immediateNeed === 'resume_execution';
+    const isReentry = taskShape?.immediateNeed === 'resume_execution' || hasCompletedContextReuseHandoff(rawContext);
     return buildLogoRevisionStepFallback(task?.sourceText, isReentry);
   }
 
@@ -559,7 +560,7 @@ function buildSourceGroundedActionResponse(
   }
 
   if (isLogoRevisionText(rawContext)) {
-    const isReentry = taskShape?.immediateNeed === 'resume_execution';
+    const isReentry = taskShape?.immediateNeed === 'resume_execution' || hasCompletedContextReuseHandoff(rawContext);
     const fallback = buildLogoRevisionActionFallback(rawContext, isReentry);
     return {
       ...response,
@@ -745,7 +746,7 @@ function buildSourceGroundedIntake(intake: AiIntakeResponse, task: TaskContext):
   }
 
   if (isLogoRevisionText(rawContext)) {
-    const isReentry = intake.taskShape?.immediateNeed === 'resume_execution';
+    const isReentry = intake.taskShape?.immediateNeed === 'resume_execution' || hasCompletedContextReuseHandoff(rawContext);
     const fallback = buildLogoRevisionActionFallback(rawContext, isReentry);
     return {
       ...intake,

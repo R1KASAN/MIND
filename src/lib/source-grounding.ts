@@ -54,6 +54,7 @@ export const PRODUCT_POST_STEP_FALLBACK = [
 ];
 
 export const PRODUCT_POST_RESCUE_STEP = 'ร่าง caption 3 บรรทัดจากจุดขาย เบา ซักง่าย และ 3 สี';
+export const COMPLETED_CONTEXT_REUSE_HANDOFF = 'MIND_COMPLETED_CONTEXT_REUSE:first_step_done';
 
 export function normalizeGroundingText(value: string | undefined) {
   return value?.toLowerCase().replace(/\s+/g, ' ').trim() ?? '';
@@ -89,6 +90,10 @@ export function isLogoRevisionText(value: string | undefined) {
   return /โลโก้/u.test(text) && /สี/u.test(text) && /ฟอนต์/u.test(text);
 }
 
+export function hasCompletedContextReuseHandoff(value: string | undefined) {
+  return value?.includes(COMPLETED_CONTEXT_REUSE_HANDOFF) === true;
+}
+
 export function isOverloadedWorkText(value: string | undefined) {
   const text = normalizeGroundingText(value);
   return /งานค้าง/u.test(text) && (/พอร์ต/u.test(text) || /ใบเสนอราคา/u.test(text) || /เรซูเม่/u.test(text) || /แชทงาน/u.test(text));
@@ -111,6 +116,7 @@ export function guardStalePhrases(text: string | undefined, task?: TaskContext):
 
   // Unconditionally sanitize generic AI boilerplate that leaks into side panels and reentry
   result = result.replace(/แนะนำก้าวต่อไปในการทำงานตามบริบทเดิมของลูกค้า/g, 'แนะนำก้าวต่อไปจากบริบทงานเดิม');
+  result = result.replace(/แนะนำก้าวต่อไปที่สอดคล้องกับบริบทเดิมของลูกค้า/g, 'แนะนำก้าวต่อไปที่สอดคล้องกับบริบทเดิม');
   result = result.replace(/ลูกค้าต้องการต่อยอดจากงานที่ทำเสร็จแล้ว/g, 'พร้อมต่อยอดจากงานที่ทำเสร็จแล้ว');
 
   if (!hasRenewableInSource) {
@@ -130,6 +136,21 @@ export function guardStalePhrases(text: string | undefined, task?: TaskContext):
     result = result.replace(/customers?/gi, 'ตัวเอง');
     result = result.replace(/ผู้ว่าจ้าง/g, 'ตัวเอง');
   }
+
+  const hasLogo = /โลโก้/iu.test(rawContext) && /สี/iu.test(rawContext) && /ฟอนต์/iu.test(rawContext) && /ขนาดโลโก้/iu.test(rawContext);
+  if (hasLogo && hasCustomerInSource) {
+    const genericReentryRegex = /แนะนำก้าวต่อไป|แนะนำแนวทางต่อไป|แนะนำขั้นตอนต่อไป|ตามบริบทเดิม|อิงจากบริบทเดิม|ดำเนินการต่อไป|ต่อยอดจากก้าวแรก|ร่างข้อความตอบรับคำขอแก้ไขโลโก้|ลูกค้าทำก้าวแรกเสร็จแล้ว/i;
+    if (genericReentryRegex.test(result)) {
+      result = 'ร่างคำตอบลูกค้า 3 บรรทัดจากรายการแก้สี ฟอนต์ และขนาดโลโก้';
+    }
+  } else {
+    result = result.replace(/แนะนำแนวทางต่อไปเพื่อต่อยอดจากก้าวแรก/g, 'แนะนำแนวทางต่อไปจากก้าวแรก');
+    result = result.replace(/แนะนำแนวทางการทำงานต่อจากก้าวแรกตามบริบทเดิม/g, 'แนะนำแนวทางการทำงานต่อจากก้าวแรก');
+    result = result.replace(/ลูกค้าทำก้าวแรกเสร็จแล้วและต้องการคำแนะนำในการดำเนินงานต่อไปตามบริบทเดิม/g, 'ทำก้าวแรกเสร็จแล้วและพร้อมดำเนินงานต่อ');
+    result = result.replace(/แนะนำขั้นตอนต่อไปตามบริบทเดิม/g, 'แนะนำขั้นตอนต่อไป');
+    result = result.replace(/คุณทำก้าวแรกเสร็จสิ้นแล้วและต้องการคำแนะนำในการดำเนินการต่อไปโดยอิงจากบริบทเดิม/g, 'ทำก้าวแรกเสร็จแล้วและพร้อมดำเนินงานต่อ');
+  }
+
   return result;
 }
 

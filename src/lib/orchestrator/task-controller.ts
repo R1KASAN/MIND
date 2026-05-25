@@ -1,6 +1,7 @@
 import {
   buildPreferredRoomSourceContext,
   createAutoRoomSourcePreference,
+  stripRoomFileContext,
   type RoomSubmission,
 } from '@/lib/room';
 import { trackEvent } from '@/lib/instrumentation';
@@ -84,8 +85,29 @@ import {
   recordCompletedCycleInRoomMemory,
   SynthesisFailure,
 } from '@/lib/orchestrator/task-events';
+import { COMPLETED_CONTEXT_REUSE_HANDOFF } from '@/lib/source-grounding';
 
 type Setter<T> = (value: T) => void;
+
+function mergeSubmissionWithActiveDumpContext(
+  submissionText: string,
+  base?: AppSession | null,
+) {
+  const existingContext = base?.activeDumpContext?.text;
+  if (!base?.task || base.task.lifecycleState !== 'dumped' || !existingContext) return submissionText;
+
+  const previous = stripRoomFileContext(existingContext).trim();
+  const incoming = stripRoomFileContext(submissionText).trim();
+  if (!previous || !incoming) return submissionText;
+
+  const normalizedPrevious = previous.replace(/\s+/g, ' ');
+  const normalizedIncoming = incoming.replace(/\s+/g, ' ');
+  if (normalizedIncoming.includes(normalizedPrevious) || normalizedPrevious.includes(normalizedIncoming)) {
+    return submissionText;
+  }
+
+  return `${previous}\n\n${COMPLETED_CONTEXT_REUSE_HANDOFF}\n\nอัปเดตล่าสุด:\n${incoming}`;
+}
 
 export interface ActionNegotiationInput {
   mode: AiActionNegotiationMode;
@@ -1363,8 +1385,12 @@ export function createTaskController(bindings: TaskControllerBindings) {
       bindings.setDumpStartTime(Date.now());
       const createdAt = Date.now();
       const sourcePreference = createAutoRoomSourcePreference(submission.sourceFiles, createdAt);
-      const preferredSourceContext = buildPreferredRoomSourceContext(
+      const submissionText = mergeSubmissionWithActiveDumpContext(
         submission.text || submission.sourceText,
+        base,
+      );
+      const preferredSourceContext = buildPreferredRoomSourceContext(
+        submissionText,
         submission.sourceFiles,
         sourcePreference,
       );
