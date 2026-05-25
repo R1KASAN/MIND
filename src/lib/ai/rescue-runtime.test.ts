@@ -259,6 +259,95 @@ test('normalizeRescueResponse extracts logo details from attached file into one 
   assert.deepEqual(response.meta.usedRoomFiles, ['logo-revision-email-brief.txt']);
 });
 
+test('normalizeRescueResponse extracts logo details from real demo file heading+line format', () => {
+  const task = makeRescueTask({
+    sourceText: 'ลูกค้าขอแก้งานโลโก้ แต่ brief อยู่ในไฟล์อีเมลที่แนบไว้ ยังไม่ได้ตอบลูกค้า อยากได้ก้าวเดียวที่เริ่มได้ทันที',
+    sourceFiles: [
+      {
+        id: 'file-logo-real',
+        name: 'logo-revision-email-brief.txt',
+        kind: 'text',
+        mimeType: 'text/plain',
+        size: 2005,
+        status: 'ready',
+        createdAt: 1,
+        extractedText: [
+          'Subject: Logo revision brief - color, font, logo size',
+          '',
+          'From: Nara / Client Team',
+          'To: Freelancer',
+          'Date: 2026-05-25',
+          '',
+          'Email context:',
+          'We reviewed the logo draft and need three changes before final approval.',
+          '',
+          '1. Color',
+          'Please change the main logo color from dark navy to a warmer green.',
+          'The green should feel fresh but still professional.',
+          '',
+          '2. Font',
+          'Please use a softer rounded font for the brand name.',
+          'The current font feels too corporate for our audience.',
+          '',
+          '3. Logo size',
+          'Please make the icon mark about 15 percent smaller.',
+          'On the website header it currently feels too dominant.',
+          '',
+          'Client message to reply:',
+          'Could you confirm that you saw these three points and tell us what you will adjust first?',
+        ].join('\n'),
+      },
+    ],
+    currentPlan: {
+      actionTitle: 'จัดการงานแก้โลโก้ 3 จุด',
+      steps: [
+        { id: 'step-1', text: 'เปิด brief ลูกค้า' },
+        { id: 'step-2', text: 'จดรายการแก้สี ฟอนต์ และขนาดโลโก้ลง Notes' },
+        { id: 'step-3', text: 'ร่างคำตอบลูกค้าจากรายการแก้ที่จดไว้' },
+      ],
+    },
+  });
+  const action: Action = {
+    id: 'action-logo-real',
+    createdAt: 1,
+    title: 'จัดการงานแก้โลโก้ 3 จุด',
+    rationale: 'ต้องแปลง brief เป็นรายการแก้ที่ชัดก่อนตอบลูกค้า',
+    microSteps: [
+      'เปิด brief ลูกค้า',
+      'จดรายการแก้สี ฟอนต์ และขนาดโลโก้ลง Notes',
+      'ร่างคำตอบลูกค้าจากรายการแก้ที่จดไว้',
+    ],
+    isPinned: false,
+    state: 'IN_PROGRESS',
+    workflowType: 'client_response',
+  };
+
+  const response = normalizeRescueResponse({
+    task,
+    action,
+    currentStepIndex: 1,
+    rescue: {
+      diagnosis: { primaryReason: 'too_big', explanation: 'ติดเพราะยังไม่ได้แปลง brief เป็นรายการแก้' },
+      rescuePlan: { mode: 'shrink', steps: ['ร่างอัปเดตลูกค้า 3 บรรทัดจากข้อมูลที่มีตอนนี้'] },
+      suggestedMessage: undefined,
+      meta: { model: 'test-rescue', repairUsed: false, usedRoomFiles: [] },
+    },
+  });
+
+  assert.equal(response.rescuePlan.steps.length, 1);
+  const step = response.rescuePlan.steps[0] ?? '';
+  // Must produce specific inline details, not shallow "มีการพูดถึง" summary
+  assert.match(step, /จด 3 รายการนี้ลง Notes/u, `Expected specific rescue but got: "${step}"`);
+  assert.match(step, /warmer green/iu, `Missing warmer green detail in: "${step}"`);
+  assert.match(step, /rounded font/iu, `Missing rounded font detail in: "${step}"`);
+  assert.match(step, /15 percent smaller/iu, `Missing 15 percent detail in: "${step}"`);
+  // Must NOT instruct user to open/read file themselves
+  assert.doesNotMatch(step, /เปิดไฟล์|อ่านไฟล์|คัดจากไฟล์|open file|read file|copy from file|check the brief/iu);
+  // Must NOT use shallow summary fallback
+  assert.doesNotMatch(step, /มีการพูดถึง/u, `Must not use shallow summary fallback. Got: "${step}"`);
+  assert.deepEqual(response.meta.usedRoomFiles, ['logo-revision-email-brief.txt']);
+});
+
 test('normalizeRescueResponse labels summary-only logo rescue and does not invent specifics', () => {
   const task = makeRescueTask({
     sourceText: 'ลูกค้าขอแก้งานโลโก้ 3 จุด สี ฟอนต์ ขนาดโลโก้',

@@ -116,16 +116,36 @@ function extractLogoDetail(text: string, patterns: RegExp[]) {
     .filter(Boolean);
 
   for (const pattern of patterns) {
-    const line = lines.find((candidate) => pattern.test(candidate));
-    if (!line) continue;
+    const lineIndex = lines.findIndex((candidate) => pattern.test(candidate));
+    if (lineIndex < 0) continue;
+    const line = lines[lineIndex];
 
     const detail = line
+      .replace(/^\d+\.\s*/u, '')
       .replace(/^(?:[-*]\s*)?(?:color|สี|font|ฟอนต์|logo\s*size|ขนาดโลโก้|ขนาด)\s*[:：\-–]\s*/iu, '')
       .replace(/^change\s+/iu, 'ปรับ ')
       .replace(/^use\s+/iu, 'ใช้ ')
       .replace(/^make\s+/iu, 'ทำ ')
       .trim();
 
+    // If the heading has useful detail after stripping, use it
+    if (detail && detail !== line && hasSpecificLogoDetail(detail)) return detail;
+
+    // Otherwise look at the next 1–2 lines for actual content
+    for (let offset = 1; offset <= 2 && lineIndex + offset < lines.length; offset++) {
+      const nextLine = lines[lineIndex + offset];
+      // Stop if we hit another section heading
+      if (/^\d+\.\s/u.test(nextLine)) break;
+      const nextDetail = nextLine
+        .replace(/^(?:please\s+)?/iu, '')
+        .replace(/^change\s+/iu, 'ปรับ ')
+        .replace(/^use\s+/iu, 'ใช้ ')
+        .replace(/^make\s+/iu, 'ทำ ')
+        .trim();
+      if (nextDetail && hasSpecificLogoDetail(nextDetail)) return nextDetail;
+    }
+
+    // Fall back to the original detail if nothing better found
     if (detail && detail !== line) return detail;
     return line;
   }
@@ -134,7 +154,7 @@ function extractLogoDetail(text: string, patterns: RegExp[]) {
 }
 
 function hasSpecificLogoDetail(value: string) {
-  return /[:：\-–]|จาก .+ เป็น|from .+ to|ประมาณ\s*\d+|\d+\s*%|smaller|warmer|rounded|brand|header/iu.test(value);
+  return /[:：\-–]|จาก .+ เป็น|from .+ to|ประมาณ\s*\d+|\d+\s*(?:%|percent)|smaller|warmer|rounded|brand|header/iu.test(value);
 }
 
 function buildLogoRescueFromAvailableFiles(task: TaskContext, action?: Action, currentStepIndex = 0): FileBackedRescueStep | null {
