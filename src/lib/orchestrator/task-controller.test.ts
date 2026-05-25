@@ -112,6 +112,7 @@ test('Rescue UI exposes only recovery actions, not completion', () => {
   assert.match(source, /แบ่งก้าวนี้ให้เล็กลงแล้วนำไปใช้/);
   assert.match(source, /กลับไปแก้บริบทให้ตรงเคส/);
   assert.match(source, /พักงานนี้ไว้ก่อน เดี๋ยวกลับมาทำต่อ/);
+  assert.match(source, /ใช้ที่มาจาก/);
   assert.doesNotMatch(source, /ทำก้าวนี้เสร็จแล้ว/);
 });
 
@@ -2999,7 +3000,7 @@ test('handleWalkAwayFromRescue replaces stale reentry brief with current rescue 
   assert.deepEqual(latestSession?.task?.reentryBrief?.ignoredNoise, []);
 });
 
-test('handleMakeSmaller from rescue applies the current rescue step without reopening scaffold generation', async () => {
+test('handleMakeSmaller from rescue replaces only current step and preserves future scaffold steps', async () => {
   const payload = makePayload({
     situation_summary: 'ABC Corp รอ incident update หลัง payment API timeout',
     recommended_action: {
@@ -3024,7 +3025,7 @@ test('handleMakeSmaller from rescue applies the current rescue step without reop
     lifecycleState: 'stalled',
     assistantMode: 'rescue_diagnosis',
     currentActionId: 'action-1',
-    currentStepIndex: 0,
+    currentStepIndex: 1,
     lastSynthesis: payload,
     currentPlan: {
       actionTitle: payload.recommended_action.title,
@@ -3076,7 +3077,7 @@ test('handleMakeSmaller from rescue applies the current rescue step without reop
         },
         rescuePlan: {
           mode: 'shrink',
-          steps: ['เปิด Dashboard เช็กสถานะล่าสุดของ payment API แล้วเติมอัปเดต 3 บรรทัดให้ CS'],
+          steps: ['เติม status update 3 บรรทัดจากสถานะ payment API ล่าสุด'],
         },
         suggestedMessage: undefined,
         meta: {
@@ -3122,14 +3123,35 @@ test('handleMakeSmaller from rescue applies the current rescue step without reop
 
     assert.equal(latestSession?.uiRoute, 'SCAFFOLD');
     assert.equal(latestSession?.task?.assistantMode, 'scaffold_refinement');
-    assert.equal(latestSession?.task?.currentPlan?.steps.length, 1);
+    assert.equal(latestSession?.task?.currentStepIndex, 1);
+    assert.equal(latestSession?.task?.currentPlan?.steps.length, 3);
+    assert.equal(latestSession?.task?.currentPlan?.steps[0]?.text, 'เช็ก Dashboard ล่าสุด');
     assert.equal(
-      latestSession?.task?.currentPlan?.steps[0]?.text,
-      'เปิด Dashboard เช็กสถานะล่าสุดของ payment API แล้วเติมอัปเดต 3 บรรทัดให้ CS',
+      latestSession?.task?.currentPlan?.steps[1]?.text,
+      'เติม status update 3 บรรทัดจากสถานะ payment API ล่าสุด',
     );
-    assert.equal(currentPayload?.recommended_action.micro_steps[0], 'เปิด Dashboard เช็กสถานะล่าสุดของ payment API แล้วเติมอัปเดต 3 บรรทัดให้ CS');
-    assert.deepEqual(currentActionState?.microSteps, ['เปิด Dashboard เช็กสถานะล่าสุดของ payment API แล้วเติมอัปเดต 3 บรรทัดให้ CS']);
-    assert.deepEqual(persistedUpdates[0]?.microSteps, ['เปิด Dashboard เช็กสถานะล่าสุดของ payment API แล้วเติมอัปเดต 3 บรรทัดให้ CS']);
+    assert.equal(latestSession?.task?.currentPlan?.steps[2]?.text, 'ส่งให้ทีม CS');
+    assert.deepEqual(currentPayload?.recommended_action.micro_steps, [
+      'เช็ก Dashboard ล่าสุด',
+      'เติม status update 3 บรรทัดจากสถานะ payment API ล่าสุด',
+      'ส่งให้ทีม CS',
+    ]);
+    assert.deepEqual(currentActionState?.microSteps, [
+      'เช็ก Dashboard ล่าสุด',
+      'เติม status update 3 บรรทัดจากสถานะ payment API ล่าสุด',
+      'ส่งให้ทีม CS',
+    ]);
+    assert.deepEqual(persistedUpdates[0]?.microSteps, [
+      'เช็ก Dashboard ล่าสุด',
+      'เติม status update 3 บรรทัดจากสถานะ payment API ล่าสุด',
+      'ส่งให้ทีม CS',
+    ]);
+
+    await controller.handleCompleteScaffold();
+
+    assert.equal(latestSession?.uiRoute, 'SCAFFOLD');
+    assert.equal(latestSession?.task?.currentStepIndex, 2);
+    assert.equal(latestSession?.task?.currentPlan?.steps[2]?.text, 'ส่งให้ทีม CS');
   } finally {
     global.fetch = originalFetch;
   }

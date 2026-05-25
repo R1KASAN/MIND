@@ -102,6 +102,114 @@ function compactStep(value: string) {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+interface FileBackedRescueStep {
+  step: string;
+  explanation?: string;
+  usedRoomFiles: string[];
+}
+
+function extractLogoDetail(text: string, patterns: RegExp[]) {
+  const lines = text
+    .split(/\r?\n|[•]/u)
+    .map((line) => compactStep(line))
+    .filter((line) => !/^subject\s*:/iu.test(line))
+    .filter(Boolean);
+
+  for (const pattern of patterns) {
+    const line = lines.find((candidate) => pattern.test(candidate));
+    if (!line) continue;
+
+    const detail = line
+      .replace(/^(?:[-*]\s*)?(?:color|สี|font|ฟอนต์|logo\s*size|ขนาดโลโก้|ขนาด)\s*[:：\-–]\s*/iu, '')
+      .replace(/^change\s+/iu, 'ปรับ ')
+      .replace(/^use\s+/iu, 'ใช้ ')
+      .replace(/^make\s+/iu, 'ทำ ')
+      .trim();
+
+    if (detail && detail !== line) return detail;
+    return line;
+  }
+
+  return '';
+}
+
+function hasSpecificLogoDetail(value: string) {
+  return /[:：\-–]|จาก .+ เป็น|from .+ to|ประมาณ\s*\d+|\d+\s*%|smaller|warmer|rounded|brand|header/iu.test(value);
+}
+
+function buildLogoRescueFromAvailableFiles(task: TaskContext, action?: Action, currentStepIndex = 0): FileBackedRescueStep | null {
+  const currentStep = compactStep(pickCurrentStep(task, action, currentStepIndex));
+  const stepLooksLogoSpecific = /สี|color|ฟอนต์|font|ขนาดโลโก้|logo\s*size/u.test(currentStep) &&
+    /โลโก้|logo/u.test(`${currentStep} ${task.currentPlan?.actionTitle ?? ''} ${action?.title ?? ''}`);
+
+  if (!stepLooksLogoSpecific) return null;
+
+  const readyFiles = task.sourceFiles.filter((file) => file.status === 'ready');
+  const relevantFiles = readyFiles.filter((file) => {
+    const text = `${file.name} ${file.extractedText ?? ''}`.toLowerCase();
+    return /logo|โลโก้|font|ฟอนต์|color|สี|size|ขนาด/u.test(text);
+  });
+  const fileTexts = relevantFiles
+    .map((file) => ({ name: file.name, text: file.extractedText?.trim() ?? '' }))
+    .filter((file) => file.text);
+
+  const combinedFileText = fileTexts.map((file) => file.text).join('\n');
+  const trustedSummary = task.extractedText;
+  const sourceForSummary = combinedFileText || trustedSummary;
+  const hasRelevantFileContext = fileTexts.length > 0 || /สรุปจากไฟล์|file summary/iu.test(trustedSummary);
+
+  if (!hasRelevantFileContext) {
+    return {
+      step: 'เขียนหัวข้อเปล่า 3 ช่องใน Notes ก่อน:\n- สี\n- ฟอนต์\n- ขนาดโลโก้',
+      usedRoomFiles: [],
+    };
+  }
+
+  const color = extractLogoDetail(sourceForSummary, [
+    /(?:^|[\s:：\-–])(?:สี|color)(?:[\s:：\-–]|$)/iu,
+    /dark\s*navy|warmer\s*green|brand\s*color/iu,
+  ]);
+  const font = extractLogoDetail(sourceForSummary, [
+    /(?:^|[\s:：\-–])(?:ฟอนต์|font)(?:[\s:：\-–]|$)/iu,
+    /rounded\s*font|brand\s*name|corporate/iu,
+  ]);
+  const logoSize = extractLogoDetail(sourceForSummary, [
+    /(?:ขนาดโลโก้|logo\s*size|icon\s*mark|header)/iu,
+    /\d+\s*%|smaller/iu,
+  ]);
+
+  const isSummaryOnly = /สรุปจากไฟล์|สรุปไฟล์|file summary/iu.test(sourceForSummary);
+  const hasSpecificDetails = !isSummaryOnly && [color, font, logoSize].every((detail) => detail && hasSpecificLogoDetail(detail));
+  const usedRoomFiles = fileTexts.map((file) => file.name);
+
+  if (hasSpecificDetails) {
+    return {
+      explanation: 'ยังไม่ได้แปลง brief จากลูกค้าให้เป็นรายการแก้โลโก้ที่ชัดเจน จึงยังไม่พร้อมร่างคำตอบลูกค้า',
+      step: [
+        'จด 3 รายการนี้ลง Notes:',
+        `- สี: ${color}`,
+        `- ฟอนต์: ${font}`,
+        `- ขนาดโลโก้: ${logoSize}`,
+      ].join('\n'),
+      usedRoomFiles,
+    };
+  }
+
+  if (hasRelevantFileContext) {
+    return {
+      step: [
+        'จากสรุปไฟล์ที่มีตอนนี้ จดหัวข้อที่พบใน Notes:',
+        '- สี: มีการพูดถึงการปรับสี',
+        '- ฟอนต์: มีการพูดถึงฟอนต์',
+        '- ขนาดโลโก้: มีการพูดถึงขนาดโลโก้',
+      ].join('\n'),
+      usedRoomFiles,
+    };
+  }
+
+  return null;
+}
+
 function looksLikeBroadPlan(value: string) {
   const normalized = value.toLowerCase();
   return includesAny(normalized, [
@@ -112,6 +220,9 @@ function looksLikeBroadPlan(value: string) {
 }
 
 function buildGroundedSingleRescueStep(task: TaskContext, action?: Action, currentStepIndex = 0) {
+  const fileBackedStep = buildLogoRescueFromAvailableFiles(task, action, currentStepIndex);
+  if (fileBackedStep) return fileBackedStep.step;
+
   const context = normalizeContextText(task, action, currentStepIndex);
   const lower = context.toLowerCase();
   const trustedLower = normalizeTrustedContextText(task).toLowerCase();
@@ -202,20 +313,32 @@ export function normalizeRescueResponse(options: {
   rescue: AiRescueResponse;
 }): AiRescueResponse {
   const { task, action, currentStepIndex, rescue } = options;
-  const singleStep = buildGroundedSingleRescueStep(task, action, currentStepIndex);
+  const fileBackedStep = buildLogoRescueFromAvailableFiles(task, action, currentStepIndex);
+  const singleStep = fileBackedStep?.step ?? buildGroundedSingleRescueStep(task, action, currentStepIndex);
   const reason = rescue.diagnosis.primaryReason;
   const mode = reason === 'missing_context'
     ? 'clarify'
     : reason === 'dependency'
       ? 'follow_up'
       : 'shrink';
+  const usedRoomFiles = fileBackedStep
+    ? fileBackedStep.usedRoomFiles
+    : rescue.meta.usedRoomFiles;
 
   return {
     ...rescue,
+    diagnosis: {
+      ...rescue.diagnosis,
+      explanation: fileBackedStep?.explanation ?? rescue.diagnosis.explanation,
+    },
     rescuePlan: {
       ...rescue.rescuePlan,
       mode,
       steps: [singleStep],
+    },
+    meta: {
+      ...rescue.meta,
+      usedRoomFiles,
     },
   };
 }
@@ -507,7 +630,8 @@ export function buildManualRescueResponse(options: {
     .slice(0, 180);
 
   let mode: 'clarify' | 'follow_up' | 'shrink' | 'pause_cleanly' = 'shrink';
-  const steps = [buildGroundedSingleRescueStep(task, action, currentStepIndex)];
+  const fileBackedStep = buildLogoRescueFromAvailableFiles(task, action, currentStepIndex);
+  const steps = [fileBackedStep?.step ?? buildGroundedSingleRescueStep(task, action, currentStepIndex)];
 
   if (isThai) {
     if (primary === 'customer_pressure') {
@@ -535,10 +659,6 @@ export function buildManualRescueResponse(options: {
     }
   }
 
-  const readyFiles = task.sourceFiles
-    .filter((file) => file.status === 'ready')
-    .map((file) => file.name);
-
   return {
     diagnosis: {
       primaryReason: primary === 'customer_pressure' ? 'dependency'
@@ -546,7 +666,7 @@ export function buildManualRescueResponse(options: {
                    : primary === 'overload' ? 'low_energy'
                    : primary === 'missing_info' ? 'unclear_scope'
                    : 'too_big',
-      explanation,
+      explanation: fileBackedStep?.explanation ?? explanation,
     },
     rescuePlan: {
       mode,
@@ -558,7 +678,7 @@ export function buildManualRescueResponse(options: {
       passType: 'fallback_pass',
       durationMs,
       confidence: 0.55,
-      usedRoomFiles: readyFiles,
+      usedRoomFiles: fileBackedStep?.usedRoomFiles ?? [],
       repairUsed: false,
     },
     source: 'manual_fallback',

@@ -193,6 +193,158 @@ test('normalizeRescueResponse keeps exactly one grounded smaller step for the in
   assert.doesNotMatch(response.rescuePlan.steps[0] ?? '', /CPU spike|10:20/u);
 });
 
+test('normalizeRescueResponse extracts logo details from attached file into one rescue step', () => {
+  const task = makeRescueTask({
+    sourceText: 'ลูกค้าขอแก้งานโลโก้ 3 จุด สี ฟอนต์ ขนาดโลโก้ ยังไม่ตอบลูกค้า',
+    sourceFiles: [
+      {
+        id: 'file-logo',
+        name: 'logo-revision-email-brief.txt',
+        kind: 'text',
+        mimeType: 'text/plain',
+        size: 500,
+        status: 'ready',
+        createdAt: 1,
+        extractedText: [
+          'Subject: Logo revision brief - color, font, logo size',
+          'Color: Change the main logo color from dark navy to warmer green.',
+          'Font: Use a softer rounded font for the brand name; current font feels too corporate.',
+          'Logo size: Make the icon mark about 15% smaller because the website header feels too dominant.',
+        ].join('\n'),
+      },
+    ],
+    currentPlan: {
+      actionTitle: 'จัดการงานแก้โลโก้ 3 จุด',
+      steps: [
+        { id: 'step-1', text: 'เปิด brief ลูกค้า' },
+        { id: 'step-2', text: 'จดรายการแก้สี ฟอนต์ และขนาดโลโก้ลง Notes' },
+        { id: 'step-3', text: 'ร่างคำตอบลูกค้าจากรายการแก้ที่จดไว้' },
+      ],
+    },
+  });
+  const action: Action = {
+    id: 'action-logo',
+    createdAt: 1,
+    title: 'จัดการงานแก้โลโก้ 3 จุด',
+    rationale: 'ต้องแปลง brief เป็นรายการแก้ที่ชัดก่อนตอบลูกค้า',
+    microSteps: [
+      'เปิด brief ลูกค้า',
+      'จดรายการแก้สี ฟอนต์ และขนาดโลโก้ลง Notes',
+      'ร่างคำตอบลูกค้าจากรายการแก้ที่จดไว้',
+    ],
+    isPinned: false,
+    state: 'IN_PROGRESS',
+    workflowType: 'client_response',
+  };
+
+  const response = normalizeRescueResponse({
+    task,
+    action,
+    currentStepIndex: 1,
+    rescue: {
+      diagnosis: { primaryReason: 'too_big', explanation: 'ติดเพราะยังไม่ได้แปลง brief เป็นรายการแก้' },
+      rescuePlan: { mode: 'shrink', steps: ['ร่างอัปเดตลูกค้า 3 บรรทัดจากข้อมูลที่มีตอนนี้'] },
+      suggestedMessage: undefined,
+      meta: { model: 'test-rescue', repairUsed: false, usedRoomFiles: [] },
+    },
+  });
+
+  assert.equal(response.rescuePlan.steps.length, 1);
+  const step = response.rescuePlan.steps[0] ?? '';
+  assert.match(step, /จด 3 รายการนี้ลง Notes/u);
+  assert.match(step, /สี: .*dark navy.*warmer green/iu);
+  assert.match(step, /ฟอนต์: .*rounded font.*brand name/iu);
+  assert.match(step, /ขนาดโลโก้: .*15% smaller.*header/iu);
+  assert.doesNotMatch(step, /เปิดไฟล์|อ่านไฟล์|คัดจากไฟล์|open file|read file|copy from file/iu);
+  assert.deepEqual(response.meta.usedRoomFiles, ['logo-revision-email-brief.txt']);
+});
+
+test('normalizeRescueResponse labels summary-only logo rescue and does not invent specifics', () => {
+  const task = makeRescueTask({
+    sourceText: 'ลูกค้าขอแก้งานโลโก้ 3 จุด สี ฟอนต์ ขนาดโลโก้',
+    sourceFiles: [
+      {
+        id: 'file-logo-summary',
+        name: 'logo-revision-email-brief.txt',
+        kind: 'text',
+        mimeType: 'text/plain',
+        size: 300,
+        status: 'ready',
+        createdAt: 1,
+        extractedText: 'สรุปจากไฟล์ที่มีตอนนี้: อีเมลพูดถึงการแก้สี ฟอนต์ และขนาดโลโก้ แต่ไม่มีรายละเอียดเฉพาะในสรุปนี้',
+      },
+    ],
+    currentPlan: {
+      actionTitle: 'จัดการงานแก้โลโก้ 3 จุด',
+      steps: [{ id: 'step-1', text: 'จดรายการแก้สี ฟอนต์ และขนาดโลโก้ลง Notes' }],
+    },
+  });
+
+  const response = normalizeRescueResponse({
+    task,
+    currentStepIndex: 0,
+    rescue: {
+      diagnosis: { primaryReason: 'too_big', explanation: 'ติดเพราะยังไม่ได้แยกรายการแก้' },
+      rescuePlan: { mode: 'shrink', steps: ['ร่างอัปเดตลูกค้า 3 บรรทัด'] },
+      suggestedMessage: undefined,
+      meta: { model: 'test-rescue', repairUsed: false, usedRoomFiles: [] },
+    },
+  });
+
+  const step = response.rescuePlan.steps[0] ?? '';
+  assert.equal(response.rescuePlan.steps.length, 1);
+  assert.match(step, /จากสรุปไฟล์ที่มีตอนนี้/u);
+  assert.match(step, /สี: มีการพูดถึงการปรับสี/u);
+  assert.match(step, /ฟอนต์: มีการพูดถึงฟอนต์/u);
+  assert.match(step, /ขนาดโลโก้: มีการพูดถึงขนาดโลโก้/u);
+  assert.doesNotMatch(step, /dark navy|warmer green|15%|rounded font/iu);
+  assert.deepEqual(response.meta.usedRoomFiles, ['logo-revision-email-brief.txt']);
+});
+
+test('normalizeRescueResponse gives structure-only logo rescue when no relevant file exists', () => {
+  const task = makeRescueTask({
+    sourceText: 'ลูกค้าขอแก้งานโลโก้ 3 จุด สี ฟอนต์ ขนาดโลโก้ ยังไม่รู้จะเริ่มจดยังไง',
+    lastSynthesis: {
+      workflow_type: 'client_response',
+      requires_clarification: false,
+      situation_summary: 'ลูกค้าขอแก้งานโลโก้ 3 จุด สี ฟอนต์ และขนาดโลโก้',
+      recommended_action: {
+        title: 'จดรายการแก้โลโก้',
+        rationale: 'ต้องแยกรายการก่อน',
+        micro_steps: [
+          'จดรายการแก้สี ฟอนต์ และขนาดโลโก้ลง Notes',
+          'ทวนรายการที่จดไว้',
+          'ร่างคำตอบลูกค้า',
+        ],
+        micro_steps_source: 'fallback',
+      },
+      alternative_actions: [],
+      detected_blockers: [],
+    },
+    currentPlan: {
+      actionTitle: 'จัดการงานแก้โลโก้ 3 จุด',
+      steps: [{ id: 'step-1', text: 'จดรายการแก้สี ฟอนต์ และขนาดโลโก้ลง Notes' }],
+    },
+  });
+
+  const response = normalizeRescueResponse({
+    task,
+    currentStepIndex: 0,
+    rescue: {
+      diagnosis: { primaryReason: 'too_big', explanation: 'ติดเพราะยังไม่ได้แยกรายการแก้' },
+      rescuePlan: { mode: 'shrink', steps: ['ร่างอัปเดตลูกค้า 3 บรรทัด'] },
+      suggestedMessage: undefined,
+      meta: { model: 'test-rescue', repairUsed: false, usedRoomFiles: ['stale-file.txt'] },
+    },
+  });
+
+  const step = response.rescuePlan.steps[0] ?? '';
+  assert.equal(response.rescuePlan.steps.length, 1);
+  assert.equal(step, 'เขียนหัวข้อเปล่า 3 ช่องใน Notes ก่อน:\n- สี\n- ฟอนต์\n- ขนาดโลโก้');
+  assert.doesNotMatch(step, /ไฟล์|อีเมล|file|email/iu);
+  assert.deepEqual(response.meta.usedRoomFiles, []);
+});
+
 test('normalizeRescueResponse keeps Browser QA rescue grounded and does not invent customer context', () => {
   const task = makeRescueTask({
     sourceText: [

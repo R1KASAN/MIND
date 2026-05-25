@@ -70,6 +70,8 @@ export function Rescue({
   onWalkAway,
   focusMode = true,
 }: Props) {
+  const usedRoomFiles = rescueState?.meta.usedRoomFiles.filter((name) => name.trim()) ?? [];
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.85rem', paddingTop: '1.5rem', paddingBottom: 'calc(2rem + env(safe-area-inset-bottom))' }}>
       {!rescueState ? (
@@ -115,6 +117,40 @@ export function Rescue({
               ))}
             </div>
           </div>
+
+          {usedRoomFiles.length > 0 && (
+            <div
+              style={{
+                padding: '0.9rem 1rem',
+                borderRadius: 'var(--radius)',
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid rgba(255,255,255,0.08)',
+              }}
+            >
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.4rem' }}>
+                ใช้ที่มาจาก
+              </p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.45rem' }}>
+                {usedRoomFiles.map((name) => (
+                  <span
+                    key={name}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      padding: '0.32rem 0.58rem',
+                      borderRadius: '999px',
+                      background: 'rgba(94, 106, 210, 0.14)',
+                      border: '1px solid rgba(94, 106, 210, 0.28)',
+                      color: 'var(--text-primary)',
+                      fontSize: '0.82rem',
+                    }}
+                  >
+                    {name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           {rescueState.suggestedMessage && (
             focusMode ? (

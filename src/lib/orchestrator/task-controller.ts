@@ -968,35 +968,38 @@ export function createTaskController(bindings: TaskControllerBindings) {
       bindings.setIsScaffoldRefining(true);
       try {
         const rescueState = bindings.currentRescueState;
-        const appliedAction: Action = {
-          ...currentAction,
-          title: currentPayload.recommended_action.title,
-          rationale: currentPayload.recommended_action.rationale,
-          microSteps: [rescueStep],
-          microStepsSource: 'fallback',
-          state: currentAction.state ?? 'IN_PROGRESS',
-        };
-        const nextPayload: AiSynthesisResponse = {
-          ...currentPayload,
-          recommended_action: {
-            ...currentPayload.recommended_action,
-            micro_steps: [rescueStep],
-            micro_steps_source: 'fallback',
-          },
-        };
-        const existingStep = currentTask.currentPlan?.steps[currentTask.currentStepIndex] ?? currentTask.currentPlan?.steps[0];
-        const nextTask: TaskContext = {
-          ...taskForScaffold,
-          lifecycleState: 'in_scaffold',
-          assistantMode: 'scaffold_refinement',
-          currentActionId: appliedAction.id,
-          currentStepIndex: 0,
-          lastSynthesis: nextPayload,
-          lastFailureReason: undefined,
-          currentPlan: {
-            actionTitle: currentPayload.recommended_action.title,
-            successSignal: currentTask.currentPlan?.successSignal,
-            steps: [
+        const existingPlanSteps = currentTask.currentPlan?.steps ?? [];
+        const currentStepIndex = Math.min(
+          Math.max(currentTask.currentStepIndex, 0),
+          Math.max(existingPlanSteps.length - 1, 0),
+        );
+        const existingStep = existingPlanSteps[currentStepIndex] ?? currentTask.currentPlan?.steps[0];
+        const existingMicroSteps = currentAction.microSteps.length > 0
+          ? [...currentAction.microSteps]
+          : [...currentPayload.recommended_action.micro_steps];
+        const microStepIndex = Math.min(
+          Math.max(currentTask.currentStepIndex, 0),
+          Math.max(existingMicroSteps.length - 1, 0),
+        );
+        if (existingMicroSteps.length === 0) {
+          existingMicroSteps.push(rescueStep);
+        } else {
+          existingMicroSteps[microStepIndex] = rescueStep;
+        }
+        const nextPlanSteps = existingPlanSteps.length > 0
+          ? existingPlanSteps.map((step, index) => index === currentStepIndex
+              ? {
+                  ...step,
+                  text: rescueStep,
+                  provenance: {
+                    ...(step.provenance ?? {}),
+                    generatedAt: Date.now(),
+                    generatedBy: 'rescue' as const,
+                    sourceIds: step.provenance?.sourceIds ?? [],
+                  },
+                }
+              : step)
+          : [
               {
                 ...existingStep,
                 id: existingStep?.id ?? 'rescue-step-1',
@@ -1004,11 +1007,39 @@ export function createTaskController(bindings: TaskControllerBindings) {
                 provenance: {
                   ...(existingStep?.provenance ?? {}),
                   generatedAt: Date.now(),
-                  generatedBy: 'rescue',
+                  generatedBy: 'rescue' as const,
                   sourceIds: existingStep?.provenance?.sourceIds ?? [],
                 },
               },
-            ],
+            ];
+        const appliedAction: Action = {
+          ...currentAction,
+          title: currentPayload.recommended_action.title,
+          rationale: currentPayload.recommended_action.rationale,
+          microSteps: existingMicroSteps,
+          microStepsSource: 'fallback',
+          state: currentAction.state ?? 'IN_PROGRESS',
+        };
+        const nextPayload: AiSynthesisResponse = {
+          ...currentPayload,
+          recommended_action: {
+            ...currentPayload.recommended_action,
+            micro_steps: existingMicroSteps,
+            micro_steps_source: 'fallback',
+          },
+        };
+        const nextTask: TaskContext = {
+          ...taskForScaffold,
+          lifecycleState: 'in_scaffold',
+          assistantMode: 'scaffold_refinement',
+          currentActionId: appliedAction.id,
+          currentStepIndex: currentTask.currentStepIndex,
+          lastSynthesis: nextPayload,
+          lastFailureReason: undefined,
+          currentPlan: {
+            actionTitle: currentPayload.recommended_action.title,
+            successSignal: currentTask.currentPlan?.successSignal,
+            steps: nextPlanSteps,
           },
         };
 
@@ -1041,7 +1072,7 @@ export function createTaskController(bindings: TaskControllerBindings) {
           sourceText: nextTask.sourceText,
           actionTitle: nextTask.currentPlan?.actionTitle,
           actionCount: 1,
-          steps: nextTask.currentPlan?.steps.map((step) => step.text),
+          steps: [rescueStep],
           sourceKind: inferMindGoalSourceKind({
             model: rescueState?.meta.model,
             passType: rescueState?.meta.passType,
