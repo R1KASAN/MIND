@@ -58,8 +58,8 @@ const PULSE_COPY: Record<ValuePulseMode, Omit<ValuePulseContext, 'id' | 'taskId'
     mode: 'urgent_reply',
     title: 'ช่วยให้ตอบลูกค้าได้ไวขึ้นแค่ไหน?',
     body: 'ใช้ตอบแบบเร็วและตรงบริบทได้ไหม โดยไม่ต้องเปิดหลายที่',
-    followUpLabel: 'ถ้าอยาก บอกสั้น ๆ ว่ากันดีลหรือช่วยตอบทันขึ้นยังไง',
-    followUpPlaceholder: 'เช่น ตอบทันก่อนลูกค้า follow-up',
+    followUpLabel: 'ถ้าอยาก บอกสั้น ๆ ว่าช่วยจบงานหรือช่วยเคลียร์งานทันขึ้นยังไง',
+    followUpPlaceholder: 'เช่น เคลียร์งานทันก่อน follow-up',
   },
   rescue: {
     promptId: 'rescue',

@@ -2,6 +2,7 @@
 
 import type { RoomSidebarItemView } from '@/lib/orchestrator/home-entry';
 import type { RoomRecord } from '@/lib/store/idb';
+import { guardStalePhrases } from '@/lib/source-grounding';
 
 interface Props {
   items?: RoomSidebarItemView[];
@@ -87,7 +88,8 @@ export function RoomSidebar({
           const { room } = item;
           const active = item.isActive;
           const freshness = freshnessCopy(room);
-          const summary = room.lastKnownGoodBrief?.trim() || room.contextSummary.trim();
+          const rawSummary = room.lastKnownGoodBrief?.trim() || room.contextSummary.trim();
+          const summary = guardStalePhrases(rawSummary, room.session?.task);
           const statusLine = item.headline ?? roomStatusLine(room);
 
           return (
@@ -144,7 +146,7 @@ export function RoomSidebar({
 
                   {item.nextAction && (
                     <p className="room-sidebar-next-action">
-                      ก้าวถัดไป: {item.nextAction}
+                      ก้าวถัดไป: {guardStalePhrases(item.nextAction, room.session?.task)}
                     </p>
                   )}
 
@@ -154,7 +156,7 @@ export function RoomSidebar({
                     <div className="room-sidebar-footnote">
                       <span>{scenarioLabel(room)}</span>
                       {room.lastKnownGoodNextMoves[0] && (
-                        <span className="room-sidebar-footnote-next">เริ่ม: {room.lastKnownGoodNextMoves[0]}</span>
+                        <span className="room-sidebar-footnote-next">เริ่ม: {guardStalePhrases(room.lastKnownGoodNextMoves[0], room.session?.task)}</span>
                       )}
                     </div>
                   )}

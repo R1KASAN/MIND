@@ -375,7 +375,7 @@ export function buildRoomSidebarItems(input: {
         isActive: room.id === input.activeRoomId,
         isRecommended,
         headline,
-        nextAction: ranked?.actionTitle,
+        nextAction: ranked?.actionTitle ? guardStalePhrases(ranked.actionTitle, room.session.task) : undefined,
         reason: ranked?.reason,
         lastEventAt: ranked?.lastEventAt,
         activityLabel: room.session.task?.lifecycleState === 'done'

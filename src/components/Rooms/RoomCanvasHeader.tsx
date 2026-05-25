@@ -1,6 +1,7 @@
 "use client";
 
 import type { RoomRecord } from '@/lib/store/idb';
+import { guardStalePhrases } from '@/lib/source-grounding';
 
 interface Props {
   room: RoomRecord | null;
@@ -62,12 +63,15 @@ export function RoomCanvasHeader({
 }: Props) {
   if (!room) return null;
 
-  const brief = room.lastKnownGoodBrief?.trim() || room.lastReentryBrief?.summary?.trim() || '';
-  const nextMoves = room.lastKnownGoodNextMoves.filter((item) => item.trim().length > 0).slice(0, 3);
+  const briefRaw = room.lastKnownGoodBrief?.trim() || room.lastReentryBrief?.summary?.trim() || '';
+  const brief = guardStalePhrases(briefRaw, room.session?.task);
+  const nextMovesRaw = room.lastKnownGoodNextMoves.filter((item) => item.trim().length > 0).slice(0, 3);
+  const nextMoves = nextMovesRaw.map((item) => guardStalePhrases(item, room.session?.task));
   const freshness = getFreshnessState(room);
-  const roomIdentity = room.contextSummary.trim() && room.contextSummary.trim() !== brief
+  const roomIdentityRaw = room.contextSummary.trim() && room.contextSummary.trim() !== briefRaw
     ? room.contextSummary.trim()
     : scenarioCopy(room);
+  const roomIdentity = guardStalePhrases(roomIdentityRaw, room.session?.task);
   const briefSummary = brief || roomIdentity;
   const updatedAt = formatUpdatedAt(room.lastKnownGoodAt ?? room.lastUpdatedAt);
   const hasSavePoint = brief.length > 0 || nextMoves.length > 0;

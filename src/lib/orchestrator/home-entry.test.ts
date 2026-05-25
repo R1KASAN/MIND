@@ -418,6 +418,31 @@ test('rankResumeRooms prefers guarded session action over stale raw room-memory 
   assert.doesNotMatch(ranked?.summary ?? '', /ลูกค้า|client|customer/i);
 });
 
+test('buildRoomSidebarItems applies guardStalePhrases to nextAction to neutralize customer leakage', () => {
+  const genericTask = createTaskContext({
+    roomId: 'generic',
+    sourceText: 'ทั่วไป ไม่มีโลโก้ ไม่มีลูกค้า',
+    createdAt: 100,
+  } as any);
+
+  const generic = room('generic', {
+    contextSummary: 'ทั่วไป ไม่มีโลโก้ ไม่มีลูกค้า',
+    session: session({ roomId: 'generic', task: genericTask }),
+  });
+
+  const ranked = rankResumeRooms([
+    { room: generic, replay: replay({ actionTitle: 'แนะนำก้าวต่อไปที่สอดคล้องกับบริบทเดิมของลูกค้า', lastEventAt: 500 }) },
+  ]);
+
+  const items = buildRoomSidebarItems({
+    rooms: [generic],
+    activeRoomId: 'other',
+    rankedResumeRooms: ranked,
+  });
+
+  assert.equal(items[0]?.nextAction, 'แนะนำก้าวต่อไปที่สอดคล้องกับบริบทเดิม');
+});
+
 test('completed active room sidebar item exposes completed state instead of active-work badge', () => {
   const completedTask = createTaskContext({
     roomId: 'done-room',

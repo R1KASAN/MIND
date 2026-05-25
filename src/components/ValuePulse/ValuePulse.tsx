@@ -13,7 +13,7 @@ interface Props {
 const SIGNAL_OPTIONS: Array<{ id: ValuePulseSignal; label: string; helper: string }> = [
   { id: 'time', label: 'ประหยัดเวลา', helper: 'เริ่ม/กลับมาต่อได้เร็วขึ้น' },
   { id: 'mental_load', label: 'สมองเบาลง', helper: 'ไม่ต้องแบก context เองเยอะ' },
-  { id: 'risk', label: 'กันงานหลุด', helper: 'ตอบทัน / ไม่พลาดดีล' },
+  { id: 'risk', label: 'กันงานหลุด', helper: 'จบงานทัน / ไม่หลุดโฟกัส' },
   { id: 'mixed', label: 'ได้หลายอย่าง', helper: 'ช่วยทั้งเวลาและความมั่นใจ' },
   { id: 'not_much', label: 'ยังไม่ค่อยช่วย', helper: 'ยังไม่ค่อยเห็น value ชัด' },
 ];
