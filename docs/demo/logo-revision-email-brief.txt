@@ -1,0 +1,45 @@
+Subject: Logo revision brief - color, font, logo size
+
+From: Nara / Client Team
+To: Freelancer
+Date: 2026-05-25
+
+Email context:
+We reviewed the logo draft and need three changes before final approval.
+
+1. Color
+Please change the main logo color from dark navy to a warmer green.
+The green should feel fresh but still professional.
+
+2. Font
+Please use a softer rounded font for the brand name.
+The current font feels too corporate for our audience.
+
+3. Logo size
+Please make the icon mark about 15 percent smaller.
+On the website header it currently feels too dominant.
+
+Client message to reply:
+Could you confirm that you saw these three points and tell us what you will adjust first?
+
+Suggested MIND BrainDump for testing:
+ลูกค้าขอแก้งานโลโก้ แต่ brief อยู่ในไฟล์อีเมลที่แนบไว้ ยังไม่ได้ตอบลูกค้า อยากได้ก้าวเดียวที่เริ่มได้ทันที
+
+Expected One Action:
+เปิดไฟล์อีเมลแล้วจดรายการแก้โลโก้ 3 จุด: สี ฟอนต์ และขนาดโลโก้
+
+Expected rescue if stuck:
+อ่านอีเมลเฉพาะ 3 bullet เรื่อง color, font, logo size แล้วจดเป็นรายการแก้
+
+Expected completed-context reentry after first step is done:
+ร่างคำตอบลูกค้า 3 บรรทัดจากรายการแก้สี ฟอนต์ และขนาดโลโก้
+
+Manual test:
+1. Create a fresh MIND room.
+2. Attach this .txt file.
+3. Paste the Suggested MIND BrainDump.
+4. Click ไปต่อ.
+5. Open evidence/source detail and confirm this file is visible as a source.
+6. Accept the action and enter scaffold.
+7. Click rescue/help if stuck.
+8. PASS if MIND uses the attached email brief as room context and does not invent unrelated context.
